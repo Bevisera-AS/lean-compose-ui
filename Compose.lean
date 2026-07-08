@@ -41,10 +41,13 @@ import Compose.Ui.Window
 import Compose.Ui.Input.Focus
 import Compose.Ui.Input.Hover
 import Compose.Ui.Input.Router
+import Compose.Ui.Overlay
 import Compose.Ui.App
 import Compose.Foundation.Layouts
 import Compose.Foundation.Gestures
 import Compose.Foundation.Interaction
+import Compose.Foundation.Scroll
+import Compose.Foundation.Lazy
 import Compose.Animation.Visibility
 import Compose.Material.Text
 import Compose.Material.Theme
@@ -57,4 +60,5 @@ import Compose.Material.Switch
 import Compose.Material.Slider
 import Compose.Material.ProgressIndicator
 import Compose.Material.Divider
+import Compose.Material.Scrollbar
 import Compose.Material.TextField

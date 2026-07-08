@@ -156,6 +156,24 @@ def toRoundRect (s : Shape) (size : Size) (density : Density) : RoundRect :=
 
 end Shape
 
+/-- The measure block of a `Modifier.customLayout` element: the generic
+layout-modifier hook (M10, added for foundation's scroll containers). Given
+the ambient density, the incoming constraints, and a `measureInner` function
+that measures the rest of the wrapper chain (call it **exactly once** per
+measure), it returns the wrapper's size and the offset at which the inner
+content is placed. State reads inside run under the node's measure
+observation, so reading e.g. a scroll offset here re-lays the node out when
+it changes. Mirrors `androidx.compose.ui.layout.LayoutModifier.measure`
+(with placement collapsed to an offset — our chain has no arbitrary
+placement blocks). -/
+structure CustomLayout where
+  run : Density → Constraints → (Constraints → IO IntSize) → IO (IntSize × IntOffset)
+
+/-- The identity block: measure inner with the incoming constraints, place at
+the origin. -/
+instance : Inhabited CustomLayout :=
+  ⟨⟨fun _ c inner => do return (← inner c, .zero)⟩⟩
+
 /-- A layout-affecting modifier element: transforms constraints downward and
 size/placement upward in the wrapper chain. Mirrors the `LayoutModifier`
 family (`PaddingModifier`, `SizeModifier`, `FillModifier`, …). -/
@@ -183,7 +201,32 @@ inductive LayoutElem where
   /-- Communicate data to the parent's measure policy (weight, Box align).
   Mirrors `ParentDataModifier`. -/
   | parentData (pd : ParentData)
-  deriving Repr, BEq, Inhabited
+  /-- Generic layout hook (see `CustomLayout`); compared by `key` — give the
+  block a stable identity (hash of what it captures) so unchanged blocks
+  don't invalidate measurement. Mirrors `Modifier.layout { ... }`. -/
+  | custom (key : UInt64) (block : CustomLayout)
+  deriving Inhabited
+
+/-- Structural equality; `custom` compares by its identity key (the block is
+a function). -/
+instance : BEq LayoutElem where
+  beq
+    | .padding a b c d, .padding a' b' c' d' => a == a' && b == b' && c == c' && d == d'
+    | .size w h, .size w' h' => w == w' && h == h'
+    | .sizeIn a b c d, .sizeIn a' b' c' d' => a == a' && b == b' && c == c' && d == d'
+    | .requiredSize w h, .requiredSize w' h' => w == w' && h == h'
+    | .fill w h, .fill w' h' => w == w' && h == h'
+    | .wrapContent a, .wrapContent a' => a == a'
+    | .offset x y, .offset x' y' => x == x' && y == y'
+    | .parentData p, .parentData p' => p == p'
+    | .custom k _, .custom k' _ => k == k'
+    | _, _ => false
+
+#guard (LayoutElem.padding 1 2 3 4) == (LayoutElem.padding 1 2 3 4)
+#guard (LayoutElem.padding 1 2 3 4) != (LayoutElem.padding 1 2 3 5)
+#guard (LayoutElem.size (some 1) none) != (LayoutElem.sizeIn none (some 1) none none)
+#guard (LayoutElem.custom 7 default) == (LayoutElem.custom 7 default)
+#guard (LayoutElem.custom 7 default) != (LayoutElem.custom 8 default)
 
 /-- A draw-affecting modifier element: contributes drawing at its wrapper's
 coordinates, before the content. Mirrors the `DrawModifier` family. -/
@@ -203,10 +246,16 @@ inductive DrawElem where
   /-- Arbitrary drawing behind the content at the wrapper's coordinates.
   Mirrors `Modifier.drawBehind`. -/
   | drawBehind (block : Draw.DrawM Unit)
+  /-- Observe the wrapper's window-coordinate bounds. Executed by the draw
+  walk (positions are final there), once per *rendered* frame — a documented
+  deviation from Compose, which fires after placement; observably equivalent
+  because anything consuming the rect schedules frames. Mirrors
+  `Modifier.onGloballyPositioned`. -/
+  | onPositioned (handler : Rect → IO Unit)
 
-/-- Structural equality; `drawBehind` blocks are never equal (function
-payload), which conservatively re-draws them on every update — Compose's
-capturing-lambda behavior. -/
+/-- Structural equality; `drawBehind` blocks and `onPositioned` handlers are
+never equal (function payload), which conservatively re-draws them on every
+update — Compose's capturing-lambda behavior. -/
 instance : BEq DrawElem where
   beq
     | .background c s, .background c' s' => c == c' && s == s'
@@ -384,6 +433,15 @@ def offset (x y : Dp) (m : Modifier := {}) : Modifier :=
 def withParentData (pd : ParentData) (m : Modifier := {}) : Modifier :=
   m.append (.layout (.parentData pd))
 
+/-- Install a generic layout hook (see `CustomLayout`): `block` measures the
+inner chain with constraints of its choosing (exactly once) and reports the
+wrapper size plus the inner content's placement offset. `key` is the block's
+identity for measurement invalidation (like `Layout`'s `policyInputs`).
+The raw element behind foundation's `Modifier.verticalScroll`. Mirrors
+`Modifier.layout { measurable, constraints -> ... }`. -/
+def customLayout (key : UInt64) (block : CustomLayout) (m : Modifier := {}) : Modifier :=
+  m.append (.layout (.custom key block))
+
 /-! ## Draw combinators -/
 
 /-- Fill the bounds with `color`, clipped to `shape`. Mirrors
@@ -409,6 +467,15 @@ def alpha (a : Float32) (m : Modifier := {}) : Modifier :=
 `Modifier.drawBehind`. -/
 def drawBehind (block : Draw.DrawM Unit) (m : Modifier := {}) : Modifier :=
   m.append (.draw (.drawBehind block))
+
+/-- Observe this element's wrapper bounds in **window coordinates** (render
+px): `handler` runs once per rendered frame with the final rect — anchor
+capture for `Popup`/`DropdownMenu`. Write the rect into a `mutableStateOf`
+cell (structural equality) so unchanged positions don't schedule frames.
+Mirrors `Modifier.onGloballyPositioned` (see `DrawElem.onPositioned` for the
+draw-walk timing deviation). -/
+def onGloballyPositioned (handler : Rect → IO Unit) (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.onPositioned handler))
 
 /-! ## Pointer combinators -/
 

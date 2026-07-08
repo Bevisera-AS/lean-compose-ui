@@ -38,6 +38,10 @@ All SDL video/render/event calls happen on the main thread only — never in
 `Task`s. Don't let the last reference to an SDL handle drop inside a `Task`.
 
 ## Coding Style
+- This project is Compose-INSPIRED, not a 1-1 Kotlin port: keep Compose's
+  *semantics* (recomposition, invalidation, animation feel), but shape every
+  public API the way a good Lean library would — do-notation, named/default
+  args, macros, typeclasses, pipes. Optimize for Lean's ergonomics.
 - Prefer dot-abbreviated names to fully qualified names.
 - Prefer piping operations using `|>.` or `|>` to nesting parentheses. If a
   piping chain is long, align the steps on multiple lines.

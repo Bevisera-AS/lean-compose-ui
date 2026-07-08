@@ -7,6 +7,14 @@ Implementation subagents: follow this document exactly; deviations require
 orchestrator sign-off — if you believe a decision is wrong, say so in your
 report instead of silently diverging.
 
+**Compose-inspired, not a port** (project-owner directive): this framework
+does not aim for 1-1 API fidelity with Kotlin Compose. *Semantics* parity
+matters — recomposition behavior, invalidation precision, animation feel,
+widget quality. *API shape* does not: whenever a pattern or idiom makes more
+sense in Lean (do-notation, named/default args, macros, typeclasses, pattern
+matching, pipes), do it Lean's way. We optimize for Lean's ergonomics. Doc
+comments still cite Compose analogs — for orientation, not as a contract.
+
 Product decisions (settled with the project owner):
 - Dependency on lean-sdl3 is a **pinned git require** (bump deliberately).
 - Popups/dialogs/dropdowns are **in-window overlays**; the window abstraction
@@ -486,12 +494,27 @@ dependency graph, cycles).
 - Demo smoke in CI: every demo runs `COMPOSE_MAX_FRAMES=60` under dummy
   drivers on macOS + Linux.
 - Env: `COMPOSE_TEST_GROUP=<Name>` runs one group (lean-sdl3 pattern).
+- **UI test framework (milestone MT, before the demos)** — the
+  `androidx.compose.ui.test` analog, built on the semantics `Modifier.Elem`:
+  widgets publish semantics (testTag, role, text, states, value ranges,
+  actions); `runComposeTest` boots a headless window with a controlled clock
+  and exposes finders (`onNodeWithText`/`onNodeWithTag`/matchers), actions
+  (`performClick`/`performTextInput`/`performKeyPress`/drag/scroll — all
+  synthesized through the real input router so tests exercise the true event
+  path), assertions (text/displayed/checked/disabled/focused/bounds), and
+  `waitForIdle`/`advanceTimeBy`. The 7GUIs demos ship behavior tests written
+  in this framework — demo development doubles as the framework's own
+  validation. Raw pixel probes remain appropriate only where pixel output is
+  itself the property under test.
 
 ## Conventions for implementation agents
 
 - Read `AGENTS.md` first (naming, piping style, commit discipline).
+- **Lean ergonomics first**: when a public API could mirror Compose or be
+  more natural in Lean, pick the Lean shape (see the directive at the top).
 - Every public declaration gets a doc comment; cite the Compose analog
-  (e.g. "Mirrors `androidx.compose.foundation.layout.Row`") where one exists.
+  (e.g. "Mirrors `androidx.compose.foundation.layout.Row`") where one exists —
+  as a pointer for readers who know Compose, not a fidelity promise.
 - Layer discipline is absolute: runtime never imports `Sdl`; ui never imports
   material. `#guard` tests land in the same commit as the definition.
 - Build + test before reporting done: `lake build` clean (no warnings,

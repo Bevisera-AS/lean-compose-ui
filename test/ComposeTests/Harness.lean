@@ -1,3 +1,5 @@
+import Sdl
+
 /-!
 # Minimal runtime test harness
 
@@ -5,7 +7,8 @@ Mirrors lean-sdl3's harness shape: `check`/`checkEq`/`checkThrows` report one
 line per assertion and bump a global failure counter; `group` runs a module's
 tests, turning an unexpected throw into a failure instead of aborting the run;
 `summary` returns the process exit code (1 if anything failed).
-`COMPOSE_TEST_GROUP=<Name>` runs a single group.
+`COMPOSE_TEST_GROUP=<Name>` runs a single group. Pixel-probe helpers
+(`colorNear`, `showColor`) for readback assertions live here too.
 -/
 
 namespace Tests.Harness
@@ -60,5 +63,17 @@ def summary : IO UInt32 := do
   else
     IO.eprintln s!"\n{n} test(s) FAILED."
     return 1
+
+/-- Absolute difference of two `Nat`s. -/
+private def natDist (a b : Nat) : Nat := max a b - min a b
+
+/-- Whether SDL pixel `c` is within `tol` byte-steps of `(r, g, b)` per RGB
+channel (alpha ignored). -/
+def colorNear (c : Sdl.Color) (r g b : UInt8) (tol : Nat := 2) : Bool :=
+  natDist c.r.toNat r.toNat <= tol && natDist c.g.toNat g.toNat <= tol &&
+  natDist c.b.toNat b.toNat <= tol
+
+/-- Human-readable rendering of an SDL pixel, for failure diagnostics. -/
+def showColor (c : Sdl.Color) : String := s!"({c.r},{c.g},{c.b},{c.a})"
 
 end Tests.Harness

@@ -10,3 +10,7 @@ import Compose.Runtime.Composer
 import Compose.Runtime.Recomposer
 import Compose.Runtime.Effects
 import Compose.Runtime.Locals
+import Compose.Ui.Draw.Mesh
+import Compose.Ui.Draw.Tessellate
+import Compose.Ui.Draw.Brush
+import Compose.Ui.Draw.Scope

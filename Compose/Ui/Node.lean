@@ -265,7 +265,7 @@ private partial def measureChain (n : LayoutNode) (density : Density)
     (elems : Array Modifier.Elem) (i : Nat) (c : Constraints) : IO ChainMeasured := do
   if hlt : i < elems.size then
     match elems[i] with
-    | .draw _ | .pointer _ | .focus _ =>
+    | .draw _ | .pointer _ | .focus _ | .semantics _ =>
       -- Non-layout elements never affect geometry; record them at the size
       -- of the wrapper they decorate (draw walk + hit-test walk).
       let r ← measureChain n density elems (i + 1) c

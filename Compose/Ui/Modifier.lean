@@ -3,6 +3,7 @@ import Compose.Core.Color
 import Compose.Ui.Draw.Scope
 import Compose.Ui.Input.Pointer
 import Compose.Ui.Input.Keyboard
+import Compose.Ui.Semantics
 
 namespace Compose
 
@@ -16,9 +17,9 @@ the way down and size/placement on the way up; each *draw* element
 contributes drawing before the content at its position in the chain. Mirrors
 `androidx.compose.ui.Modifier`.
 
-Pointer/focus/semantics elements arrive in M6 — `Modifier.Elem` is the
-extension point (add constructors there and handle them in the node's
-wrapper fold and hit-test walk).
+Non-layout constructors: pointer/focus elements landed in M6, semantics in
+MT — `Modifier.Elem` is the extension point (add constructors there and
+handle them in the node's wrapper fold and hit-test walk).
 
 Combinators take the modifier they extend as a *trailing* default argument,
 so both Compose spellings work:
@@ -336,15 +337,17 @@ instance : BEq FocusElem where
 #guard (FocusElem.onFocusChanged fun _ => pure ()) != (FocusElem.onFocusChanged fun _ => pure ())
 
 /-- One element of a modifier chain. Mirrors `Modifier.Element`.
-`layout` elements shape the wrapper chain; `draw`, `pointer`, and `focus`
-elements never affect geometry — measurement resolves their wrapper region
-(offset + size) for the draw walk and the input hit-test walk. A `semantics`
-constructor is a future extension point. -/
+`layout` elements shape the wrapper chain; `draw`, `pointer`, `focus`, and
+`semantics` elements never affect geometry — measurement resolves their
+wrapper region (offset + size) for the draw walk and the input hit-test
+walk; `semantics` elements carry the properties the MT test framework's
+tree walk (`Compose.Test.Semantics`) reads. -/
 inductive Modifier.Elem where
   | layout (e : LayoutElem)
   | draw (e : DrawElem)
   | pointer (e : PointerElem)
   | focus (e : FocusElem)
+  | semantics (e : SemanticsProps)
   deriving BEq
 
 /-- An ordered modifier chain, outermost element first. Mirrors
@@ -532,6 +535,29 @@ def onTextEditing (handler : String → Int32 → Int32 → IO Bool)
     (m : Modifier := {}) : Modifier :=
   m.append (.focus (.onTextEditing handler))
 
+/-! ## Semantics combinators -/
+
+/-- Attach semantics properties for the MT test framework (and future
+accessibility): what the node is (`role`), says (`text`, `desc`), and its
+state (`disabled`/`toggled`/`selected`/`editableText`/`range`).
+`mergeDescendants` folds descendant semantics into this node in the merged
+tree (see `Compose.Test.Semantics`). Multiple semantics elements on one
+chain combine with the outermost winning each stated field. Mirrors
+`Modifier.semantics(mergeDescendants) { ... }`. -/
+def semantics (testTag text desc editableText : Option String := none)
+    (role : Option Semantics.Role := none)
+    (disabled toggled selected : Option Bool := none)
+    (range : Option Semantics.Range := none)
+    (mergeDescendants : Bool := false) (m : Modifier := {}) : Modifier :=
+  m.append (.semantics
+    { testTag, text, contentDescription := desc, role, disabled, toggled
+      selected, editableText, range, mergeDescendants })
+
+/-- Tag the node with a test-only identity for `Matcher.tag` finders.
+Mirrors `Modifier.testTag`. -/
+def testTag (tag : String) (m : Modifier := {}) : Modifier :=
+  m.semantics (testTag := some tag)
+
 /-! ## Chain inspection -/
 
 /-- Fold the chain's `parentData` elements (outer to inner; a later element
@@ -547,11 +573,11 @@ def parentData (m : Modifier) : ParentData :=
         matchParentSize := acc.matchParentSize || pd.matchParentSize }
     | _ => acc
 
-/-- Whether two chains are interchangeable *for measurement*: same length and,
-position by position, equal layout elements (draw/pointer/focus elements may
-differ — they never affect geometry, so cached measurements and resolved
-element regions stay valid). Drives `needsRemeasure` vs `needsRedraw` on node
-update. -/
+/-- Whether two chains are interchangeable *for measurement*: same length
+and, position by position, equal layout elements (draw/pointer/focus/
+semantics elements may differ — they never affect geometry, so cached
+measurements and resolved element regions stay valid). Drives
+`needsRemeasure` vs `needsRedraw` on node update. -/
 def layoutEq (a b : Modifier) : Bool :=
   a.elems.size == b.elems.size &&
   (a.elems.zip b.elems).all fun (x, y) =>
@@ -560,6 +586,7 @@ def layoutEq (a b : Modifier) : Bool :=
     | .draw _, .draw _ => true
     | .pointer _, .pointer _ => true
     | .focus _, .focus _ => true
+    | .semantics _, .semantics _ => true
     | _, _ => false
 
 /-- The chain's `pointerInput` elements as `(chain index, key, handler)`, in
@@ -584,6 +611,19 @@ def focusEnabled (m : Modifier) : Bool :=
 see the M11 IME hook in `Compose.Ui.Input.Keyboard`). -/
 def isTextInputClient (m : Modifier) : Bool :=
   m.elems.any (fun e => e matches .focus (.onTextInput _))
+
+/-- The chain's combined semantics: its `semantics` elements folded outer to
+inner (outer wins each stated field); `none` when the chain has no semantics
+element at all — the node is then invisible to the semantics tree. What
+`Compose.Test.Semantics` reads per node. -/
+def semanticsProps (m : Modifier) : Option SemanticsProps :=
+  m.elems.foldl (init := none) fun acc e =>
+    match e with
+    | .semantics p =>
+      match acc with
+      | some outer => some (outer.combine p)
+      | none => some p
+    | _ => acc
 
 -- padding resolution precedence
 #guard (padding (all := 16)).elems == #[.layout (.padding 16 16 16 16)]
@@ -624,6 +664,18 @@ def isTextInputClient (m : Modifier) : Bool :=
 #guard !(padding (all := 1)).focusEnabled
 #guard (onTextInput fun _ => pure true).isTextInputClient
 #guard !(focusable).isTextInputClient
+-- semantics: layout-inert, chain fold outer-wins, testTag shorthand
+#guard layoutEq (size 1 1 |>.semantics (text := some "a"))
+                (size 1 1 |>.semantics (text := some "b"))
+#guard !layoutEq (size 1 1) (size 1 1 |>.testTag "t")
+#guard (size 1 1).semanticsProps == none
+#guard (testTag "t").semanticsProps == some { testTag := some "t" }
+#guard (semantics (role := some .button)
+          |>.padding (all := 2)
+          |>.semantics (role := some .checkbox) (toggled := some true)).semanticsProps
+        == some { role := some .button, toggled := some true }
+#guard (semantics (mergeDescendants := true) |>.testTag "x").semanticsProps
+        == some { testTag := some "x", mergeDescendants := true }
 
 end Modifier
 

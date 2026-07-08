@@ -29,6 +29,7 @@ import Compose.Ui.Draw.Brush
 import Compose.Ui.Draw.Scope
 import Compose.Ui.Input.Pointer
 import Compose.Ui.Input.Keyboard
+import Compose.Ui.Semantics
 import Compose.Ui.Modifier
 import Compose.Ui.Node
 import Compose.Ui.Input.HitTest

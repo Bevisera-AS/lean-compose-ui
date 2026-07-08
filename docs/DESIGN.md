@@ -486,6 +486,18 @@ dependency graph, cycles).
 - Demo smoke in CI: every demo runs `COMPOSE_MAX_FRAMES=60` under dummy
   drivers on macOS + Linux.
 - Env: `COMPOSE_TEST_GROUP=<Name>` runs one group (lean-sdl3 pattern).
+- **UI test framework (milestone MT, before the demos)** — the
+  `androidx.compose.ui.test` analog, built on the semantics `Modifier.Elem`:
+  widgets publish semantics (testTag, role, text, states, value ranges,
+  actions); `runComposeTest` boots a headless window with a controlled clock
+  and exposes finders (`onNodeWithText`/`onNodeWithTag`/matchers), actions
+  (`performClick`/`performTextInput`/`performKeyPress`/drag/scroll — all
+  synthesized through the real input router so tests exercise the true event
+  path), assertions (text/displayed/checked/disabled/focused/bounds), and
+  `waitForIdle`/`advanceTimeBy`. The 7GUIs demos ship behavior tests written
+  in this framework — demo development doubles as the framework's own
+  validation. Raw pixel probes remain appropriate only where pixel output is
+  itself the property under test.
 
 ## Conventions for implementation agents
 

@@ -5,6 +5,7 @@ import ComposeTests.MacroSuite
 import ComposeTests.Draw
 import ComposeTests.Layout
 import ComposeTests.Scheduler
+import ComposeTests.Animation
 import ComposeTests.App
 import ComposeTests.Input
 import ComposeTests.Text
@@ -27,6 +28,7 @@ def main : IO UInt32 := do
   Harness.group "Draw" Draw.run
   Harness.group "Layout" Layout.run
   Harness.group "Scheduler" Scheduler.run
+  Harness.group "Animation" Animation.run
   Harness.group "App" App.run
   Harness.group "Input" Input.run
   Harness.group "Text" Text.run

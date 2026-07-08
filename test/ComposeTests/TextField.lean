@@ -5,21 +5,22 @@ import ComposeTests.TestApplier
 /-!
 # TextField test group (`test/ComposeTests/TextField.lean`)
 
-M11's end-to-end editing suites, headless: a bootstrapped window whose
-content composes under a **fake-clock scheduler** (the Material-group rig),
-with synthetic `Sdl.Event`s pushed through `dispatchEvent` → `inputSink` →
-`InputManager.sdlEvent` — the exact production path (translation, focus,
-key/text routing, IME session hooks). Pixel probes use the software
-renderer; glyph-coordinate expectations come from a probe `TextLayout`
-sharing the window's font stack, so tests stay font-metrics-agnostic.
+M11's end-to-end editing suites, headless. The value-flow suites (typing,
+editing scripts, UTF-8, `TextFieldS`) are written in the MT framework
+(`Compose.Test`): `runComposeTest` + `typeText`/`pressKey` through the real
+input path, with `checkEq` on the controlled state for selection-precise
+expectations. The pixel/geometry suites (mouse selection, clipboard, caret
+blink, IME, auto-scroll, outline states) keep the raw `TRig` — pixel output
+is the property under test there, and glyph-coordinate expectations come
+from a probe `TextLayout` sharing the window's font stack.
 
 The caret-blink `InfiniteTransition` keeps frame work alive while a field is
-focused, so these tests advance time with bounded `pump`s instead of
+focused, so the TRig tests advance time with bounded `pump`s instead of
 settle-until-idle.
 -/
 
 namespace Tests.TextField
-open Compose Tests.Harness
+open Compose Compose.Test Tests.Harness
 
 /-- Test config: software renderer for stable `readPixels`, no vsync. -/
 private def cfg : AppConfig :=
@@ -144,126 +145,118 @@ private def fieldRig (initial : TextFieldValue := {}) (w : Dp := 240)
       (placeholder := placeholder) (label := label)
   return (r, value, calls)
 
-/-! ## End-to-end typing (controlled loop) -/
+/-! ## End-to-end typing (controlled loop, MT framework) -/
+
+/-- One tagged controlled `TextField` bound to `value`, logging every
+`onValueChange` into `calls` — the content of the MT-framework suites. -/
+private def fieldContent (value : MutableState TextFieldValue)
+    (calls : IO.Ref (Array TextFieldValue)) : Composable Unit :=
+  Tests.restartable 1 do
+    let v ← value.get
+    TextField v (fun v' => do calls.modify (·.push v'); value.set v')
+      (modifier := Modifier.testTag "field")
 
 private def typingEndToEnd : IO Unit := do
-  let (r, value, calls) ← fieldRig
-  -- Click focuses (M6 click-to-focus reaches the field's `focusable`).
-  r.click 100 20
-  r.pump
-  check "typing: click focused the field (IME session active)"
-    (← r.ctx.window.textInputActive)
-  r.text "h"
-  r.pump
-  r.text "i"
-  r.pump
-  checkEq "typing: controlled callbacks saw h → hi"
-    ((← calls.get).map (·.text)) #["h", "hi"]
-  checkEq "typing: caret advanced with each commit"
-    ((← calls.get).map (·.selection.active)) #[1, 2]
-  checkEq "typing: state settled at 'hi'" (← value.get) (⟨"hi", .caret 2, none⟩)
-  -- Back-to-back events without a recomposition in between still compose
-  -- (the optimistic latest-value ref).
-  r.text "!"
-  r.text "?"
-  r.pump
-  checkEq "typing: consecutive events compose without recomposition"
-    (← value.get) (⟨"hi!?", .caret 4, none⟩)
+  let value ← mutableStateOf ({} : TextFieldValue)
+  let calls ← IO.mkRef (#[] : Array TextFieldValue)
+  runComposeTest (fieldContent value calls) do
+    -- typeText click-focuses through the real click-to-focus path, then
+    -- commits one text event per codepoint.
+    typeText (.tag "field") "hi"
+    check "typing: focus started the IME session"
+      (← (← uiTest).ctx.window.textInputActive)
+    assertFocused (.tag "field")
+    checkEq "typing: controlled callbacks saw h → hi"
+      ((← calls.get).map (·.text)) #["h", "hi"]
+    checkEq "typing: caret advanced with each commit"
+      ((← calls.get).map (·.selection.active)) #[1, 2]
+    assertTextEquals (.tag "field") "hi"
+    checkEq "typing: state settled at 'hi'" (← value.get) (⟨"hi", .caret 2, none⟩)
+    -- Back-to-back events without a recomposition in between still compose
+    -- (the optimistic latest-value ref): raw events, one awaitIdle at the end.
+    textInput "!"
+    textInput "?"
+    awaitIdle
+    checkEq "typing: consecutive events compose without recomposition"
+      (← value.get) (⟨"hi!?", .caret 4, none⟩)
 
-/-! ## Full keyboard editing scripts -/
+/-! ## Full keyboard editing scripts (MT framework) -/
 
 private def editingScripts : IO Unit := do
-  let (r, value, _) ← fieldRig
-  r.click 100 20
-  r.pump
-  r.text "hello world"
-  r.pump
-  checkEq "script: typed the base text" (← value.get) (⟨"hello world", .caret 11, none⟩)
-  r.key .left (mods := .lCtrl)                     -- word-left
-  r.pump
-  checkEq "script: ctrl-Left jumps to the word start" (← value.get)
-    (⟨"hello world", .caret 6, none⟩)
-  r.key .«end» (mods := .lShift)                   -- shift-End
-  r.pump
-  checkEq "script: shift-End extends to the end" (← value.get)
-    (⟨"hello world", ⟨6, 11⟩, none⟩)
-  r.key .backspace                                 -- delete the selection
-  r.pump
-  checkEq "script: backspace deletes the selection" (← value.get)
-    (⟨"hello ", .caret 6, none⟩)
-  r.text "there"
-  r.pump
-  checkEq "script: typing at the caret inserts" (← value.get)
-    (⟨"hello there", .caret 11, none⟩)
-  r.key .home
-  r.pump
-  checkEq "script: Home to the start" (← value.get) (⟨"hello there", .caret 0, none⟩)
-  r.key .right (mods := .lShift)
-  r.key .right (mods := .lShift)
-  r.pump
-  checkEq "script: two shift-Rights select 'he'" (← value.get)
-    (⟨"hello there", ⟨0, 2⟩, none⟩)
-  r.key .right                                     -- collapse to the end
-  r.pump
-  checkEq "script: plain Right collapses to the selection end" (← value.get)
-    (⟨"hello there", .caret 2, none⟩)
-  r.key .right (mods := .lGui)                     -- gui word-right (macOS)
-  r.pump
-  checkEq "script: gui-Right word-jumps" (← value.get)
-    (⟨"hello there", .caret 5, none⟩)
-  r.key .backspace (mods := .lCtrl)                -- delete word back
-  r.pump
-  checkEq "script: ctrl-Backspace deletes back to the word start" (← value.get)
-    (⟨" there", .caret 0, none⟩)
-  r.key .a (mods := .lCtrl)                        -- select all
-  r.pump
-  checkEq "script: ctrl-A selects everything" (← value.get)
-    (⟨" there", ⟨0, 6⟩, none⟩)
-  r.text "x"                                       -- typing replaces selection
-  r.pump
-  checkEq "script: typing replaces the selection" (← value.get) (⟨"x", .caret 1, none⟩)
-  r.key .delete                                    -- deleteForward at the end: no-op
-  r.pump
-  checkEq "script: Delete at the end is a no-op" (← value.get) (⟨"x", .caret 1, none⟩)
-  -- Tab is not consumed: focus moves on (nothing else focusable → wraps to
-  -- the field, but the router fallback ran, which is what we assert via the
-  -- text-input session staying alive).
-  r.key .tab
-  r.pump
-  check "script: Tab falls through to traversal (field refocused, wrap-around)"
-    (← r.ctx.window.textInputActive)
+  let value ← mutableStateOf ({} : TextFieldValue)
+  let calls ← IO.mkRef (#[] : Array TextFieldValue)
+  runComposeTest (fieldContent value calls) do
+    typeText (.tag "field") "hello world"
+    checkEq "script: typed the base text" (← value.get)
+      (⟨"hello world", .caret 11, none⟩)
+    pressKey .left (mods := .lCtrl)                  -- word-left
+    checkEq "script: ctrl-Left jumps to the word start" (← value.get)
+      (⟨"hello world", .caret 6, none⟩)
+    pressKey .«end» (mods := .lShift)                -- shift-End
+    checkEq "script: shift-End extends to the end" (← value.get)
+      (⟨"hello world", ⟨6, 11⟩, none⟩)
+    pressKey .backspace                              -- delete the selection
+    checkEq "script: backspace deletes the selection" (← value.get)
+      (⟨"hello ", .caret 6, none⟩)
+    typeText (.tag "field") "there"
+    checkEq "script: typing at the caret inserts" (← value.get)
+      (⟨"hello there", .caret 11, none⟩)
+    pressKey .home
+    checkEq "script: Home to the start" (← value.get)
+      (⟨"hello there", .caret 0, none⟩)
+    pressKey .right (mods := .lShift)
+    pressKey .right (mods := .lShift)
+    checkEq "script: two shift-Rights select 'he'" (← value.get)
+      (⟨"hello there", ⟨0, 2⟩, none⟩)
+    pressKey .right                                  -- collapse to the end
+    checkEq "script: plain Right collapses to the selection end" (← value.get)
+      (⟨"hello there", .caret 2, none⟩)
+    pressKey .right (mods := .lGui)                  -- gui word-right (macOS)
+    checkEq "script: gui-Right word-jumps" (← value.get)
+      (⟨"hello there", .caret 5, none⟩)
+    pressKey .backspace (mods := .lCtrl)             -- delete word back
+    checkEq "script: ctrl-Backspace deletes back to the word start" (← value.get)
+      (⟨" there", .caret 0, none⟩)
+    pressKey .a (mods := .lCtrl)                     -- select all
+    checkEq "script: ctrl-A selects everything" (← value.get)
+      (⟨" there", ⟨0, 6⟩, none⟩)
+    typeText (.tag "field") "x"                      -- typing replaces selection
+    checkEq "script: typing replaces the selection" (← value.get)
+      (⟨"x", .caret 1, none⟩)
+    pressKey .delete                                 -- deleteForward at the end
+    checkEq "script: Delete at the end is a no-op" (← value.get)
+      (⟨"x", .caret 1, none⟩)
+    -- Tab falls through to traversal (nothing else focusable → wraps back to
+    -- the field; the live IME session shows the field is focused again).
+    pressKey .tab
+    check "script: Tab falls through to traversal (field refocused, wrap-around)"
+      (← (← uiTest).ctx.window.textInputActive)
 
-/-! ## Multi-byte safety -/
+/-! ## Multi-byte safety (MT framework) -/
 
 private def multiByteEditing : IO Unit := do
-  let (r, value, _) ← fieldRig
-  r.click 100 20
-  r.pump
-  r.text "héllo"
-  r.pump
-  checkEq "utf8: typed multi-byte text" (← value.get) (⟨"héllo", .caret 6, none⟩)
-  r.key .backspace
-  r.pump
-  checkEq "utf8: backspace removes one codepoint" (← value.get)
-    (⟨"héll", .caret 5, none⟩)
-  r.key .left
-  r.key .left
-  r.key .left
-  r.pump
-  checkEq "utf8: three Lefts step over é as one unit" (← value.get)
-    (⟨"héll", .caret 1, none⟩)
-  r.key .delete
-  r.pump
-  checkEq "utf8: Delete removes the 2-byte é whole" (← value.get)
-    (⟨"hll", .caret 1, none⟩)
-  r.text "日本語"
-  r.pump
-  checkEq "utf8: CJK commit inserts at the caret" (← value.get)
-    (⟨"h日本語ll", .caret 10, none⟩)
-  r.key .backspace
-  r.pump
-  checkEq "utf8: backspace eats one 3-byte codepoint" (← value.get)
-    (⟨"h日本ll", .caret 7, none⟩)
+  let value ← mutableStateOf ({} : TextFieldValue)
+  let calls ← IO.mkRef (#[] : Array TextFieldValue)
+  runComposeTest (fieldContent value calls) do
+    typeText (.tag "field") "héllo"
+    checkEq "utf8: typed multi-byte text" (← value.get) (⟨"héllo", .caret 6, none⟩)
+    pressKey .backspace
+    checkEq "utf8: backspace removes one codepoint" (← value.get)
+      (⟨"héll", .caret 5, none⟩)
+    pressKey .left
+    pressKey .left
+    pressKey .left
+    checkEq "utf8: three Lefts step over é as one unit" (← value.get)
+      (⟨"héll", .caret 1, none⟩)
+    pressKey .delete
+    checkEq "utf8: Delete removes the 2-byte é whole" (← value.get)
+      (⟨"hll", .caret 1, none⟩)
+    typeText (.tag "field") "日本語"
+    checkEq "utf8: CJK commits insert at the caret" (← value.get)
+      (⟨"h日本語ll", .caret 10, none⟩)
+    pressKey .backspace
+    checkEq "utf8: backspace eats one 3-byte codepoint" (← value.get)
+      (⟨"h日本ll", .caret 7, none⟩)
 
 /-! ## Mouse: caret, drag selection, double/triple click -/
 
@@ -542,34 +535,33 @@ private def placeholderAndLabel : IO Unit := do
       if near c L.primary 70 && c.r < 220 then floatPix := floatPix + 1
   check s!"label: floats into the strip when focused ({floatPix})" (floatPix > 0)
 
-/-! ## TextFieldS (String convenience) -/
+/-! ## TextFieldS (String convenience, MT framework) -/
 
 private def stringOverload : IO Unit := do
   let value ← mutableStateOf ""
   let calls ← IO.mkRef (#[] : Array String)
-  let r ← tboot <| Tests.restartable 1 do
-    let v ← value.get
-    TextFieldS v (fun s => do calls.modify (·.push s); value.set s)
-  r.click 100 20
-  r.pump
-  r.text "hi"
-  r.pump
-  checkEq "textfieldS: string callback saw the commit" (← calls.get) #["hi"]
-  checkEq "textfieldS: state is the string" (← value.get) "hi"
-  -- Selection is managed internally: motions/backspace need no callbacks.
-  r.key .left
-  r.pump
-  r.key .backspace
-  r.pump
-  checkEq "textfieldS: internal caret honored by backspace" (← value.get) "i"
-  checkEq "textfieldS: only text changes are reported" (← calls.get) #["hi", "i"]
-  -- External rewrite: the app replaces the text; the caret clamps.
-  value.set "reset"
-  r.pump
-  r.key .«end»
-  r.text "!"
-  r.pump
-  checkEq "textfieldS: external value change accepted" (← value.get) "reset!"
+  runComposeTest
+    (content := Tests.restartable 1 do
+      TextFieldS (← value.get) (fun s => do calls.modify (·.push s); value.set s)
+        (modifier := Modifier.testTag "field"))
+    do
+      typeText (.tag "field") "hi"
+      checkEq "textfieldS: string callback saw each commit" (← calls.get) #["h", "hi"]
+      assertTextEquals (.tag "field") "hi"
+      checkEq "textfieldS: state is the string" (← value.get) "hi"
+      -- Selection is managed internally: motions/backspace need no callbacks.
+      pressKey .left
+      pressKey .backspace
+      assertTextEquals (.tag "field") "i"
+      checkEq "textfieldS: only text changes are reported" (← calls.get)
+        #["h", "hi", "i"]
+      -- External rewrite: the app replaces the text; the caret clamps.
+      value.set "reset"
+      awaitIdle
+      pressKey .«end»
+      typeText (.tag "field") "!"
+      assertTextEquals (.tag "field") "reset!"
+      checkEq "textfieldS: external value change accepted" (← value.get) "reset!"
 
 /-- The TextField group. -/
 def run : IO Unit := do

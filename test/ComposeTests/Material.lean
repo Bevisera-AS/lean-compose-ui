@@ -17,7 +17,7 @@ the real loop uses.
 -/
 
 namespace Tests.Material
-open Compose Tests.Harness
+open Compose Compose.Test Tests.Harness
 
 /-- Test config: software renderer for stable `readPixels`, no vsync. -/
 private def cfg : AppConfig :=
@@ -347,25 +347,36 @@ private def switchToggles : IO Unit := do
   checkEq "switch: Enter toggles back off" (← calls.get) #[true, false]
   check "switch: thumb returns left" (near (← r.pixel 16 20) L.outline)
 
-/-- Disabled selection controls ignore mouse and keyboard entirely. -/
+/-- Disabled selection controls: published as disabled in semantics, and
+they ignore mouse and keyboard entirely (MT framework — clicks find each
+control's real bounds instead of hand-computed coordinates). -/
 private def disabledControls : IO Unit := do
   let calls ← IO.mkRef (0 : Nat)
   let bump : IO Unit := calls.modify (· + 1)
-  let r ← mboot (h := 220) <| themed <| Column {} (content := fun _ => do
-    Checkbox false (fun _ => bump) (enabled := false)
-    Switch false (fun _ => bump) (enabled := false)
-    RadioButton false bump (enabled := false)
-    Slider 0.5 (fun _ => bump) (enabled := false))
-  r.click 20 20    -- checkbox
-  r.click 26 60    -- switch
-  r.click 20 100   -- radio
-  r.click 120 140  -- slider
-  r.key .tab       -- nothing focusable
-  r.key .return
-  r.key .space
-  r.key .right
-  r.settle
-  checkEq "disabled: no callback fired by mouse or keyboard" (← calls.get) 0
+  runComposeTest (height := 220)
+    (content := Column {} (content := fun _ => do
+      Checkbox false (fun _ => bump) (enabled := false)
+        (modifier := Modifier.testTag "cb")
+      Switch false (fun _ => bump) (enabled := false)
+        (modifier := Modifier.testTag "sw")
+      RadioButton false bump (enabled := false)
+        (modifier := Modifier.testTag "rb")
+      Slider 0.5 (fun _ => bump) (enabled := false)
+        (modifier := Modifier.testTag "sl")))
+    do
+      assertDisabled (.tag "cb")
+      assertDisabled (.tag "sw")
+      assertDisabled (.tag "rb")
+      assertDisabled (.tag "sl")
+      click (.tag "cb")
+      click (.tag "sw")
+      click (.tag "rb")
+      click (.tag "sl")
+      pressKey .tab       -- nothing focusable
+      pressKey .return
+      pressKey .space
+      pressKey .right
+      checkEq "disabled: no callback fired by mouse or keyboard" (← calls.get) 0
 
 /-! ## Slider -/
 

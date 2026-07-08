@@ -304,8 +304,11 @@ namespace Modifier
 /-- The empty modifier. Mirrors `Modifier` (the companion object). -/
 def empty : Modifier := {}
 
-/-- Concatenate two chains, `m` outermost. Mirrors `Modifier.then`. -/
-def «then» (other : Modifier) (m : Modifier := {}) : Modifier :=
+/-- Concatenate two chains, the receiver outermost — `a.then b` (also
+`a |>.then b`) puts `a`'s elements before `b`'s, exactly like Compose's
+`a.then(b)`. (M9 fix: the parameter order used to bind the piped receiver to
+the *inner* chain, silently reversing draw order.) Mirrors `Modifier.then`. -/
+def «then» (m : Modifier) (other : Modifier) : Modifier :=
   ⟨m.elems ++ other.elems⟩
 
 /-- Append a single element (innermost position). -/
@@ -512,7 +515,9 @@ def isTextInputClient (m : Modifier) : Bool :=
         == #[.layout (.padding 2 2 2 2), .draw (.background .red .rectangle),
              .layout (.size (some 10) (some 10))]
 #guard («then» (size 1 2) (padding (all := 3))).elems
-        == (padding (all := 3)).elems ++ (size 1 2).elems
+        == (size 1 2).elems ++ (padding (all := 3)).elems
+#guard (size 1 2 |>.then (padding (all := 3))).elems
+        == (size 1 2).elems ++ (padding (all := 3)).elems
 -- parentData folding: later overrides, matchParentSize sticky
 #guard (withParentData { weight := 2 } |>.withParentData { weight := 3, fill := false }).parentData
         == { weight := 3, fill := false }

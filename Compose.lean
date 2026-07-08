@@ -23,4 +23,6 @@ import Compose.Ui.Draw.Scope
 import Compose.Ui.Modifier
 import Compose.Ui.Node
 import Compose.Ui.Layout
+import Compose.Ui.Window
+import Compose.Ui.App
 import Compose.Foundation.Layouts

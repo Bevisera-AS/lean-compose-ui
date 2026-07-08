@@ -13,6 +13,9 @@ import ComposeTests.Material
 import ComposeTests.Overlay
 import ComposeTests.TextField
 import ComposeTests.UiTest
+import ComposeTests.Counter
+import ComposeTests.TempConverter
+import ComposeTests.FlightBooker
 import ComposeTests.CellsUi
 import ComposeTests.Timer
 import ComposeTests.Crud
@@ -43,6 +46,9 @@ def main : IO UInt32 := do
   Harness.group "Overlay" Overlay.run
   Harness.group "TextField" TextField.run
   Harness.group "UiTest" UiTest.run
+  Harness.group "Counter" Counter.run
+  Harness.group "TempConverter" TempConverter.run
+  Harness.group "FlightBooker" FlightBooker.run
   Harness.group "CellsUi" CellsUi.run
   Harness.group "Timer" Timer.run
   Harness.group "Crud" Crud.run

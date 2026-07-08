@@ -89,6 +89,25 @@ lean_exe «demo-widgets» where
 lean_exe «demo-overlays» where
   root := `Demos.Overlays
 
+-- M12 7GUIs demos. Each demo's screen + pure logic live in a `main`-free
+-- library module (`Demos/<X>.lean`) so its MT test suite can import it; the
+-- `main` entry point is a thin shim (`Demos/<X>Main.lean`, the exe root),
+-- because Lean forbids two `main`s in one import closure.
+
+/-- M12 7GUIs Counter: read-only field + increment button (`Demos/Counter.lean`). -/
+lean_exe «demo-counter» where
+  root := `Demos.CounterMain
+
+/-- M12 7GUIs Temperature Converter: bidirectionally synced C/F fields
+(`Demos/TempConverter.lean`). -/
+lean_exe «demo-tempconv» where
+  root := `Demos.TempConverterMain
+
+/-- M12 7GUIs Flight Booker: mode combobox + validated date fields + dialog
+(`Demos/FlightBooker.lean`). -/
+lean_exe «demo-flight» where
+  root := `Demos.FlightBookerMain
+
 /-- M12 7GUIs Timer: gauge + duration slider + reset, ticking off the frame
 clock. Model + UI live in `Demos/Timer.lean` (importable by the MT suite); the
 `_root_.main` entry is in `Demos/TimerApp.lean` (see that module's note). -/
@@ -133,13 +152,15 @@ lean_exe «demo-cells» where
   root := `Demos.CellsMain
 
 /-- M12 demo *libraries* (model + UI, no `_root_.main`): the reusable modules
-the demo exes wrap and the MT suite imports. Declared as their own
-`default_target` lib (like `CellsEngine`) so `lake build` compiles them and
-runs their `#guard`s. The `_root_.main` entry points live in the sibling
-`Demos.TimerApp`/`Demos.CrudApp` modules (the exe roots) — kept separate
+the demo exes wrap and the MT suites import. Declared as their own
+`default_target` lib (like `CellsEngine`) so `lake build` compiles them, runs
+their `#guard`s, and propagates the sdl dependency's native code for
+interpretation. The `_root_.main` entry points live in the sibling
+`Demos.<X>Main`/`Demos.<X>App` shim modules (the exe roots) — kept separate
 because two `_root_.main`-defining modules cannot both be imported by the
-single test runner. Purely additive. -/
+single test runner. -/
 @[default_target]
 lean_lib Demos where
   srcDir := "."
-  globs := #[.one `Demos.Timer, .one `Demos.Crud]
+  globs := #[.one `Demos.Counter, .one `Demos.TempConverter,
+    .one `Demos.FlightBooker, .one `Demos.Timer, .one `Demos.Crud]

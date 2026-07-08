@@ -70,9 +70,14 @@ require sdl from git
 lean_lib Compose
 
 /-- Demo gallery launcher (individual 7GUIs demos get their own exes as they
-land). -/
+land); `--list` prints the registered demo exe names. -/
 lean_exe gallery where
   root := `Main
+
+/-- M5 smoke demo: timers + frame clock + recomposition + remeasure
+(`Demos/Smoke.lean`). -/
+lean_exe «demo-smoke» where
+  root := `Demos.Smoke
 
 /-- Registers the `ComposeTests.*` submodules (Harness + per-milestone groups)
 so the test exe can import them; a bare `lean_exe` does not glob its srcDir.

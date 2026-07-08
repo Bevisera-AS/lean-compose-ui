@@ -89,6 +89,20 @@ lean_exe «demo-widgets» where
 lean_exe «demo-overlays» where
   root := `Demos.Overlays
 
+/-- M12 7GUIs Counter: read-only field + increment button (`Demos/Counter.lean`). -/
+lean_exe «demo-counter» where
+  root := `Demos.Counter
+
+/-- M12 7GUIs Temperature Converter: bidirectionally synced C/F fields
+(`Demos/TempConverter.lean`). -/
+lean_exe «demo-tempconv» where
+  root := `Demos.TempConverter
+
+/-- M12 7GUIs Flight Booker: mode combobox + validated date fields + dialog
+(`Demos/FlightBooker.lean`). -/
+lean_exe «demo-flight» where
+  root := `Demos.FlightBooker
+
 /-- Registers the `ComposeTests.*` submodules (Harness + per-milestone groups)
 so the test exe can import them; a bare `lean_exe` does not glob its srcDir.
 (Named `ComposeTests` because the sdl dependency already exports `Tests.*`

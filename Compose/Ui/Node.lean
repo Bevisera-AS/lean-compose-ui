@@ -110,6 +110,11 @@ structure LayoutNodeData where
   needsRelayout : Bool := false
   /-- The node's drawing is stale (consumed by the M5 app loop). -/
   needsRedraw : Bool := true
+  /-- Owner hook, set on the *root* node by the app shell: called whenever a
+  dirty walk reaches this parentless node, i.e. whenever any node in the tree
+  newly needs remeasuring. Mirrors `LayoutNode.owner?.onRequestMeasure`
+  scheduling a frame. -/
+  onRequestRemeasure : Option (IO Unit) := none
   /-- Two-way registration on the states read by measure/placement. -/
   registry : ObservationRegistry
 
@@ -146,15 +151,18 @@ def child (n : LayoutNode) (i : Nat) : IO LayoutNode := do
     throw <| IO.userError s!"LayoutNode.child: index {i} out of bounds ({d.children.size})"
 
 /-- Flag every ancestor with `needsRelayout` so the next root pass descends
-to this node; stops at an ancestor already on a dirty path. The upward half
-of Compose's `requestRemeasure` propagation. -/
+to this node; stops at an ancestor already on a dirty path (that ancestor's
+own dirtying already notified the owner). At the parentless top, fires the
+`onRequestRemeasure` owner hook. The upward half of Compose's
+`requestRemeasure` propagation. -/
 partial def markAncestorsNeedRelayout (n : LayoutNode) : IO Unit := do
-  match (← n.data).parent with
-  | none => return
+  let d ← n.data
+  match d.parent with
+  | none => if let some notify := d.onRequestRemeasure then notify
   | some p =>
     let pd ← p.data
     if pd.needsRelayout || pd.needsRemeasure then return
-    p.modifyData fun d => { d with needsRelayout := true, needsRedraw := true }
+    p.modifyData fun dd => { dd with needsRelayout := true, needsRedraw := true }
     p.markAncestorsNeedRelayout
 
 /-- Invalidate the node's measurement (state write in a measure lambda,
@@ -174,6 +182,12 @@ def create : IO LayoutNode := do
   let n : LayoutNode := ⟨SlotVal.mk ref⟩
   invalidateRef.set n.markNeedsRemeasure
   return n
+
+/-- Install the owner hook on a root node: `notify` runs whenever a dirty
+walk reaches this node from anywhere in its tree (see
+`LayoutNodeData.onRequestRemeasure`). -/
+def setOnRequestRemeasure (n : LayoutNode) (notify : IO Unit) : IO Unit :=
+  n.modifyData fun d => { d with onRequestRemeasure := some notify }
 
 /-- Set the node's position (from a parent placement block). -/
 def setPosition (n : LayoutNode) (pos : IntOffset) : IO Unit :=

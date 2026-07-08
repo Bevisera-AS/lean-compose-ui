@@ -166,6 +166,13 @@ def setContent (comp : Composition) (content : Composable Unit) : IO Unit := do
 def drain (comp : Composition) : IO Unit :=
   comp.recomposer.drainRecompositions
 
+/-- Install the invalidation observer: `f` runs whenever a scope of this
+composition is invalidated. The M5 app shell points this at the window's
+needs-frame flag (Compose's `Recomposer` waking its apply loop on
+`invalidate`). -/
+def setOnInvalidate (comp : Composition) (f : IO Unit) : IO Unit :=
+  comp.composer.onInvalidate.set f
+
 /-- Tear down the composition: every remembered observer is forgotten
 (depth-first), the applier is cleared, further recompositions are inert.
 Mirrors `Composition.dispose`. -/

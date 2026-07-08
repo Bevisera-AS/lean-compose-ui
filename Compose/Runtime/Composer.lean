@@ -206,6 +206,11 @@ structure Composer where
   pendingRemembers : IO.Ref (Array (IO Unit))
   /-- Deferred `SideEffect`s, dispatched last. -/
   pendingSideEffects : IO.Ref (Array (IO Unit))
+  /-- Observer called whenever a scope is invalidated (enqueued for
+  recomposition). The M5 app shell points this at its needs-frame flag so any
+  state write schedules a frame — the composition half of Compose's
+  `Recomposer` waking its apply loop. Defaults to a no-op. -/
+  onInvalidate : IO.Ref (IO Unit)
 
 /-- The composable monad: an effectful computation with access to the ambient
 composer. Mirrors `@Composable` functions receiving `$composer`. -/
@@ -226,7 +231,8 @@ def create (applier : NodeApplier) : IO Composer :=
            invalidations := ← IO.mkRef #[]
            pendingForgets := ← IO.mkRef #[]
            pendingRemembers := ← IO.mkRef #[]
-           pendingSideEffects := ← IO.mkRef #[] }
+           pendingSideEffects := ← IO.mkRef #[]
+           onInvalidate := ← IO.mkRef (pure ()) }
 
 private def topFrame (c : Composer) : IO Frame := do
   match (← c.frames.get).back? with
@@ -262,6 +268,7 @@ private def freshScope (c : Composer) (g : Group) : IO RecomposeScope := do
       scope.valid.set false
       c.invalidations.modify fun q =>
         if q.any (·.id == scope.id) then q else q.push scope
+      (← c.onInvalidate.get)
   return scope
 
 /-- Collect disposal work for a removed subtree in document order: a group's

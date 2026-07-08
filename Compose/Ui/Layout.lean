@@ -81,8 +81,20 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
       let off := rd.offset.toOffset
       match de with
       | .background color .rectangle =>
-        -- Crisp axis-aligned fast path.
-        DrawScope.drawRect (.solid color) off sz
+        match ctx.clipShape with
+        | some rr =>
+          if rr.rect == Rect.ofOffsetSize off sz then
+            -- The `clip(shape).background(color)` idiom: fill the enclosing
+            -- clip shape itself so the fill is geometrically clipped
+            -- (`rr` is already in this node's coordinates).
+            DrawScope.drawRoundRect (.solid color) rr
+          else
+            -- Partial overlap degrades to the rectangular bounds clip
+            -- (DESIGN.md's documented rounded-clip limitation).
+            DrawScope.drawRect (.solid color) off sz
+        | none =>
+          -- Crisp axis-aligned fast path.
+          DrawScope.drawRect (.solid color) off sz
         cont
       | .background color shape =>
         DrawScope.translate off <|

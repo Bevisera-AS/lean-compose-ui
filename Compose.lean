@@ -46,3 +46,6 @@ import Compose.Foundation.Gestures
 import Compose.Foundation.Interaction
 import Compose.Animation.Visibility
 import Compose.Material.Text
+import Compose.Material.Theme
+import Compose.Material.StateLayer
+import Compose.Material.Surface

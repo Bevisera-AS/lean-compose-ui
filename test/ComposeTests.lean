@@ -10,6 +10,7 @@ import ComposeTests.App
 import ComposeTests.Input
 import ComposeTests.Text
 import ComposeTests.Material
+import ComposeTests.TextField
 
 /-!
 # Runtime test entry point
@@ -34,4 +35,5 @@ def main : IO UInt32 := do
   Harness.group "Input" Input.run
   Harness.group "Text" Text.run
   Harness.group "Material" Material.run
+  Harness.group "TextField" TextField.run
   Harness.summary

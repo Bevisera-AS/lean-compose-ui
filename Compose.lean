@@ -60,3 +60,5 @@ import Compose.Material.Slider
 import Compose.Material.ProgressIndicator
 import Compose.Material.Divider
 import Compose.Material.Scrollbar
+import Compose.Material.Menu
+import Compose.Material.Dialog

@@ -73,10 +73,14 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
   let scheduler ← Scheduler.create
     (wake := do let _ ← Sdl.pushUserEvent wakeEvent; pure ())
     (clock := Sdl.getTicksNS)
+  -- Text stack: bundled fonts + renderer text engine (M7), shared per window.
+  let textContext : TextContext :=
+    { fontStore := ← FontStore.create
+      textEngine := ← Sdl.Ttf.createRendererTextEngine renderer }
   let scale ← window.displayScale
   let densityState ← mutableStateOf ({ density := if scale > 0 then scale else 1 } : Density)
   let ctx : WindowContext :=
-    { window, renderer, densityState, scheduler, wakeEvent
+    { window, renderer, densityState, scheduler, wakeEvent, textContext
       root := ← LayoutNode.create
       compositionCell := ← IO.mkRef none
       needsFrame := ← IO.mkRef true

@@ -3,6 +3,8 @@ import Compose.Runtime.Recomposer
 import Compose.Runtime.LaunchedEffect
 import Compose.Runtime.Macro
 import Compose.Ui.Node
+import Compose.Ui.Text.Fonts
+import Compose.Ui.Text.Paragraph
 
 namespace Compose
 
@@ -24,6 +26,22 @@ composition. Provided per window and refreshed on
 scale change. Mirrors `androidx.compose.ui.platform.LocalDensity`. -/
 initialize LocalDensity : CompositionLocal Density ← compositionLocalOf {}
 
+/-- The window's text stack: the shared `FontStore` and the renderer text
+engine both created by `bootstrap`. Consumed by `Material.Text` (and M11's
+`TextField`) to build `TextLayout`s. -/
+structure TextContext where
+  /-- Shared font cache (bundled family + system fallbacks). -/
+  fontStore : FontStore
+  /-- The window's renderer text engine (atlas-cached, incremental). -/
+  textEngine : Sdl.Ttf.TextEngine
+
+/-- The ambient window text stack (`none` outside a window). Static — a window
+never swaps its font store or text engine. Provided by `WindowContext.wrapContent`.
+Mirrors an internal platform local rather than public API. -/
+initialize LocalTextContext : CompositionLocal (Option TextContext) ←
+  return { id := ← freshId, defaultValue := none, isStatic := true,
+           eq := fun _ _ => true }
+
 /-- Per-window state owned by the app shell (see the module docstring).
 Create via `Compose.bootstrap`; the record itself is plumbing — composables
 should prefer the dedicated locals (`LocalDensity`, `LocalScheduler`). -/
@@ -39,6 +57,9 @@ structure WindowContext where
   root : LayoutNode
   /-- The window's coroutine scheduler (wake = SDL user event push). -/
   scheduler : Scheduler
+  /-- The window's text stack (font store + renderer text engine), created by
+  `bootstrap` and provided to composition as `LocalTextContext`. -/
+  textContext : TextContext
   /-- The composition, installed by `bootstrap` right after creation (the
   content wrapper needs the context, so the knot is tied through this cell —
   always `some` once `bootstrap` returns). -/
@@ -106,8 +127,9 @@ def wrapContent (ctx : WindowContext) (content : Composable Unit) : Composable U
   rootRestartable do
     let d ← ctx.densityState.get
     CompositionLocalProvider LocalWindowContext (some ctx) <|
-      CompositionLocalProvider LocalScheduler (some ctx.scheduler) <|
-        CompositionLocalProvider LocalDensity d content
+      CompositionLocalProvider LocalTextContext (some ctx.textContext) <|
+        CompositionLocalProvider LocalScheduler (some ctx.scheduler) <|
+          CompositionLocalProvider LocalDensity d content
 
 end WindowContext
 

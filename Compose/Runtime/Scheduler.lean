@@ -176,6 +176,29 @@ protected def await (t : Task α) : UiTask α := ⟨fun s tok k => do
       s.taskWaits.modify (·.push (IO.hasFinished t, guarded tok (do k (← IO.wait t))))
       let _ ← BaseIO.mapTask (fun _ => s.wake.catchExceptions fun _ => pure ()) t⟩
 
+/-- Run `a` and `b` concurrently under this coroutine; complete with the first
+result and cancel the loser (it stops at its next suspension point; a pending
+loser timer fires as a no-op, per this module's cancellation contract). The
+Lean spelling of `kotlinx.coroutines.selects.select`/`race` as gesture
+detectors use it (e.g. long-press timeout vs. release).
+
+Caveat (documented, matching the exception-free cancellation model): if the
+*parent* is cancelled while both branches are suspended, the branches only
+stop at their own next resumption — code between suspension points still runs
+to the next suspension, exactly as for any cancelled coroutine. -/
+protected def race (a b : UiTask α) : UiTask α := ⟨fun s tok k => do
+  let winner ← IO.mkRef false
+  let ta ← CancelToken.create
+  let tb ← CancelToken.create
+  let finish (loser : CancelToken) (v : α) : IO Unit := do
+    unless ← winner.get do
+      winner.set true
+      loser.cancel
+      unless ← tok.isCancelled do k v
+  a.run s ta fun v => finish tb v
+  unless ← winner.get do
+    b.run s tb fun v => finish ta v⟩
+
 end UiTask
 
 namespace Scheduler

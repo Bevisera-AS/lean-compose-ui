@@ -176,6 +176,46 @@ def circular (r : Rect) (radius : Float32) : RoundRect :=
   let c := CornerRadius.circular radius
   { rect := r, topLeft := c, topRight := c, bottomRight := c, bottomLeft := c }
 
+/-- Whether `p` lies inside the rounded rect: inside the bounding rect and, in
+each corner's radius box, inside that corner's ellipse. The exact geometric
+containment test pointer hit-testing uses for `Modifier.clip`ped nodes.
+Mirrors the corner math of Skia's `SkRRect::contains`. -/
+def contains (rr : RoundRect) (p : Offset) : Bool :=
+  rr.rect.contains p &&
+  cornerOk rr.topLeft (rr.rect.left + rr.topLeft.x) (rr.rect.top + rr.topLeft.y)
+    (p.x < rr.rect.left + rr.topLeft.x) (p.y < rr.rect.top + rr.topLeft.y) p &&
+  cornerOk rr.topRight (rr.rect.right - rr.topRight.x) (rr.rect.top + rr.topRight.y)
+    (p.x > rr.rect.right - rr.topRight.x) (p.y < rr.rect.top + rr.topRight.y) p &&
+  cornerOk rr.bottomRight (rr.rect.right - rr.bottomRight.x) (rr.rect.bottom - rr.bottomRight.y)
+    (p.x > rr.rect.right - rr.bottomRight.x) (p.y > rr.rect.bottom - rr.bottomRight.y) p &&
+  cornerOk rr.bottomLeft (rr.rect.left + rr.bottomLeft.x) (rr.rect.bottom - rr.bottomLeft.y)
+    (p.x < rr.rect.left + rr.bottomLeft.x) (p.y > rr.rect.bottom - rr.bottomLeft.y) p
+where
+  /-- Inside the corner's radius box (`inX && inY`), test the ellipse centered
+  at `(cx, cy)`; outside the box the corner imposes nothing. -/
+  cornerOk (c : CornerRadius) (cx cy : Float32) (inX inY : Bool) (p : Offset) : Bool :=
+    !(inX && inY && c.x > 0 && c.y > 0) ||
+    (let dx := (p.x - cx) / c.x
+     let dy := (p.y - cy) / c.y
+     dx * dx + dy * dy <= 1)
+
+-- plain rect: corners impose nothing
+#guard (ofRect ⟨0, 0, 10, 10⟩).contains ⟨0, 0⟩
+#guard !(ofRect ⟨0, 0, 10, 10⟩).contains ⟨10, 5⟩
+-- circle of radius 20 at (20,20): corners of the bounding box are outside
+#guard (circular ⟨0, 0, 40, 40⟩ 20).contains ⟨20, 20⟩
+#guard !(circular ⟨0, 0, 40, 40⟩ 20).contains ⟨2, 2⟩
+#guard !(circular ⟨0, 0, 40, 40⟩ 20).contains ⟨38, 38⟩
+#guard (circular ⟨0, 0, 40, 40⟩ 20).contains ⟨20, 1⟩   -- on the vertical axis
+#guard (circular ⟨0, 0, 40, 40⟩ 20).contains ⟨6, 6⟩    -- (14² + 14²) ≤ 20²
+-- rounded rect: straight edges hit, radius-box corners follow the arc
+#guard (circular ⟨0, 0, 40, 20⟩ 5).contains ⟨1, 10⟩
+#guard !(circular ⟨0, 0, 40, 20⟩ 5).contains ⟨1, 1⟩
+#guard (circular ⟨0, 0, 40, 20⟩ 5).contains ⟨4, 4⟩
+-- translated rect
+#guard (circular ⟨10, 10, 50, 50⟩ 20).contains ⟨30, 30⟩
+#guard !(circular ⟨10, 10, 50, 50⟩ 20).contains ⟨12, 12⟩
+
 /-- Clamp all radii so adjacent corners never overlap (each axis pair sums to at
 most the side length), preserving proportions — the standard CSS/Skia rule. -/
 def normalize (rr : RoundRect) : RoundRect :=

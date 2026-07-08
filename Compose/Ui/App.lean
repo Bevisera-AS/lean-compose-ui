@@ -1,5 +1,6 @@
 import Compose.Ui.Window
 import Compose.Ui.Layout
+import Compose.Ui.Input.Router
 import Compose.Ui.Draw.Scope
 
 namespace Compose
@@ -89,6 +90,9 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
   -- Composition half: any scope invalidation (state write) schedules a frame.
   comp.setOnInvalidate ctx.requestFrame
   ctx.compositionCell.set (some comp)
+  -- M6 input: translate SDL pointer/key/text events into the tree via the
+  -- window's `inputSink` (tests may re-install with a recording cursor).
+  let _ ← installInput ctx
   return ctx
 
 /-- Dispatch one SDL event against the window (step 2 of the loop; exposed

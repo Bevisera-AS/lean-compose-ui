@@ -24,6 +24,7 @@ import Compose.Ui.Input.Pointer
 import Compose.Ui.Input.Keyboard
 import Compose.Ui.Modifier
 import Compose.Ui.Node
+import Compose.Ui.Input.HitTest
 import Compose.Ui.Layout
 import Compose.Ui.Window
 import Compose.Ui.App

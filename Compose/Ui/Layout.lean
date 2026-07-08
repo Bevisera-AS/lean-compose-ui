@@ -1,5 +1,7 @@
 import Compose.Ui.Node
+import Compose.Ui.Input.HitTest
 import Compose.Runtime.Composer
+import Compose.Runtime.LaunchedEffect
 
 namespace Compose
 
@@ -27,14 +29,18 @@ chain: a layout-affecting modifier change or policy change invalidates
 measurement; a draw-only change just requests a redraw. `policyInputs` gives
 the policy an input identity (hash of what it captures) so unchanged policies
 skip invalidation; `none` conservatively treats the policy as changed every
-update (Compose's capturing-lambda `set(measurePolicy)` behavior). Mirrors
+update (Compose's capturing-lambda `set(measurePolicy)` behavior). The update
+phase also reconciles the chain's `Modifier.pointerInput` coroutines against
+the ambient `LocalScheduler` (launch on enter/key change, cancel on leave —
+see `LayoutNode.reconcilePointerInputs`). Mirrors
 `androidx.compose.ui.layout.Layout`. -/
 def Layout (modifier : Modifier) (policy : MeasurePolicy)
     (content : Composable Unit := pure ())
     (policyInputs : Option UInt64 := none) : Composable Unit :=
   emitNode (create := return NodeVal.mk (← LayoutNode.create))
-    (update := fun nv => fun _ =>
-      LayoutNode.update nv.get! modifier policy policyInputs)
+    (update := fun nv => do
+      LayoutNode.update nv.get! modifier policy policyInputs
+      LayoutNode.reconcilePointerInputs nv.get! (← LocalScheduler.current))
     content
 
 namespace LayoutNode

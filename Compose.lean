@@ -14,6 +14,13 @@ import Compose.Runtime.SkipEq
 import Compose.Runtime.Macro
 import Compose.Runtime.Scheduler
 import Compose.Runtime.LaunchedEffect
+import Compose.Animation.Easing
+import Compose.Animation.Vector
+import Compose.Animation.Spring
+import Compose.Animation.Spec
+import Compose.Animation.Animatable
+import Compose.Animation.AnimateAsState
+import Compose.Animation.Transition
 import Compose.Ui.Constraints
 import Compose.Ui.Measure
 import Compose.Ui.Draw.Mesh
@@ -37,4 +44,5 @@ import Compose.Ui.App
 import Compose.Foundation.Layouts
 import Compose.Foundation.Gestures
 import Compose.Foundation.Interaction
+import Compose.Animation.Visibility
 import Compose.Material.Text

@@ -160,6 +160,21 @@ def modify (s : MutableState α) (f : α → α) : IO Unit := do
 
 end MutableState
 
+/-- A read-only view of observable state: `get` registers the read with the
+ambient observer exactly like `MutableState.get`, but the holder cannot
+write. What `animate*AsState` and `Transition` hand out. Mirrors
+`androidx.compose.runtime.State` (the read-only supertype of
+`MutableState`). -/
+structure State (α : Type) where
+  /-- Read the current value, registering with the ambient observer. -/
+  get : IO α
+
+instance [Nonempty α] : Nonempty (State α) := ⟨⟨pure (Classical.choice ‹_›)⟩⟩
+
+/-- This state, viewed read-only. Mirrors the `MutableState<T> : State<T>`
+upcast. -/
+def MutableState.asState (s : MutableState α) : State α := ⟨s.get⟩
+
 /-- A cached computation over other states: dependents are invalidated only
 when the recomputed value actually changes. Mirrors
 `androidx.compose.runtime.derivedStateOf`. -/

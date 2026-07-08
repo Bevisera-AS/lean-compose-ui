@@ -89,6 +89,18 @@ lean_exe «demo-widgets» where
 lean_exe «demo-overlays» where
   root := `Demos.Overlays
 
+/-- M12 7GUIs Timer: gauge + duration slider + reset, ticking off the frame
+clock. Model + UI live in `Demos/Timer.lean` (importable by the MT suite); the
+`_root_.main` entry is in `Demos/TimerApp.lean` (see that module's note). -/
+lean_exe «demo-timer» where
+  root := `Demos.TimerApp
+
+/-- M12 7GUIs CRUD: prefix-filtered listbox + name/surname fields +
+create/update/delete. Model + UI live in `Demos/Crud.lean` (importable by the
+MT suite); the `_root_.main` entry is in `Demos/CrudApp.lean`. -/
+lean_exe «demo-crud» where
+  root := `Demos.CrudApp
+
 /-- Registers the `ComposeTests.*` submodules (Harness + per-milestone groups)
 so the test exe can import them; a bare `lean_exe` does not glob its srcDir.
 (Named `ComposeTests` because the sdl dependency already exports `Tests.*`
@@ -119,3 +131,15 @@ headers over the pure engine (`Demos/Cells/Ui.lean`; the root is a separate
 module so the UI stays importable by the test lib without a `main` clash). -/
 lean_exe «demo-cells» where
   root := `Demos.CellsMain
+
+/-- M12 demo *libraries* (model + UI, no `_root_.main`): the reusable modules
+the demo exes wrap and the MT suite imports. Declared as their own
+`default_target` lib (like `CellsEngine`) so `lake build` compiles them and
+runs their `#guard`s. The `_root_.main` entry points live in the sibling
+`Demos.TimerApp`/`Demos.CrudApp` modules (the exe roots) — kept separate
+because two `_root_.main`-defining modules cannot both be imported by the
+single test runner. Purely additive. -/
+@[default_target]
+lean_lib Demos where
+  srcDir := "."
+  globs := #[.one `Demos.Timer, .one `Demos.Crud]

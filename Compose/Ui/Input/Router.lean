@@ -43,19 +43,29 @@ structure InputManager where
   /-- Last pointer position in render px (window-leave synthesizes its `exit`
   here; scroll fallback position). -/
   lastPos : IO.Ref Offset
+  /-- M10 overlay key handlers (shared with `WindowContext.keyHandlers` by
+  `installInput`): capture handlers run before focused-node routing, the
+  rest after it, innermost (last registered) first. -/
+  overlayKeys : IO.Ref (Array OverlayKeyHandler)
 
 namespace InputManager
 
 /-- Fresh manager over `root`. `onFocusTarget` runs after every focus change
-(see `FocusManager`); `installInput` uses it for the M11 text-input hook. -/
+(see `FocusManager`); `installInput` uses it for the M11 text-input hook.
+`overlayKeys` shares the window's overlay key-handler registry (a fresh empty
+one when absent — headless router tests). -/
 def create (root : LayoutNode) (cursor : CursorSetter)
-    (onFocusTarget : Option LayoutNode → IO Unit := fun _ => pure ()) : IO InputManager :=
+    (onFocusTarget : Option LayoutNode → IO Unit := fun _ => pure ())
+    (overlayKeys : Option (IO.Ref (Array OverlayKeyHandler)) := none) : IO InputManager :=
   return { root
            focus := ← FocusManager.create root onFocusTarget
            hover := ← HoverState.create cursor
            capture := ← IO.mkRef #[]
            buttonsHeld := ← IO.mkRef .none
-           lastPos := ← IO.mkRef .zero }
+           lastPos := ← IO.mkRef .zero
+           overlayKeys := ← match overlayKeys with
+             | some r => pure r
+             | none => IO.mkRef #[] }
 
 /-- Mask of a possibly-absent button. -/
 private def maskOf : Option Sdl.MouseButton → Sdl.MouseButtonFlags
@@ -119,11 +129,26 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
   | .enter =>
     return false
 
-/-- Route one key event: `Modifier.onKeyEvent` chain first (focused node,
-then ancestors), then the app fallbacks — Tab/Shift-Tab traversal, Esc
+/-- Run the registered overlay key handlers of the given phase, innermost
+(last registered) first; `true` = consumed. The registry is re-read from the
+shared ref so a handler that unregisters others (a dismiss) is safe. -/
+private def runOverlayKeys (im : InputManager) (capture : Bool) (ke : KeyEvent) : IO Bool := do
+  let hs ← im.overlayKeys.get
+  for i in [0:hs.size] do
+    let h := hs[hs.size - 1 - i]!
+    if h.capture == capture then
+      if ← h.handler ke then return true
+  return false
+
+/-- Route one key event: overlay *capture* handlers first (a focusable popup
+grabs the keyboard while open), then the `Modifier.onKeyEvent` chain (focused
+node, then ancestors), then the remaining overlay handlers (Esc-dismiss,
+innermost first), then the app fallbacks — Tab/Shift-Tab traversal, Esc
 clears focus. Returns whether anything handled it. -/
 def keyEvent (im : InputManager) (ke : KeyEvent) : IO Bool := do
+  if ← im.runOverlayKeys (capture := true) ke then return true
   if ← im.focus.dispatchKey ke then return true
+  if ← im.runOverlayKeys (capture := false) ke then return true
   if ke.down && ke.key == .tab then
     im.focus.moveFocus (backward := ke.hasShift)
     return true
@@ -188,7 +213,9 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
     | some c => pure c
     | none => CursorSetter.sdl
   let isClient ← IO.mkRef false
-  let im ← InputManager.create ctx.root cursor (onFocusTarget := fun target => do
+  let im ← InputManager.create ctx.root cursor
+    (overlayKeys := some ctx.keyHandlers)
+    (onFocusTarget := fun target => do
     let now ← match target with
       | some n => do pure (← n.data).modifier.isTextInputClient
       | none => pure false

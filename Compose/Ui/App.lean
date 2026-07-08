@@ -1,5 +1,6 @@
 import Compose.Ui.Window
 import Compose.Ui.Layout
+import Compose.Ui.Overlay
 import Compose.Ui.Input.Router
 import Compose.Ui.Draw.Scope
 
@@ -86,11 +87,16 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
       needsFrame := ← IO.mkRef true
       quitRequested := ← IO.mkRef false
       framesRendered := ← IO.mkRef 0
-      inputSink := ← IO.mkRef fun _ => pure false }
+      inputSink := ← IO.mkRef fun _ => pure false
+      overlays := ← mutableStateOfPolicy (fun _ _ => false) #[]
+      keyHandlers := ← IO.mkRef #[] }
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame
-  let comp ← Composition.create (LayoutNode.applier ctx.root) (ctx.wrapContent content)
+  -- M10: the root wrapper composes the overlay host right after the content,
+  -- so popup/dialog layers become later (topmost) children of the root.
+  let comp ← Composition.create (LayoutNode.applier ctx.root)
+    (ctx.wrapContent (ctx.withOverlayHost content))
   -- Composition half: any scope invalidation (state write) schedules a frame.
   comp.setOnInvalidate ctx.requestFrame
   ctx.compositionCell.set (some comp)

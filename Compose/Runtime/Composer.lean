@@ -78,6 +78,8 @@ carried by Compose's composer. -/
 structure LocalMap where
   entries : List (Nat × SlotVal) := []
 
+instance : Inhabited LocalMap := ⟨{}⟩
+
 namespace LocalMap
 
 /-- The empty scope (only defaults visible). -/

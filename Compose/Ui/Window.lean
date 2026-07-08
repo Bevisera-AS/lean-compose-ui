@@ -42,6 +42,49 @@ initialize LocalTextContext : CompositionLocal (Option TextContext) ←
   return { id := ← freshId, defaultValue := none, isStatic := true,
            eq := fun _ _ => true }
 
+/-- One entry of the window's overlay registry (M10): an independent
+composition subtree the root's overlay host composes *after* the main
+content, measured with window constraints — drawn on top, hit-tested first.
+Registered/unregistered by `Popup`/`Dialog` (`Compose.Ui.Overlay`). Mirrors
+the popup-layout entries `androidx.compose.ui.window.Popup` hangs off the
+owner. -/
+structure OverlayEntry where
+  /-- Process-unique identity (registry removal, `keyed` group identity). -/
+  id : Nat
+  /-- The entry's layer content; refreshed by the owning composable every
+  composition so the host always composes the latest capture. -/
+  content : IO.Ref (Composable Unit)
+  /-- Bumped by the owner whenever `content` is refreshed, so the host layer
+  recomposes (the owner's recomposition propagates into the overlay). -/
+  revision : MutableState Nat
+  /-- `CompositionLocal` scope captured at the owner's call site — the layer
+  composes under these, so overlay content sees the theme/density/scheduler
+  of where the `Popup` sits, like Compose's popup composition inheriting the
+  parent `CompositionContext`. -/
+  locals : IO.Ref LocalMap
+
+instance : Nonempty OverlayEntry :=
+  ⟨{ id := 0
+     content := Classical.choice inferInstance
+     revision := Classical.choice inferInstance
+     locals := Classical.choice inferInstance }⟩
+
+/-- An app-level key handler registered by an overlay (M10): `capture`
+handlers run *before* focused-node routing (a focusable popup grabs the
+keyboard while open), the rest run after it but before the Tab/Esc fallbacks
+(Esc-dismisses-popup wins over Esc-clears-focus). Innermost overlay first =
+last registered consulted first. -/
+structure OverlayKeyHandler where
+  /-- The registering overlay's id. -/
+  id : Nat
+  /-- Run before focused-node key routing. -/
+  capture : Bool
+  /-- `true` consumes the event. -/
+  handler : KeyEvent → IO Bool
+
+instance : Inhabited OverlayKeyHandler :=
+  ⟨{ id := 0, capture := false, handler := fun _ => pure false }⟩
+
 /-- Per-window state owned by the app shell (see the module docstring).
 Create via `Compose.bootstrap`; the record itself is plumbing — composables
 should prefer the dedicated locals (`LocalDensity`, `LocalScheduler`). -/
@@ -79,6 +122,13 @@ structure WindowContext where
   /-- The registered SDL user-event type used solely to wake the sleeping
   loop (`Scheduler.wake`); carries no payload and is dropped on receipt. -/
   wakeEvent : Sdl.EventType
+  /-- M10's overlay registry, in registration order (draw order; reverse hit
+  order). A state so the overlay host recomposes on register/unregister;
+  never-equal policy — entries carry no useful equality. -/
+  overlays : MutableState (Array OverlayEntry)
+  /-- Overlay key handlers (see `OverlayKeyHandler`); consulted by the input
+  router. -/
+  keyHandlers : IO.Ref (Array OverlayKeyHandler)
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app
@@ -108,6 +158,24 @@ def requestFrame (ctx : WindowContext) : IO Unit :=
 /-- Ask the loop to exit (honored at the next iteration). -/
 def requestQuit (ctx : WindowContext) : IO Unit :=
   ctx.quitRequested.set true
+
+/-- Append an overlay entry (drawn on top of all earlier ones). The state
+write recomposes the overlay host. -/
+def registerOverlay (ctx : WindowContext) (e : OverlayEntry) : IO Unit :=
+  ctx.overlays.modify (·.push e)
+
+/-- Remove the overlay entry with the given id. -/
+def unregisterOverlay (ctx : WindowContext) (id : Nat) : IO Unit :=
+  ctx.overlays.modify (·.filter (·.id != id))
+
+/-- Register an overlay key handler (innermost = last registered wins the
+first look; see `OverlayKeyHandler`). -/
+def registerKeyHandler (ctx : WindowContext) (h : OverlayKeyHandler) : IO Unit :=
+  ctx.keyHandlers.modify (·.push h)
+
+/-- Remove the key handler registered under `id`. -/
+def unregisterKeyHandler (ctx : WindowContext) (id : Nat) : IO Unit :=
+  ctx.keyHandlers.modify (·.filter (·.id != id))
 
 /-- A non-skippable restart scope for the window root, so the density read
 below re-runs the providers when the scale changes (reads at the composition

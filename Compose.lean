@@ -36,6 +36,7 @@ import Compose.Ui.Layout
 import Compose.Ui.Text.Style
 import Compose.Ui.Text.Fonts
 import Compose.Ui.Text.Paragraph
+import Compose.Ui.Text.EditModel
 import Compose.Ui.Window
 import Compose.Ui.Input.Focus
 import Compose.Ui.Input.Hover
@@ -62,3 +63,4 @@ import Compose.Material.Divider
 import Compose.Material.Scrollbar
 import Compose.Material.Menu
 import Compose.Material.Dialog
+import Compose.Material.TextField

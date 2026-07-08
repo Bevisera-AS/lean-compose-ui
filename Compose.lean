@@ -65,3 +65,4 @@ import Compose.Material.Scrollbar
 import Compose.Material.Menu
 import Compose.Material.Dialog
 import Compose.Material.TextField
+import Compose.Test

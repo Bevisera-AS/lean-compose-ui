@@ -11,6 +11,7 @@ import Compose.Runtime.Recomposer
 import Compose.Runtime.Effects
 import Compose.Runtime.Locals
 import Compose.Runtime.SkipEq
+import Compose.Runtime.Macro
 import Compose.Ui.Draw.Mesh
 import Compose.Ui.Draw.Tessellate
 import Compose.Ui.Draw.Brush

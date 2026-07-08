@@ -54,6 +54,16 @@ def group (name : String) (body : IO Unit) : IO Unit := do
     IO.eprintln s!"FAIL {name} raised: {e}"
     failures.modify (· + 1)
 
+/-- Run one MT-framework scenario (a `Compose.Test.runComposeTest` call):
+its assertions print their own `ok` lines and *throw* on failure, so a throw
+here is counted as one failure and later scenarios in the group still run. -/
+def scenario (name : String) (body : IO Unit) : IO Unit := do
+  try
+    body
+  catch e =>
+    IO.eprintln s!"FAIL {name}: {e}"
+    failures.modify (· + 1)
+
 /-- Final tally; exit code 1 iff any check failed. -/
 def summary : IO UInt32 := do
   let n ← failures.get

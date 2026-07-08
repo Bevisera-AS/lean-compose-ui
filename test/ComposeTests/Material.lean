@@ -219,6 +219,32 @@ private def buttonHoverLayer : IO Unit := do
   r.settle
   check "hover: unhover returns to plain primary" (near (← r.pixel 12 20) L.primary)
 
+/-- A held press shows the bounded ripple: the container brightens (ripple +
+press layer) while the rounded corner outside the shape stays background —
+the expanding circle is geometrically clipped. Releasing fades it back. -/
+private def buttonPressRipple : IO Unit := do
+  -- Green backdrop behind the button: an *unclipped* white ripple would
+  -- visibly whiten the corner pixel outside the rounded shape.
+  let r ← mboot <| themed <| Box (Modifier.fillMaxSize |>.background .green)
+    (content := fun _ => Button (pure ()) (content := Text "OK"))
+  let before ← r.pixel 40 20
+  r.press 12 20
+  r.settle    -- ripple expands to cover, alpha held while pressed
+  let held ← r.pixel 40 20
+  check s!"ripple: container brightens while pressed ({showColor before} → {showColor held})"
+    (held.r.toNat ≥ before.r.toNat + 8)
+  -- The press circle (r ≈ cover radius from (12,20)) would cover (0,0) if
+  -- it were not clipped to the button's rounded shape (the pixel is outside
+  -- the r=8 corner arc and beyond its 1 px AA feather).
+  let corner ← r.pixel 0 0
+  check s!"ripple: clipped to the shape — corner stays backdrop ({showColor corner})"
+    (near corner .green)
+  r.release 12 20
+  r.settle    -- ripple fades out (hover layer may remain)
+  let after ← r.pixel 40 20
+  check s!"ripple: fades after release ({showColor held} → {showColor after})"
+    (after.r.toNat + 4 ≤ held.r.toNat)
+
 /-- Disabled button: dimmed container, no click, no focus. -/
 private def buttonDisabled : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
@@ -498,6 +524,7 @@ def run : IO Unit := do
   surfaceShapePixels
   buttonBasics
   buttonHoverLayer
+  buttonPressRipple
   buttonDisabled
   checkboxToggles
   radioSelects

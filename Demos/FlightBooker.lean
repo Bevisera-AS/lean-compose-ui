@@ -168,11 +168,10 @@ composable def smokePump (enabled : Bool) : Composable Unit := do
     let _ ← phase.get
     pure ()
 
-end Demos.FlightBooker
+/-- The demo's window: the frame pump plus the screen. `smoke` is set from
+`COMPOSE_MAX_FRAMES` by the entry point in `Demos/FlightBookerMain.lean`. -/
+composable def flightBookerApp (smoke : Bool) : Composable Unit := do
+  smokePump smoke
+  flightBookerUi
 
-/-- Entry point. -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
-  Compose.runApp "compose flight booker" 360 360
-    (do Demos.FlightBooker.smokePump smoke; Demos.FlightBooker.flightBookerUi)
-    { clearColor := Compose.ColorScheme.light.background }
+end Demos.FlightBooker

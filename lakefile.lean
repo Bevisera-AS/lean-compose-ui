@@ -89,19 +89,35 @@ lean_exe «demo-widgets» where
 lean_exe «demo-overlays» where
   root := `Demos.Overlays
 
+-- M12 7GUIs demos. Each demo's screen + pure logic live in a `main`-free
+-- library module (`Demos/<X>.lean`) so its MT test suite can import it; the
+-- `main` entry point is a thin shim (`Demos/<X>Main.lean`, the exe root),
+-- because Lean forbids two `main`s in one import closure.
+
 /-- M12 7GUIs Counter: read-only field + increment button (`Demos/Counter.lean`). -/
 lean_exe «demo-counter» where
-  root := `Demos.Counter
+  root := `Demos.CounterMain
 
 /-- M12 7GUIs Temperature Converter: bidirectionally synced C/F fields
 (`Demos/TempConverter.lean`). -/
 lean_exe «demo-tempconv» where
-  root := `Demos.TempConverter
+  root := `Demos.TempConverterMain
 
 /-- M12 7GUIs Flight Booker: mode combobox + validated date fields + dialog
 (`Demos/FlightBooker.lean`). -/
 lean_exe «demo-flight» where
-  root := `Demos.FlightBooker
+  root := `Demos.FlightBookerMain
+
+/-- The M12 demo library modules (each demo's screen + pure logic, minus its
+`main` shim). A proper `lean_lib` — rather than loose exe-root imports — so the
+sdl dependency's native code propagates for interpretation and the MT test
+suites (`test/ComposeTests/{Counter,TempConverter,FlightBooker}.lean`) can
+import them. A `default_target` (like `CellsEngine`) so a bare `lake build`
+compiles the demos' inline `#guard` suites. -/
+@[default_target]
+lean_lib Demos where
+  srcDir := "."
+  globs := #[.one `Demos.Counter, .one `Demos.TempConverter, .one `Demos.FlightBooker]
 
 /-- Registers the `ComposeTests.*` submodules (Harness + per-milestone groups)
 so the test exe can import them; a bare `lean_exe` does not glob its srcDir.

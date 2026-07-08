@@ -22,12 +22,10 @@ composable def counterUi : Composable Unit := do
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
       (content := fun _ => do
         Text "Counter" (style := { fontSize := 22 })
-        Row {} (horizontalArrangement := .spacedBy 12)
-          (verticalAlignment := .centerVertically) (content := fun _ => do
-            TextFieldS (toString n) (fun _ => pure ()) (enabled := false)
-              (modifier := Modifier.testTag "count")
-            Button (count.modify (· + 1)) (modifier := Modifier.testTag "count-btn")
-              (content := Text "Count"))))
+        TextFieldS (toString n) (fun _ => pure ()) (enabled := false)
+          (modifier := Modifier.testTag "count")
+        Button (count.modify (· + 1)) (modifier := Modifier.testTag "count-btn")
+          (content := Text "Count")))
 
 /-- Headless-smoke frame pump: a fully static screen idles (presents no
 frames), so under `COMPOSE_MAX_FRAMES` the loop would never reach its cap and
@@ -41,11 +39,10 @@ composable def smokePump (enabled : Bool) : Composable Unit := do
     let _ ← phase.get
     pure ()
 
-end Demos.Counter
+/-- The demo's window: the frame pump plus the screen. `smoke` is set from
+`COMPOSE_MAX_FRAMES` by the entry point in `Demos/CounterMain.lean`. -/
+composable def counterApp (smoke : Bool) : Composable Unit := do
+  smokePump smoke
+  counterUi
 
-/-- Entry point. -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
-  Compose.runApp "compose counter" 320 200
-    (do Demos.Counter.smokePump smoke; Demos.Counter.counterUi)
-    { clearColor := Compose.ColorScheme.light.background }
+end Demos.Counter

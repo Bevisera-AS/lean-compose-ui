@@ -114,27 +114,25 @@ composable def tempConverterUi : Composable Unit := do
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
       (content := fun _ => do
         Text "Temperature Converter" (style := { fontSize := 22 })
-        Row {} (horizontalArrangement := .spacedBy 8)
-          (verticalAlignment := .centerVertically) (content := fun _ => do
-            TextFieldS c
-              (fun t => do
-                celsius.set t
-                match parseNumber t with
-                | some v => fahrenheit.set (fmtTemp (cToF v))
-                | none => pure ())
-              (label := some "Celsius")
-              (isError := !c.trimAscii.toString.isEmpty && (parseNumber c).isNone)
-              (modifier := Modifier.testTag "celsius")
-            Text "="
-            TextFieldS f
-              (fun t => do
-                fahrenheit.set t
-                match parseNumber t with
-                | some v => celsius.set (fmtTemp (fToC v))
-                | none => pure ())
-              (label := some "Fahrenheit")
-              (isError := !f.trimAscii.toString.isEmpty && (parseNumber f).isNone)
-              (modifier := Modifier.testTag "fahrenheit"))))
+        TextFieldS c
+          (fun t => do
+            celsius.set t
+            match parseNumber t with
+            | some v => fahrenheit.set (fmtTemp (cToF v))
+            | none => pure ())
+          (label := some "Celsius")
+          (isError := !c.trimAscii.toString.isEmpty && (parseNumber c).isNone)
+          (modifier := Modifier.testTag "celsius")
+        Text "="
+        TextFieldS f
+          (fun t => do
+            fahrenheit.set t
+            match parseNumber t with
+            | some v => celsius.set (fmtTemp (fToC v))
+            | none => pure ())
+          (label := some "Fahrenheit")
+          (isError := !f.trimAscii.toString.isEmpty && (parseNumber f).isNone)
+          (modifier := Modifier.testTag "fahrenheit")))
 
 /-- Headless-smoke frame pump (see `Demos/Counter.lean`): keeps frames coming
 under `COMPOSE_MAX_FRAMES` on an otherwise static screen; inert interactively. -/
@@ -145,11 +143,10 @@ composable def smokePump (enabled : Bool) : Composable Unit := do
     let _ ← phase.get
     pure ()
 
-end Demos.TempConverter
+/-- The demo's window: the frame pump plus the screen. `smoke` is set from
+`COMPOSE_MAX_FRAMES` by the entry point in `Demos/TempConverterMain.lean`. -/
+composable def tempConverterApp (smoke : Bool) : Composable Unit := do
+  smokePump smoke
+  tempConverterUi
 
-/-- Entry point. -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
-  Compose.runApp "compose temperature converter" 460 200
-    (do Demos.TempConverter.smokePump smoke; Demos.TempConverter.tempConverterUi)
-    { clearColor := Compose.ColorScheme.light.background }
+end Demos.TempConverter

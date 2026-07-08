@@ -79,6 +79,11 @@ lean_exe gallery where
 lean_exe «demo-smoke» where
   root := `Demos.Smoke
 
+/-- M9 widget gallery: every Material widget, interactive, light + dark
+(`Demos/Widgets.lean`). -/
+lean_exe «demo-widgets» where
+  root := `Demos.Widgets
+
 /-- Registers the `ComposeTests.*` submodules (Harness + per-milestone groups)
 so the test exe can import them; a bare `lean_exe` does not glob its srcDir.
 (Named `ComposeTests` because the sdl dependency already exports `Tests.*`

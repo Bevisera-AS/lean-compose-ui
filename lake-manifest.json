@@ -1,0 +1,16 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/philnguyen/lean-sdl3",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "e5dc25504402b87fbc9368ac366922fd8e66974c",
+   "name": "sdl",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "e5dc25504402b87fbc9368ac366922fd8e66974c",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "«compose-ui»",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

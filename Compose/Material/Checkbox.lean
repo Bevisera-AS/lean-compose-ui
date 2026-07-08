@@ -81,6 +81,7 @@ composable def Checkbox (checked : Bool) (onCheckedChange : Bool → IO Unit)
   let markColor := if enabled then colors.onPrimary else colors.surface
   let m := modifier
     |>.size 40 40
+    |>.semantics (role := some .checkbox) (toggled := some checked)
     |>.clickable (do let (c, f) ← latest.get; f !c) enabled (source := some source)
     |>.then layer
     |>.drawBehind (drawCheckbox fillNow fractionNow borderColor markColor)

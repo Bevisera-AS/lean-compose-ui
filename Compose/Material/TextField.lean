@@ -350,6 +350,11 @@ composable def TextField (value : TextFieldValue)
   let density ← LocalDensity.current
   let window? ← LocalWindowContext.current
   let tc? ← LocalTextContext.current
+  -- Semantics: an editable text node — findable by role/label, its current
+  -- value asserted through `editableText` (Compose's `EditableText` +
+  -- `Disabled` + label `Text` properties).
+  let modifier := modifier.semantics (role := some .textField)
+    (editableText := some value.text) (text := label) (disabled := some !enabled)
   match tc? with
   | none =>
     -- Composed outside a window (no text stack): occupy no space.

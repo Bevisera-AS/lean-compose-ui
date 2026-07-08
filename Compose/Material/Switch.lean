@@ -72,6 +72,7 @@ composable def Switch (checked : Bool) (onCheckedChange : Bool → IO Unit)
   let haloAlpha := if enabled then values.layerAlpha else 0
   let m := modifier
     |>.size 52 40
+    |>.semantics (role := some .switch) (toggled := some checked)
     |>.clickable (do let (c, f) ← latest.get; f !c) enabled (source := some source)
     |>.drawBehind (drawSwitch trackNow borderColor thumbColor colors.onSurface
         thumbXNow thumbRNow fractionNow haloAlpha)

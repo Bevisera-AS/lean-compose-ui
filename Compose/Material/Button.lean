@@ -33,6 +33,7 @@ private def buttonImpl (onClick : IO Unit) (modifier : Modifier) (enabled : Bool
   let layer ← rememberStateLayer source shape (tint := some contentColor) (enabled := enabled)
   let m := modifier
     |>.sizeIn (minWidth := some 64) (minHeight := some 40)
+    |>.semantics (role := some .button)
     |>.clickable (do (← clickRef.get)) enabled (source := some source)
     |>.background container shape
     |>.border 2 (if focused && enabled then colors.outline else .transparent) shape

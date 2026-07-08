@@ -92,6 +92,11 @@ def clickable (onClick : IO Unit) (enabled : Bool := true)
     | none => m
   hovered
   |>.pointerHoverIcon (if enabled then .pointer else .default)
+  -- Semantics: clickables merge their descendants (a Button is findable by
+  -- its label text) and state their enabledness explicitly — Compose's
+  -- `clickable` semantics, minus the onClick action closure (the MT test
+  -- framework activates nodes through the real input pipeline instead).
+  |>.semantics (mergeDescendants := true) (disabled := some !enabled)
   |>.focusable enabled
   |>.onFocusChanged (fun b =>
       match source with

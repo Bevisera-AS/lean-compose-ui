@@ -192,6 +192,9 @@ composable def Slider (value : Float32) (onValueChange : Float32 → IO Unit)
     |>.height 40
     |>.fillMaxWidth
     |>.sizeIn (minWidth := some 144)
+    |>.semantics (role := some .slider) (disabled := some !enabled)
+        (range := some { current := value, min := valueRange.1
+                         max := valueRange.2, steps })
     |>.hoverable source enabled
     |>.focusable enabled
     |>.onFocusChanged source.focused.set

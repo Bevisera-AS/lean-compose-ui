@@ -85,6 +85,9 @@ composable def Text (text : String) (modifier : Modifier := {})
   let ambient ← LocalTextStyle.current
   let density ← LocalDensity.current
   let tc? ← LocalTextContext.current
+  -- Semantics: the displayed run, findable by `Matcher.text` (published even
+  -- outside a window so plain-composition tests see it).
+  let modifier := modifier.semantics (text := some text)
   match tc? with
   | none =>
     -- Composed outside a window (no text stack): occupy no space.

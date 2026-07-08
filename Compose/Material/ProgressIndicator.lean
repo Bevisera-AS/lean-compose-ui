@@ -58,7 +58,10 @@ private def drawBand (f0 f1 : Float32) (c : Color) : DrawM Unit := do
 composable def LinearProgressIndicator (progress : Option Float32 := none)
     (modifier : Modifier := {}) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  let m := modifier |>.sizeIn (minWidth := some 240) |>.height 4
+  let m := modifier
+    |>.semantics (role := some .progressBar)
+        (range := progress.map fun f => { current := clamp01 f })
+    |>.sizeIn (minWidth := some 240) |>.height 4
   match progress with
   | some f =>
     let f := clamp01 f
@@ -78,7 +81,10 @@ composable def LinearProgressIndicator (progress : Option Float32 := none)
 composable def CircularProgressIndicator (progress : Option Float32 := none)
     (modifier : Modifier := {}) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  let m := modifier.size 40 40
+  let m := modifier
+    |>.semantics (role := some .progressBar)
+        (range := progress.map fun f => { current := clamp01 f })
+    |>.size 40 40
   let arc (startRad sweepRad : Float32) : DrawM Unit := do
     let ctx ← read
     let sz ← DrawScope.size

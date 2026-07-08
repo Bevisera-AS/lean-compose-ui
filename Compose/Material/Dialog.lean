@@ -27,7 +27,8 @@ composable def AlertDialog (onDismissRequest : IO Unit) (title : String)
   let typo ← MaterialTheme.typography
   let shapes ← MaterialTheme.shapes
   Dialog onDismissRequest (content :=
-    Surface (modifier.sizeIn (minWidth := some 280) (maxWidth := some 560))
+    Surface (modifier.semantics (role := some .dialog)
+        |>.sizeIn (minWidth := some 280) (maxWidth := some 560))
       (shape := shapes.large) (color := some colors.surface) (content :=
         Column (Modifier.padding (all := 24)) (verticalArrangement := .spacedBy 16)
           (content := fun _ => do

@@ -47,6 +47,7 @@ composable def RadioButton (selected : Bool) (onClick : IO Unit)
                   else colors.onSurface.withAlpha disabledContentAlpha
   let m := modifier
     |>.size 40 40
+    |>.semantics (role := some .radioButton) (selected := some selected)
     |>.clickable (do (← clickRef.get)) enabled (source := some source)
     |>.then layer
     |>.drawBehind (drawRadio (if selected then active else inactive) active dotNow)

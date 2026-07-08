@@ -156,6 +156,7 @@ composable def DropdownMenuItem (text : String) (onClick : IO Unit)
   let m := modifier
     |>.fillMaxWidth
     |>.sizeIn (minWidth := some 112) (minHeight := some 36)
+    |>.semantics (role := some .menuItem)
     |>.clickable (do (← actionRef.get)) enabled (source := some source)
     |>.background (if highlighted && enabled then colors.onSurface.withAlpha 0.08
                    else .transparent)

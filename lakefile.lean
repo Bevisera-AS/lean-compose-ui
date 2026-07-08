@@ -104,12 +104,18 @@ lean_exe test where
   srcDir := "test"
   root := `ComposeTests
 
-/-- M13: the pure Cells formula engine (`Demos/Cells/Engine.lean`). Declared as
-its own `default_target` lib so `lake build` compiles it and runs its `#guard`s
-now, before the Cells demo executable exists. A `Demos/**` module belongs to no
-other lib/exe, so without this stanza CI would silently skip it. Purely
-additive — no existing target is affected; SDL-free (imports only `Std`). -/
+/-- M13: the Cells modules (`Demos/Cells/*`): the pure, SDL-free formula
+engine (`Engine.lean`, imports only `Std`) and — since M13b — the demo UI on
+top of it (`Ui.lean`, imports `Compose`). Declared as a `default_target` lib
+so `lake build` compiles both (running the engine's `#guard`s) and so the
+`ComposeTests` lib can import `Demos.Cells.Ui` for the MT behavior suite. -/
 @[default_target]
 lean_lib CellsEngine where
   srcDir := "."
   globs := #[.submodules `Demos.Cells]
+
+/-- M13b: the Cells demo — a 2-axis virtualized spreadsheet with sticky
+headers over the pure engine (`Demos/Cells/Ui.lean`; the root is a separate
+module so the UI stays importable by the test lib without a `main` clash). -/
+lean_exe «demo-cells» where
+  root := `Demos.CellsMain

@@ -89,6 +89,21 @@ lean_exe «demo-widgets» where
 lean_exe «demo-overlays» where
   root := `Demos.Overlays
 
+/-- M12: the CircleDrawer model + composable UI (`Demos/CircleDrawer/Model.lean`),
+its own lib so both the `demo-circles` exe and the MT test group can import it.
+A `Demos/CircleDrawer/**` submodule belongs to no other lib, and the exe root
+(`Demos/CircleDrawer.lean`) only adds `_root_.main` — which the test must not
+import twice. Purely additive. -/
+lean_lib CircleDrawerModel where
+  srcDir := "."
+  globs := #[.submodules `Demos.CircleDrawer]
+
+/-- M12: the 7GUIs CircleDrawer demo — undo/redo over a circle canvas, with a
+right-click popup menu and a live diameter-adjust dialog
+(`Demos/CircleDrawer.lean`). -/
+lean_exe «demo-circles» where
+  root := `Demos.CircleDrawer
+
 /-- Registers the `ComposeTests.*` submodules (Harness + per-milestone groups)
 so the test exe can import them; a bare `lean_exe` does not glob its srcDir.
 (Named `ComposeTests` because the sdl dependency already exports `Tests.*`

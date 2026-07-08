@@ -168,6 +168,41 @@ def scopeInsideNode : IO Unit := do
   checkEq "nested: removed inside the node" (← t.render) "(root (box p r))"
   checkEq "nested: remove targeted the node parent" (← t.takeLog) #["remove 1 at 1 in box"]
 
+/-- Scopes inside keyed items re-run standalone *after* a reorder: base
+applier indices must reflect the new positions, including node-count deltas
+propagated by earlier re-runs in the same drain. -/
+def scopeRerunAfterReorder : IO Unit := do
+  let t ← TestTree.create
+  let items ← mutableStateOf ["a", "b"]
+  let flag ← mutableStateOf false
+  let comp ← Composition.create t.applier <| restartable 1 do
+    let xs ← items.get
+    for x in xs do
+      keyed x do
+        emitLabeled t s!"{x}h"
+        restartable 5 do
+          if ← flag.get then
+            withGroup 11 (emitLabeled t s!"{x}c")
+          else
+            withGroup 12 (pure ())
+  checkEq "reorder+scope: initial tree" (← t.render) "(root ah bh)"
+  items.set ["b", "a"]
+  comp.drain
+  checkEq "reorder+scope: reordered" (← t.render) "(root bh ah)"
+  let _ ← t.takeLog
+  flag.set true
+  comp.drain
+  checkEq "reorder+scope: standalone inserts at new positions"
+    (← t.render) "(root bh bc ah ac)"
+  checkEq "reorder+scope: insert indices account for earlier delta"
+    (← t.takeLog) #["insert bc at 1 in root", "insert ac at 3 in root"]
+  flag.set false
+  comp.drain
+  checkEq "reorder+scope: standalone removes at new positions"
+    (← t.render) "(root bh ah)"
+  checkEq "reorder+scope: remove indices account for earlier delta"
+    (← t.takeLog) #["remove 1 at 1 in root", "remove 1 at 2 in root"]
+
 /-- A state write re-runs exactly the scopes that read the state; `BEq`-equal
 writes are no-ops. -/
 def stateTargeting : IO Unit := do
@@ -492,6 +527,7 @@ def run : IO Unit := do
   keyedReorder
   keyedMultiNodeMove
   scopeInsideNode
+  scopeRerunAfterReorder
   stateTargeting
   latestRunReads
   alwaysNotify

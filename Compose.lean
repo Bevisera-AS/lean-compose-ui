@@ -26,6 +26,9 @@ import Compose.Ui.Modifier
 import Compose.Ui.Node
 import Compose.Ui.Input.HitTest
 import Compose.Ui.Layout
+import Compose.Ui.Text.Style
+import Compose.Ui.Text.Fonts
+import Compose.Ui.Text.Paragraph
 import Compose.Ui.Window
 import Compose.Ui.Input.Focus
 import Compose.Ui.Input.Hover
@@ -34,3 +37,4 @@ import Compose.Ui.App
 import Compose.Foundation.Layouts
 import Compose.Foundation.Gestures
 import Compose.Foundation.Interaction
+import Compose.Material.Text

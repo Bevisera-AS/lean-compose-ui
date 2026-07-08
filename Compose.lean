@@ -46,6 +46,7 @@ import Compose.Foundation.Layouts
 import Compose.Foundation.Gestures
 import Compose.Foundation.Interaction
 import Compose.Foundation.Scroll
+import Compose.Foundation.Lazy
 import Compose.Animation.Visibility
 import Compose.Material.Text
 import Compose.Material.Theme

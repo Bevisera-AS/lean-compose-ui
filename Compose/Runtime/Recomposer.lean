@@ -119,6 +119,9 @@ structure Composition where
   recomposer : Recomposer
   content : IO.Ref (Composable Unit)
   disposed : IO.Ref Bool
+  /-- Whether the initial composition ran (the first pass composes the root
+  group in inserting mode; later passes match). -/
+  composed : IO.Ref Bool
 
 namespace Composition
 
@@ -126,7 +129,9 @@ namespace Composition
 drain any invalidations raised while composing. -/
 private def composeRoot (comp : Composition) : IO Unit := do
   let c := comp.composer
-  c.frames.set #[{ group := c.rootGroup }]
+  let inserting := !(← comp.composed.get)
+  comp.composed.set true
+  c.frames.set #[{ group := c.rootGroup, inserting }]
   c.nodeParents.set #[c.applier.root]
   c.scopeStack.set #[]
   c.locals.set .empty
@@ -146,7 +151,8 @@ def create [Nonempty N] (applier : Applier N) (content : Composable Unit) :
   let comp : Composition :=
     { composer, recomposer := ⟨composer⟩
       content := ← IO.mkRef content
-      disposed := ← IO.mkRef false }
+      disposed := ← IO.mkRef false
+      composed := ← IO.mkRef false }
   comp.composeRoot
   return comp
 

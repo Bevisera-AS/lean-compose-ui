@@ -14,6 +14,16 @@ name = "Compose"
 name = "gallery"
 root = "Main"
 
+# Registers the `ComposeTests.*` submodules (Harness + per-area test groups)
+# so the test exe below can import them; a bare `lean_exe` does not glob its
+# srcDir. (Named `ComposeTests` because the pinned sdl package already exports
+# `Tests.*` modules, and Lake module names are workspace-global.)
+[[lean_lib]]
+name = "ComposeTests"
+srcDir = "test"
+globs = ["ComposeTests.*"]
+
 [[lean_exe]]
 name = "test"
-root = "test.Tests"
+srcDir = "test"
+root = "ComposeTests"

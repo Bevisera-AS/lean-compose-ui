@@ -1,0 +1,19 @@
+import Compose
+import ComposeTests.Harness
+import ComposeTests.Runtime
+
+/-!
+# Runtime test entry point
+
+Groups register here as milestones land; pure logic is tested at compile time
+with `#guard` next to the definitions instead. Run headless:
+`SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy lake exe test`
+(`COMPOSE_TEST_GROUP=<Name>` runs a single group). The `Runtime` group needs
+no SDL drivers at all.
+-/
+
+open Tests
+
+def main : IO UInt32 := do
+  Harness.group "Runtime" Runtime.run
+  Harness.summary

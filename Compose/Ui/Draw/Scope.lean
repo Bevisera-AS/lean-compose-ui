@@ -55,6 +55,10 @@ structure DrawContext where
   alpha : Float32 := 1.0
   /-- The ambient density for `Dp`/`Sp` resolution by callers. -/
   density : Density := {}
+  /-- Size of the region the current block draws into (the decorated wrapper
+  for a `Modifier.drawBehind` block, set by the draw walk; `.zero` when the
+  caller declared none). Mirrors `DrawScope.size`. -/
+  size : Size := .zero
 
 /-- The draw monad: a reader over `DrawContext` in `IO`. Mirrors running inside
 Compose's `DrawScope`. -/
@@ -200,6 +204,16 @@ def translate (o : Offset) (body : DrawM α) : DrawM α :=
 every draw's output alpha). Mirrors `DrawScope.alpha` / a graphics-layer alpha. -/
 def withAlpha (a : Float32) (body : DrawM α) : DrawM α :=
   withReader (fun c => { c with alpha := c.alpha * a }) body
+
+/-- Declare the size of the region `body` draws into (readable via
+`DrawScope.size`); the draw walk wraps `Modifier.drawBehind` blocks with the
+decorated wrapper's size. Mirrors `DrawScope.size` being part of the receiver. -/
+def withSize (s : Size) (body : DrawM α) : DrawM α :=
+  withReader (fun c => { c with size := s }) body
+
+/-- Size of the region the current block draws into (see
+`DrawContext.size`). Mirrors `DrawScope.size`. -/
+def size : DrawM Size := return (← read).size
 
 /-! ## Entry point -/
 

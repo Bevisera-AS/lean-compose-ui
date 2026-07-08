@@ -119,7 +119,7 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
       | .alpha a =>
         DrawScope.withAlpha a cont
       | .drawBehind block =>
-        DrawScope.translate off block
+        DrawScope.translate off (DrawScope.withSize sz block)
         cont
     | _ =>
       -- Resolved index no longer points at a draw element (stale between a

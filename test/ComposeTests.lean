@@ -6,6 +6,7 @@ import ComposeTests.Draw
 import ComposeTests.Layout
 import ComposeTests.Scheduler
 import ComposeTests.App
+import ComposeTests.Input
 
 /-!
 # Runtime test entry point
@@ -26,4 +27,5 @@ def main : IO UInt32 := do
   Harness.group "Layout" Layout.run
   Harness.group "Scheduler" Scheduler.run
   Harness.group "App" App.run
+  Harness.group "Input" Input.run
   Harness.summary

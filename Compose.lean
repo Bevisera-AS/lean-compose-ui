@@ -20,6 +20,8 @@ import Compose.Ui.Draw.Mesh
 import Compose.Ui.Draw.Tessellate
 import Compose.Ui.Draw.Brush
 import Compose.Ui.Draw.Scope
+import Compose.Ui.Input.Pointer
+import Compose.Ui.Input.Keyboard
 import Compose.Ui.Modifier
 import Compose.Ui.Node
 import Compose.Ui.Layout

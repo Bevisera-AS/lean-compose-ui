@@ -52,6 +52,10 @@ opaque get! {α : Type} [Nonempty α] (v : SlotVal) : α
 
 end SlotVal
 
+/-- Panic/default value only (a boxed `Unit`), so containers of slots can use
+`!`-indexing; it must never be read back at another type. -/
+instance : Inhabited SlotVal := ⟨SlotVal.mk ()⟩
+
 /-- A type-erased applier node: what the runtime threads through
 `emitNode`/`Applier` so `Compose.Runtime` stays independent of the concrete
 node type (`LayoutNode` in the UI layer, a test node in the test suite).

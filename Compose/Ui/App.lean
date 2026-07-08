@@ -129,7 +129,9 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) : IO Unit := do
   (← ctx.composition).drain
   let density ← ctx.density
   let (pw, ph) ← ctx.window.getSizeInPixels
-  let _ ← ctx.root.remeasure (.fixed pw ph) density
+  -- Root constraints are the window pixels as maxima with zero minima —
+  -- content wraps unless it fills (Compose's `ComposeScene` constraints).
+  let _ ← ctx.root.remeasure { maxWidth := pw, maxHeight := ph } density
   let (r, g, b, a) := config.clearColor.toBytes
   ctx.renderer.setDrawColor r g b a
   ctx.renderer.clear

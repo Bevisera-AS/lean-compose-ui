@@ -484,7 +484,8 @@ dependency graph, cycles).
 - Pure logic: `#guard`/`example` immediately below definitions (geometry,
   tessellation vertices, easing/spring math within tolerance bounds, edit
   model, formula engine, constraint arithmetic, arrangement math).
-- Runtime (`test/Tests/<Area>.lean`, registered in `test/Tests.lean`, headless
+- Runtime (`test/ComposeTests/<Area>.lean`, registered in
+  `test/ComposeTests.lean`, headless
   via dummy drivers): composition/recomposition semantics on `TestApplier`
   (insertion/removal/moves/effect ordering), state invalidation targeting,
   layout trees (constraints in / sizes+positions out), pointer dispatch with
@@ -494,18 +495,30 @@ dependency graph, cycles).
 - Demo smoke in CI: every demo runs `COMPOSE_MAX_FRAMES=60` under dummy
   drivers on macOS + Linux.
 - Env: `COMPOSE_TEST_GROUP=<Name>` runs one group (lean-sdl3 pattern).
-- **UI test framework (milestone MT, before the demos)** — the
+- **UI test framework (milestone MT, shipped as `Compose.Test`)** — the
   `androidx.compose.ui.test` analog, built on the semantics `Modifier.Elem`:
-  widgets publish semantics (testTag, role, text, states, value ranges,
-  actions); `runComposeTest` boots a headless window with a controlled clock
-  and exposes finders (`onNodeWithText`/`onNodeWithTag`/matchers), actions
-  (`performClick`/`performTextInput`/`performKeyPress`/drag/scroll — all
-  synthesized through the real input router so tests exercise the true event
-  path), assertions (text/displayed/checked/disabled/focused/bounds), and
-  `waitForIdle`/`advanceTimeBy`. The 7GUIs demos ship behavior tests written
-  in this framework — demo development doubles as the framework's own
-  validation. Raw pixel probes remain appropriate only where pixel output is
-  itself the property under test.
+  all widgets publish semantics (`SemanticsProps`: testTag, role, text,
+  contentDescription, disabled/toggled/selected, editable value, numeric
+  range; `Modifier.clickable` merges descendants so a button is findable by
+  its label). Lean-first API shape (documented deviation from Kotlin's
+  fluent `onNode(...).performClick()` chains): `runComposeTest` boots a real
+  window headless with the content composed under a **fake-clock scheduler**
+  and runs a `TestM` (ReaderT `UiTest` IO) body; finders are `Matcher`
+  literals resolved fresh per call (`find (.text "OK")`, `.tag`, `.role`,
+  `.pred`, `and`/`or`/`not`); actions are verbs taking the matcher first
+  (`click`/`doubleClick`/`typeText`/`pressKey`/`drag`/`scrollBy`/`moveTo`) —
+  every one synthesizes SDL events through the real input router
+  (`dispatchEvent` → `InputManager.sdlEvent`, positions mapped
+  render→window), never widget callbacks; assertions
+  (`assertExists`/`assertMissing`/`assertTextEquals`/`assertEnabled`/
+  `assertChecked`/`assertSelected`/`assertFocused`/`assertRangeValue`/
+  `assertThat`) print harness-style `ok` lines and **throw with the
+  semantics-tree dump** on failure; the clock moves only on
+  `advanceTimeBy`/`advanceFrames`/`settle`, with `awaitIdle` draining
+  recomposition without advancing time. The 7GUIs demos ship behavior tests
+  written in this framework — demo development doubles as the framework's
+  own validation. Raw pixel probes remain appropriate only where pixel
+  output is itself the property under test.
 
 ## Conventions for implementation agents
 

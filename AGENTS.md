@@ -19,7 +19,7 @@ Compose/Ui/          layout, modifiers, draw, text, input, window/app loop
 Compose/Foundation/  Row/Column/Box, scroll, lazy lists, gestures
 Compose/Material/    theme + widgets
 Demos/               7GUIs demos + gallery
-test/Tests/<Area>.lean  runtime test groups, registered in test/Tests.lean
+test/ComposeTests/<Area>.lean  runtime test groups, registered in test/ComposeTests.lean
 ```
 
 Layer discipline is absolute (runtime never imports `Sdl`; ui never imports
@@ -56,8 +56,37 @@ All SDL video/render/event calls happen on the main thread only — never in
   right below the definition(s) they refer to (i.e. don't defer compile-time
   tests towards the end).
 - Runtime behavior (anything touching `IO.Ref`s or SDL) goes in
-  `test/Tests/<Area>.lean`; keep every test runnable headless under dummy
+  `test/ComposeTests/<Area>.lean` (namespace `Tests.<Area>`), registered in
+  `test/ComposeTests.lean`; keep every test runnable headless under dummy
   drivers.
+- **UI behavior tests use the MT framework** (`Compose.Test`; worked
+  examples in `test/ComposeTests/UiTest.lean`). Recipe: give widgets a
+  `Modifier.testTag`, boot with `runComposeTest`, drive with matcher-first
+  verbs, and wrap each test in `Tests.Harness.scenario` (assertions print
+  `ok` lines and throw on failure with a semantics-tree dump):
+
+  ```lean
+  open Compose.Test in
+  private def counter : IO Unit := do
+    let n ← mutableStateOf (0 : Nat)
+    runComposeTest
+      (content := Tests.restartable 1 do
+        Button (n.modify (· + 1)) (content := Text "+1")
+        Text s!"count: {← n.get}")
+      do
+        click (.text "+1")              -- real SDL events, real hit path
+        assertExists (.text "count: 1")
+        advanceTimeBy 150               -- the clock only moves when told
+  -- in the group's `run`: scenario "counter" counter
+  ```
+
+  Actions: `click`/`doubleClick`/`typeText`/`pressKey`/`drag`/`scrollBy`/
+  `moveTo`. Finders: `find`/`findAll`/`boundsOf` over `.text`/`.tag`/
+  `.role`/`.pred` matchers. Assertions: `assertExists`/`Missing`/
+  `TextEquals`/`Enabled`/`Checked`/`Selected`/`Focused`/`RangeValue`/`That`.
+  Clock: `awaitIdle`/`advanceTimeBy`/`settle`. Use raw pixel probes (the
+  `MRig`/`TRig` pattern in the Material/TextField groups) only where pixel
+  output is itself the property under test.
 
 ## Version control
 - Make small, self-contained commits

@@ -331,6 +331,18 @@ private def dragGesture : IO Unit := do
   let _ ← r.im.pointerEvent (moveTo 11 11)
   let _ ← r.im.pointerEvent (releaseAt 11 11)
   checkEq "drag: sub-slop click fires nothing" ((← log.get).size) 3
+  log.set #[]
+  -- A second button pressed mid-drag (even off the node) keeps the capture.
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  let _ ← r.im.pointerEvent (moveTo 80 90)
+  let _ ← r.im.pointerEvent { eventType := .press, position := ⟨80, 90⟩
+                              button := some .right, clicks := 1 }
+  let _ ← r.im.pointerEvent (moveTo 85 90)
+  let _ ← r.im.pointerEvent (releaseAt 85 90)  -- left up ends the drag
+  let _ ← r.im.pointerEvent { eventType := .release, position := ⟨85, 90⟩
+                              button := some .right, clicks := 1 }
+  checkEq "drag: second button mid-drag keeps the capture" (← log.get)
+    #["start@80,90", "drag@80,90Δ70,80", "drag@85,90Δ5,0", "end"]
 
 /-! ## Focus -/
 

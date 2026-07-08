@@ -69,14 +69,19 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
   match ev.eventType with
   | .press =>
     im.lastPos.set ev.position
+    let heldBefore ← im.buttonsHeld.get
     let held ← im.buttonsHeld.modifyGet fun h =>
       let h' := h ||| maskOf ev.button
       (h', h')
-    let path ← im.root.hitTest ev.position
-    im.capture.set path
-    -- Click-to-focus before delivery: handlers observe the updated focus.
-    im.focus.focusOnPress path
-    dispatchToPath path { ev with buttons := held }
+    if heldBefore == .none then
+      let path ← im.root.hitTest ev.position
+      im.capture.set path
+      -- Click-to-focus before delivery: handlers observe the updated focus.
+      im.focus.focusOnPress path
+      dispatchToPath path { ev with buttons := held }
+    else
+      -- A second button mid-gesture stays with the captured path.
+      dispatchToPath (← im.capture.get) { ev with buttons := held }
   | .release =>
     im.lastPos.set ev.position
     let held ← im.buttonsHeld.modifyGet fun h =>

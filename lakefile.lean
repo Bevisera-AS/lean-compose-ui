@@ -98,3 +98,13 @@ exe test` (`COMPOSE_TEST_GROUP=<Name>` runs one group). -/
 lean_exe test where
   srcDir := "test"
   root := `ComposeTests
+
+/-- M13: the pure Cells formula engine (`Demos/Cells/Engine.lean`). Declared as
+its own `default_target` lib so `lake build` compiles it and runs its `#guard`s
+now, before the Cells demo executable exists. A `Demos/**` module belongs to no
+other lib/exe, so without this stanza CI would silently skip it. Purely
+additive — no existing target is affected; SDL-free (imports only `Std`). -/
+@[default_target]
+lean_lib CellsEngine where
+  srcDir := "."
+  globs := #[.submodules `Demos.Cells]

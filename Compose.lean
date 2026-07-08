@@ -49,3 +49,10 @@ import Compose.Material.Text
 import Compose.Material.Theme
 import Compose.Material.StateLayer
 import Compose.Material.Surface
+import Compose.Material.Button
+import Compose.Material.Checkbox
+import Compose.Material.RadioButton
+import Compose.Material.Switch
+import Compose.Material.Slider
+import Compose.Material.ProgressIndicator
+import Compose.Material.Divider

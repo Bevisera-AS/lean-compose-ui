@@ -121,6 +121,11 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
       | .drawBehind block =>
         DrawScope.translate off (DrawScope.withSize sz block)
         cont
+      | .onPositioned handler =>
+        -- Positions are final during the draw walk; the accumulated
+        -- translation is the wrapper's window-coordinate origin.
+        handler (Rect.ofOffsetSize (ctx.translation + off) sz)
+        cont
     | _ =>
       -- Resolved index no longer points at a draw element (stale between a
       -- draw-only update and the next measure): skip defensively.

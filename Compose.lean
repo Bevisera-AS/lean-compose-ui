@@ -3,3 +3,4 @@
 import Compose.Core.Color
 import Compose.Core.Geometry
 import Compose.Core.Density
+import Compose.Runtime.SlotVal

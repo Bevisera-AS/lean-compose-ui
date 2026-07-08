@@ -82,6 +82,11 @@ structure Measurable where
   measure : Constraints → IO Placeable
   parentData : ParentData := {}
 
+/-- Panic/default value only (measures to zero); enables `!`-indexing of
+measurable arrays in policies. -/
+instance : Inhabited Measurable :=
+  ⟨{ measure := fun _ => return { width := 0, height := 0, placeAt := fun _ => pure () } }⟩
+
 /-- How a layout measures its children and places them: the heart of every
 container. Mirrors `androidx.compose.ui.layout.MeasurePolicy` (the scope is
 an explicit first argument rather than a receiver). -/

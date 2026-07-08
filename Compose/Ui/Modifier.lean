@@ -68,13 +68,23 @@ def bottomStart : Alignment := ⟨-1, 1⟩
 def bottomCenter : Alignment := ⟨0, 1⟩
 def bottomEnd : Alignment := ⟨1, 1⟩
 
-def start : Horizontal := ⟨-1⟩
-def centerHorizontally : Horizontal := ⟨0⟩
-def «end» : Horizontal := ⟨1⟩
+def Horizontal.start : Horizontal := ⟨-1⟩
+def Horizontal.centerHorizontally : Horizontal := ⟨0⟩
+def Horizontal.«end» : Horizontal := ⟨1⟩
 
-def top : Vertical := ⟨-1⟩
-def centerVertically : Vertical := ⟨0⟩
-def bottom : Vertical := ⟨1⟩
+def Vertical.top : Vertical := ⟨-1⟩
+def Vertical.centerVertically : Vertical := ⟨0⟩
+def Vertical.bottom : Vertical := ⟨1⟩
+
+/-- Horizontal alignments, `Alignment.start` spelling. -/
+def start : Horizontal := .start
+def centerHorizontally : Horizontal := .centerHorizontally
+def «end» : Horizontal := .«end»
+
+/-- Vertical alignments, `Alignment.top` spelling. -/
+def top : Vertical := .top
+def centerVertically : Vertical := .centerVertically
+def bottom : Vertical := .bottom
 
 /-- Offset of a `size`-px child inside `space` px for the given bias.
 Mirrors `BiasAlignment`'s `align` (`(center * (1 + bias)).roundToInt()`). -/

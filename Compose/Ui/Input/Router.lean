@@ -137,6 +137,11 @@ def keyEvent (im : InputManager) (ke : KeyEvent) : IO Bool := do
 def textInput (im : InputManager) (text : String) : IO Bool :=
   im.focus.dispatchTextInput text
 
+/-- Route an IME composition (`textEditing`) update to the focused node
+(`Modifier.onTextEditing`). M11 addition. -/
+def textEditing (im : InputManager) (text : String) (start length : Int32) : IO Bool :=
+  im.focus.dispatchTextEditing text start length
+
 end InputManager
 
 /-- Translate one SDL event and route it through the manager (`conv` maps
@@ -168,6 +173,8 @@ def InputManager.sdlEvent (im : InputManager)
     im.keyEvent (.ofSdl ke)
   | .textInput te =>
     im.textInput te.text
+  | .textEditing te =>
+    im.textEditing te.text te.start te.length
   | .windowMouseLeave _ =>
     im.pointerEvent { eventType := .exit, position := ← im.lastPos.get }
   | _ => return false

@@ -17,7 +17,7 @@ IO Unit` callback, invoked whenever focus lands on / leaves a node whose
 chain has an `onTextInput` handler (a *text-input client*). M11's TextField
 wires it to `Window.startTextInput`/`stopTextInput` (+ `setTextInputArea`
 from its caret rect); M6 defaults it to a no-op. `textEditing` (composition)
-events are also M11's — the router ignores them here.
+events route to the focused node's `Modifier.onTextEditing` (M11).
 -/
 
 /-- One keyboard key press/release, as routed to `Modifier.onKeyEvent`.

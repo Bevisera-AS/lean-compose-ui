@@ -269,6 +269,11 @@ inductive FocusElem where
   focused node; marks the node a *text-input client* for the M11 IME hook
   (see `Compose.Ui.Input.Keyboard`). -/
   | onTextInput (handler : String → IO Bool)
+  /-- IME composition (`textEditing`) handler: the composition text plus
+  SDL's cursor `start`/`length` (codepoint-indexed); `true` consumes. Routed
+  to the focused node like `onTextInput` (M11 addition). Mirrors the
+  composition half of `BasicTextField`'s input session. -/
+  | onTextEditing (handler : String → Int32 → Int32 → IO Bool)
 
 /-- Only `focusable` carries comparable data; handler elements never compare
 equal (capturing-lambda behavior). -/
@@ -451,6 +456,14 @@ Also marks the node a text-input client for M11's IME lifecycle hook. Mirrors
 the text-input routing of `BasicTextField`'s input modifier. -/
 def onTextInput (handler : String → IO Bool) (m : Modifier := {}) : Modifier :=
   m.append (.focus (.onTextInput handler))
+
+/-- Handle IME composition (`textEditing`) updates when this node is focused;
+`true` consumes. The handler receives the composition text and SDL's
+codepoint-indexed cursor `start`/`length` (M11 addition — see
+`FocusElem.onTextEditing`). -/
+def onTextEditing (handler : String → Int32 → Int32 → IO Bool)
+    (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.onTextEditing handler))
 
 /-! ## Chain inspection -/
 

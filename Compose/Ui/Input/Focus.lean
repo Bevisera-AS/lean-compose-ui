@@ -147,6 +147,24 @@ where
     | some p => up p
     | none => return false
 
+/-- Route an IME composition (`textEditing`) update to the focused node's
+`onTextEditing` handlers (innermost first, then ancestors); `true` =
+consumed. M11 addition, mirroring `dispatchTextInput`. -/
+partial def dispatchTextEditing (fm : FocusManager) (text : String)
+    (start length : Int32) : IO Bool := do
+  match ← fm.focusedRef.get with
+  | none => return false
+  | some n => up n
+where
+  up (n : LayoutNode) : IO Bool := do
+    let d ← n.data
+    for i in [0:d.modifier.elems.size] do
+      if let some (.focus (.onTextEditing h)) := d.modifier.elems[d.modifier.elems.size - 1 - i]? then
+        if ← h text start length then return true
+    match d.parent with
+    | some p => up p
+    | none => return false
+
 end FocusManager
 
 end Compose

@@ -96,7 +96,14 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
   ctx.compositionCell.set (some comp)
   -- M6 input: translate SDL pointer/key/text events into the tree via the
   -- window's `inputSink` (tests may re-install with a recording cursor).
-  let _ ← installInput ctx
+  -- M11 IME session: focus entering/leaving a text-input client (a node
+  -- with `Modifier.onTextInput`) starts/stops SDL text input, so committed
+  -- text and composition events flow only while a TextField is focused
+  -- (DESIGN.md "Keyboard & IME"; the caret-rect `setTextInputArea` half
+  -- lives in `Compose.Material.TextField`).
+  let _ ← installInput ctx (onTextClientFocused := fun active => do
+    if active then ctx.window.startTextInput
+    else ctx.window.stopTextInput)
   return ctx
 
 /-- Dispatch one SDL event against the window (step 2 of the loop; exposed

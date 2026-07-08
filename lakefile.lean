@@ -84,6 +84,11 @@ lean_exe «demo-smoke» where
 lean_exe «demo-widgets» where
   root := `Demos.Widgets
 
+/-- M10 overlay gallery: LazyColumn + scrollbar, dropdown menu, alert dialog
+(`Demos/Overlays.lean`). -/
+lean_exe «demo-overlays» where
+  root := `Demos.Overlays
+
 /-- Registers the `ComposeTests.*` submodules (Harness + per-milestone groups)
 so the test exe can import them; a bare `lean_exe` does not glob its srcDir.
 (Named `ComposeTests` because the sdl dependency already exports `Tests.*`

@@ -1,6 +1,7 @@
 import Compose
 import ComposeTests.Harness
 import ComposeTests.Runtime
+import ComposeTests.MacroSuite
 import ComposeTests.Draw
 
 /-!
@@ -17,5 +18,6 @@ open Tests
 
 def main : IO UInt32 := do
   Harness.group "Runtime" Runtime.run
+  Harness.group "Macro" MacroSuite.run
   Harness.group "Draw" Draw.run
   Harness.summary

@@ -59,3 +59,4 @@ import Compose.Material.Switch
 import Compose.Material.Slider
 import Compose.Material.ProgressIndicator
 import Compose.Material.Divider
+import Compose.Material.Scrollbar

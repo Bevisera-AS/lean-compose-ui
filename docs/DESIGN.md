@@ -7,6 +7,14 @@ Implementation subagents: follow this document exactly; deviations require
 orchestrator sign-off — if you believe a decision is wrong, say so in your
 report instead of silently diverging.
 
+**Compose-inspired, not a port** (project-owner directive): this framework
+does not aim for 1-1 API fidelity with Kotlin Compose. *Semantics* parity
+matters — recomposition behavior, invalidation precision, animation feel,
+widget quality. *API shape* does not: whenever a pattern or idiom makes more
+sense in Lean (do-notation, named/default args, macros, typeclasses, pattern
+matching, pipes), do it Lean's way. We optimize for Lean's ergonomics. Doc
+comments still cite Compose analogs — for orientation, not as a contract.
+
 Product decisions (settled with the project owner):
 - Dependency on lean-sdl3 is a **pinned git require** (bump deliberately).
 - Popups/dialogs/dropdowns are **in-window overlays**; the window abstraction
@@ -502,8 +510,11 @@ dependency graph, cycles).
 ## Conventions for implementation agents
 
 - Read `AGENTS.md` first (naming, piping style, commit discipline).
+- **Lean ergonomics first**: when a public API could mirror Compose or be
+  more natural in Lean, pick the Lean shape (see the directive at the top).
 - Every public declaration gets a doc comment; cite the Compose analog
-  (e.g. "Mirrors `androidx.compose.foundation.layout.Row`") where one exists.
+  (e.g. "Mirrors `androidx.compose.foundation.layout.Row`") where one exists —
+  as a pointer for readers who know Compose, not a fidelity promise.
 - Layer discipline is absolute: runtime never imports `Sdl`; ui never imports
   material. `#guard` tests land in the same commit as the definition.
 - Build + test before reporting done: `lake build` clean (no warnings,

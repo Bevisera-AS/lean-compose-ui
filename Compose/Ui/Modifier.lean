@@ -1,6 +1,8 @@
 import Compose.Ui.Measure
 import Compose.Core.Color
 import Compose.Ui.Draw.Scope
+import Compose.Ui.Input.Pointer
+import Compose.Ui.Input.Keyboard
 
 namespace Compose
 
@@ -218,13 +220,77 @@ instance : BEq DrawElem where
 #guard (DrawElem.clip .circle) != (DrawElem.alpha 1)
 #guard (DrawElem.drawBehind (pure ())) != (DrawElem.drawBehind (pure ()))
 
+/-- A pointer-affecting modifier element: participates in hit testing at its
+wrapper's region and receives the events dispatched along the hit path.
+Mirrors the `PointerInputModifier` family. -/
+inductive PointerElem where
+  /-- A suspending pointer handler: (re)launched as a coroutine when the node
+  enters the composition or `key` changes, cancelled when it leaves; events
+  hitting the wrapper region are queued to it. Mirrors
+  `Modifier.pointerInput(key) { ... }`. -/
+  | input (key : UInt64) (handler : PointerInputScope → UiTask Unit)
+  /-- System cursor while the pointer hovers the wrapper region (topmost
+  hovered wins). Mirrors `Modifier.pointerHoverIcon`. -/
+  | hoverIcon (cursor : Sdl.SystemCursor)
+  /-- Wheel-scroll callback (delta in wheel ticks); `true` consumes. The
+  raw-elem shortcut under foundation's scroll plumbing — mirrors
+  `Modifier.scrollable`'s wheel handling, without the scroll state. -/
+  | onScroll (handler : Offset → IO Bool)
+
+/-- `input` compares by key (the coroutine's relaunch identity — Compose
+semantics: the handler lambda is *not* an identity); `hoverIcon` by cursor;
+`onScroll` never (capturing-lambda behavior). -/
+instance : BEq PointerElem where
+  beq
+    | .input k _, .input k' _ => k == k'
+    | .hoverIcon c, .hoverIcon c' => c == c'
+    | _, _ => false
+
+#guard (PointerElem.hoverIcon .text) == (PointerElem.hoverIcon .text)
+#guard (PointerElem.hoverIcon .text) != (PointerElem.hoverIcon .pointer)
+#guard (PointerElem.input 1 fun _ => pure ()) == (PointerElem.input 1 fun _ => pure ())
+#guard (PointerElem.input 1 fun _ => pure ()) != (PointerElem.input 2 fun _ => pure ())
+#guard (PointerElem.onScroll fun _ => pure false) != (PointerElem.onScroll fun _ => pure false)
+
+/-- A focus/keyboard modifier element. Mirrors the `FocusModifier` +
+`KeyInputModifier` families. -/
+inductive FocusElem where
+  /-- Makes the node a focus target (Tab traversal, click-to-focus). A chain
+  is focusable iff it has a `focusable` element and none is disabled. Mirrors
+  `Modifier.focusable(enabled)`. -/
+  | focusable (enabled : Bool)
+  /-- Observes this node gaining/losing focus. Mirrors
+  `Modifier.onFocusChanged`. -/
+  | onFocusChanged (handler : Bool → IO Unit)
+  /-- Key handler; `true` consumes. Routed focused-node-first, then up the
+  ancestor chain, then app fallbacks. Mirrors `Modifier.onKeyEvent`. -/
+  | onKeyEvent (handler : KeyEvent → IO Bool)
+  /-- Text-input (IME commit) handler; `true` consumes. Delivered to the
+  focused node; marks the node a *text-input client* for the M11 IME hook
+  (see `Compose.Ui.Input.Keyboard`). -/
+  | onTextInput (handler : String → IO Bool)
+
+/-- Only `focusable` carries comparable data; handler elements never compare
+equal (capturing-lambda behavior). -/
+instance : BEq FocusElem where
+  beq
+    | .focusable a, .focusable b => a == b
+    | _, _ => false
+
+#guard (FocusElem.focusable true) == (FocusElem.focusable true)
+#guard (FocusElem.focusable true) != (FocusElem.focusable false)
+#guard (FocusElem.onFocusChanged fun _ => pure ()) != (FocusElem.onFocusChanged fun _ => pure ())
+
 /-- One element of a modifier chain. Mirrors `Modifier.Element`.
-Extension points for later milestones (M6): `pointer`, `focus`, and
-`semantics` constructors are added here and handled in
-`LayoutNode`'s wrapper fold and the input hit-test walk. -/
+`layout` elements shape the wrapper chain; `draw`, `pointer`, and `focus`
+elements never affect geometry — measurement resolves their wrapper region
+(offset + size) for the draw walk and the input hit-test walk. A `semantics`
+constructor is a future extension point. -/
 inductive Modifier.Elem where
   | layout (e : LayoutElem)
   | draw (e : DrawElem)
+  | pointer (e : PointerElem)
+  | focus (e : FocusElem)
   deriving BEq
 
 /-- An ordered modifier chain, outermost element first. Mirrors
@@ -336,6 +402,53 @@ def alpha (a : Float32) (m : Modifier := {}) : Modifier :=
 def drawBehind (block : Draw.DrawM Unit) (m : Modifier := {}) : Modifier :=
   m.append (.draw (.drawBehind block))
 
+/-! ## Pointer combinators -/
+
+/-- Install a suspending pointer handler: launched as a coroutine when the
+node enters the composition, relaunched when `key` changes (the predecessor
+is cancelled first), cancelled when the node leaves. Pointer events whose
+position hits this element's wrapper region are delivered through
+`PointerInputScope.awaitEvent`, leaf→root along the hit path with
+consumption. Mirrors `Modifier.pointerInput(key) { ... }`. -/
+def pointerInput (key : UInt64) (handler : PointerInputScope → UiTask Unit)
+    (m : Modifier := {}) : Modifier :=
+  m.append (.pointer (.input key handler))
+
+/-- Show `cursor` while the pointer hovers this element's region; the topmost
+(leaf-most, innermost) hovered icon wins and the default cursor is restored
+when nothing declares one. Mirrors `Modifier.pointerHoverIcon`. -/
+def pointerHoverIcon (cursor : Sdl.SystemCursor) (m : Modifier := {}) : Modifier :=
+  m.append (.pointer (.hoverIcon cursor))
+
+/-- Handle wheel scrolls over this element (delta in wheel ticks, positive
+`y` = away from the user); return `true` to consume. Mirrors the wheel
+handling inside `Modifier.scrollable`. -/
+def onScroll (handler : Offset → IO Bool) (m : Modifier := {}) : Modifier :=
+  m.append (.pointer (.onScroll handler))
+
+/-! ## Focus combinators -/
+
+/-- Make the node a focus target: reachable by Tab/Shift-Tab traversal and
+click-to-focus. Mirrors `Modifier.focusable(enabled)`. -/
+def focusable (enabled : Bool := true) (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.focusable enabled))
+
+/-- Observe this node gaining (`true`) / losing (`false`) focus. Mirrors
+`Modifier.onFocusChanged`. -/
+def onFocusChanged (handler : Bool → IO Unit) (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.onFocusChanged handler))
+
+/-- Handle key events when this node (or a descendant) is focused; `true`
+consumes and stops routing. Mirrors `Modifier.onKeyEvent`. -/
+def onKeyEvent (handler : KeyEvent → IO Bool) (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.onKeyEvent handler))
+
+/-- Handle committed text input when this node is focused; `true` consumes.
+Also marks the node a text-input client for M11's IME lifecycle hook. Mirrors
+the text-input routing of `BasicTextField`'s input modifier. -/
+def onTextInput (handler : String → IO Bool) (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.onTextInput handler))
+
 /-! ## Chain inspection -/
 
 /-- Fold the chain's `parentData` elements (outer to inner; a later element
@@ -352,16 +465,42 @@ def parentData (m : Modifier) : ParentData :=
     | _ => acc
 
 /-- Whether two chains are interchangeable *for measurement*: same length and,
-position by position, equal layout elements (draw elements may differ — they
-never affect geometry, so cached measurements and resolved draw indices stay
-valid). Drives `needsRemeasure` vs `needsRedraw` on node update. -/
+position by position, equal layout elements (draw/pointer/focus elements may
+differ — they never affect geometry, so cached measurements and resolved
+element regions stay valid). Drives `needsRemeasure` vs `needsRedraw` on node
+update. -/
 def layoutEq (a b : Modifier) : Bool :=
   a.elems.size == b.elems.size &&
   (a.elems.zip b.elems).all fun (x, y) =>
     match x, y with
     | .layout la, .layout lb => la == lb
     | .draw _, .draw _ => true
+    | .pointer _, .pointer _ => true
+    | .focus _, .focus _ => true
     | _, _ => false
+
+/-- The chain's `pointerInput` elements as `(chain index, key, handler)`, in
+chain order — what the reconcile pass (`LayoutNode.reconcilePointerInputs`)
+matches positionally against the node's running coroutines. -/
+def pointerInputElems (m : Modifier) :
+    Array (Nat × UInt64 × (PointerInputScope → UiTask Unit)) := Id.run do
+  let mut out := #[]
+  for h : i in [0:m.elems.size] do
+    if let .pointer (.input k f) := m.elems[i] then
+      out := out.push (i, k, f)
+  return out
+
+/-- Whether the chain has a `focusable` element and none is disabled — the
+node is then a focus target. Mirrors the merged enabled-state of stacked
+`Modifier.focusable`s. -/
+def focusEnabled (m : Modifier) : Bool :=
+  m.elems.any (fun e => e matches .focus (.focusable true)) &&
+  m.elems.all (fun e => !(e matches .focus (.focusable false)))
+
+/-- Whether the chain has an `onTextInput` handler (a *text-input client*,
+see the M11 IME hook in `Compose.Ui.Input.Keyboard`). -/
+def isTextInputClient (m : Modifier) : Bool :=
+  m.elems.any (fun e => e matches .focus (.onTextInput _))
 
 -- padding resolution precedence
 #guard (padding (all := 16)).elems == #[.layout (.padding 16 16 16 16)]
@@ -385,6 +524,21 @@ def layoutEq (a b : Modifier) : Bool :=
 #guard !layoutEq (padding (all := 2)) (padding (all := 3))
 #guard !layoutEq (padding (all := 2)) (padding (all := 2) |>.background .red)
 #guard !layoutEq (background .red) (size 1 1)
+-- pointer/focus elements are layout-inert but count as chain positions
+#guard layoutEq (size 1 1 |>.pointerInput 1 fun _ => pure ())
+                (size 1 1 |>.pointerInput 2 fun _ => pure ())
+#guard !layoutEq (size 1 1) (size 1 1 |>.focusable)
+#guard !layoutEq (size 1 1 |>.focusable) (size 1 1 |>.pointerHoverIcon .text)
+-- chain inspection helpers
+#guard ((padding (all := 2)).pointerInput 7 (fun _ => pure ())
+          |>.pointerInputElems.map fun (i, k, _) => (i, k)) == #[(1, 7)]
+#guard (size 1 1).pointerInputElems.isEmpty
+#guard (focusable).focusEnabled
+#guard !(focusable false).focusEnabled
+#guard !(focusable |>.focusable false).focusEnabled
+#guard !(padding (all := 1)).focusEnabled
+#guard (onTextInput fun _ => pure true).isTextInputClient
+#guard !(focusable).isTextInputClient
 
 end Modifier
 

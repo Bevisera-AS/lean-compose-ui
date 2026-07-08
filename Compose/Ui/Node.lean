@@ -67,9 +67,11 @@ structure LayoutNode where
   box : SlotVal
   deriving Inhabited
 
-/-- A draw-modifier element resolved during measurement: which chain element
-to execute, at what offset within the node's outer box, and the size of the
-wrapper it decorates. -/
+/-- A non-layout (draw/pointer/focus) modifier element resolved during
+measurement: which chain element it is, at what offset within the node's
+outer box, and the size of the wrapper it decorates. The draw walk executes
+the draw entries; the hit-test walk (`Compose.Ui.Input.HitTest`) tests the
+pointer/focus entries and applies `clip` entries geometrically. -/
 structure ResolvedDraw where
   /-- Index into the node's `modifier.elems`. -/
   elemIdx : Nat
@@ -101,8 +103,13 @@ structure LayoutNodeData where
   /-- Offset from the node's outer box to its content coordinate space
   (accumulated placement of the layout wrappers: padding, offset, …). -/
   contentOffset : IntOffset := .zero
-  /-- Draw modifiers resolved by the last measure (see `ResolvedDraw`). -/
+  /-- Non-layout modifiers resolved by the last measure (see `ResolvedDraw`). -/
   resolvedDraws : Array ResolvedDraw := #[]
+  /-- Runtime state of the chain's `pointerInput` elements, ordinally aligned
+  with them. Reconciled by `LayoutNode.reconcilePointerInputs` (called from
+  `Layout`'s update phase); coroutines are cancelled when the node leaves the
+  tree (`severParentLinks`, the detach hook). -/
+  pointerInputs : Array PointerInputState := #[]
   /-- The node's own measurement is invalid. -/
   needsRemeasure : Bool := true
   /-- Some descendant needs remeasuring; the next pass descends through here.
@@ -194,11 +201,20 @@ def setPosition (n : LayoutNode) (pos : IntOffset) : IO Unit :=
   n.modifyData fun d =>
     if d.position == pos then d else { d with position := pos, needsRedraw := true }
 
+/-- Process-unique identity of the node (hover-path diffing and focus
+tracking compare by it; `LayoutNode` has no useful `BEq`). -/
+def nodeId (n : LayoutNode) : IO Nat :=
+  return (← n.data).registry.dep.id
+
 /-- Sever every parent link inside the subtree, making it acyclic so RC can
 free it once the composition drops its references (see the module docstring
-on cycles). -/
+on cycles). Doubles as the subtree's *detach* hook: every `pointerInput`
+coroutine in it is cancelled — the applier calls this on `remove` and on
+composition clear, so handlers stop when their node leaves the composition
+(the input analog of `LaunchedEffect`'s cancel-on-forget). -/
 partial def severParentLinks (n : LayoutNode) : IO Unit := do
-  n.modifyData fun d => { d with parent := none }
+  (← n.data).pointerInputs.forM (·.cancel)
+  n.modifyData fun d => { d with parent := none, pointerInputs := #[] }
   (← n.data).children.forM severParentLinks
 
 /-- The `Applier` over layout nodes (erase with `Applier.erase` to drive a
@@ -219,6 +235,8 @@ def applier (root : LayoutNode) : Applier LayoutNode where
   move p src dst count := do
     p.modifyData fun d => { d with children := moveRange d.children src dst count }
     p.markNeedsRemeasure
+  -- Composition disposal detaches the whole tree (cancels input coroutines).
+  onClear := root.severParentLinks
 
 /-! ## Measurement -/
 
@@ -247,9 +265,9 @@ private partial def measureChain (n : LayoutNode) (density : Density)
     (elems : Array Modifier.Elem) (i : Nat) (c : Constraints) : IO ChainMeasured := do
   if hlt : i < elems.size then
     match elems[i] with
-    | .draw _ =>
-      -- Draw elements never affect geometry; record them at the size of the
-      -- wrapper they decorate.
+    | .draw _ | .pointer _ | .focus _ =>
+      -- Non-layout elements never affect geometry; record them at the size
+      -- of the wrapper they decorate (draw walk + hit-test walk).
       let r ← measureChain n density elems (i + 1) c
       return { r with draws := #[⟨i, .zero, r.size⟩] ++ r.draws }
     | .layout le =>

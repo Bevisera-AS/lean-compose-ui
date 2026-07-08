@@ -33,6 +33,10 @@ structure CompositionLocal (α : Type) where
   /-- Change detection for provided values. -/
   eq : α → α → Bool
 
+instance [Nonempty α] : Nonempty (CompositionLocal α) :=
+  ⟨{ id := 0, defaultValue := Classical.choice inferInstance,
+     isStatic := false, eq := fun _ _ => true }⟩
+
 /-- Create a dynamic `CompositionLocal`: reads register like state reads and
 only readers recompose when a provider's value changes. Mirrors
 `androidx.compose.runtime.compositionLocalOf` (structural equality policy). -/

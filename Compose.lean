@@ -12,6 +12,8 @@ import Compose.Runtime.Effects
 import Compose.Runtime.Locals
 import Compose.Runtime.SkipEq
 import Compose.Runtime.Macro
+import Compose.Runtime.Scheduler
+import Compose.Runtime.LaunchedEffect
 import Compose.Ui.Constraints
 import Compose.Ui.Measure
 import Compose.Ui.Draw.Mesh

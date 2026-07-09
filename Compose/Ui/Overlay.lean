@@ -159,7 +159,7 @@ private def overlayLayerContent (id : Nat) (anchor : Option Rect)
             |>.then (match scrimColor with
                      | some col => Modifier.background col
                      | none => {})
-            |>.then (if modal then Modifier.onScroll (fun _ => pure true) else {})
+            |>.then (if modal then Modifier.onScroll (fun d => pure d) else {})
           Layout m .leaf (policyInputs := some 0x736372)
       else
         withGroup 0x6e736372 (pure ())

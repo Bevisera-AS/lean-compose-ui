@@ -163,11 +163,24 @@ private def virtualizationFlow : IO Unit := cellsTest do
   assertMissing (.tag "colh-A")
   assertExists (.tag "rowh-40")               -- row headers stay pinned
   assertExists (.tag "corner")
-  -- Scrolling back restores the origin window (one axis per wheel event:
-  -- the first scroll handler that consumes stops delivery, so a diagonal
-  -- wheel applies only its innermost axis).
+  -- Scrolling back restores the origin window.
   scrollBy (.tag "grid") ⟨0, 22⟩
   scrollBy (.tag "grid") ⟨13, 0⟩
+  assertExists (.tag "cell-A1")
+  assertMissing (.tag "cell-M40")
+
+/-! ## Diagonal wheel events split per axis (M14b) -/
+
+private def diagonalWheel : IO Unit := cellsTest do
+  -- One diagonal wheel event: 13 notches right and 22 down at once. The
+  -- horizontal container consumes x, the vertical one y — both axes move.
+  scrollBy (.tag "grid") ⟨-13, -22⟩
+  assertExists (.tag "cell-M40")
+  assertMissing (.tag "cell-A1")
+  assertExists (.tag "colh-M")                -- headers followed both axes
+  assertExists (.tag "rowh-40")
+  -- And diagonally back to the origin.
+  scrollBy (.tag "grid") ⟨13, 22⟩
   assertExists (.tag "cell-A1")
   assertMissing (.tag "cell-M40")
 
@@ -199,6 +212,7 @@ def run : IO Unit := do
   scenario "formulaPropagation" formulaPropagation
   scenario "cycleFlow" cycleFlow
   scenario "virtualizationFlow" virtualizationFlow
+  scenario "diagonalWheel" diagonalWheel
   scenario "hScrollbarDrag" hScrollbarDrag
 
 end Tests.CellsUi

@@ -174,17 +174,18 @@ private def consumptionBubbling : IO Unit := do
   checkEq "consume: unconsumed release bubbles leaf→root"
     (← log.get) #["inner:release", "outer:release"]
 
-/-- `Modifier.onScroll` consumption: an inner `true` handler silences the
-outer one; `false` lets it through. -/
+/-- `Modifier.onScroll` consumption: an inner handler eating the full delta
+silences the outer one; `.zero` lets the event through untouched. -/
 private def scrollConsumption : IO Unit := do
   let inner ← IO.mkRef (#[] : Array Offset)
   let outer ← IO.mkRef (#[] : Array Offset)
   let eat ← IO.mkRef true
   let r ← rig <|
-    Box (Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure false))
+    Box (Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure .zero))
       (content := fun _ => do
         leaf (Modifier.size 50 50 |>.onScroll (fun d => do
-          inner.modify (·.push d); eat.get)))
+          inner.modify (·.push d)
+          return (if ← eat.get then d else .zero))))
   let _ ← r.im.pointerEvent (scrollAt 10 10 ⟨0, 3⟩)
   checkEq "scroll: inner handler got the delta" (← inner.get) #[(⟨0, 3⟩ : Offset)]
   checkEq "scroll: consumed, outer silent" (← outer.get) (#[] : Array Offset)
@@ -192,6 +193,21 @@ private def scrollConsumption : IO Unit := do
   let _ ← r.im.pointerEvent (scrollAt 10 10 ⟨0, -2⟩)
   checkEq "scroll: unconsumed bubbles to the outer handler"
     (← outer.get) #[(⟨0, -2⟩ : Offset)]
+
+/-- Per-axis wheel splitting: an inner vertical-only consumer leaves the
+horizontal remainder of a diagonal event to the outer handler; a fully
+consumed event stops before it. -/
+private def scrollAxisSplit : IO Unit := do
+  let outer ← IO.mkRef (#[] : Array Offset)
+  let r ← rig <|
+    Box (Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure d))
+      (content := fun _ => do
+        leaf (Modifier.size 50 50 |>.onScroll (fun d => pure ⟨0, d.y⟩)))
+  let _ ← r.im.pointerEvent (scrollAt 10 10 ⟨4, 3⟩)
+  checkEq "axis split: inner ate y, outer saw the x remainder"
+    (← outer.get) #[(⟨4, 0⟩ : Offset)]
+  let _ ← r.im.pointerEvent (scrollAt 10 10 ⟨0, 5⟩)
+  checkEq "axis split: a fully consumed event stops inside" ((← outer.get).size) 1
 
 /-! ## Hover and cursor -/
 
@@ -589,7 +605,7 @@ private def sdlTranslation : IO Unit := do
     (Box {} (content := fun _ => do
       leaf (Modifier.size 50 50
         |>.clickable (clicks.modify (· + 1))
-        |>.onScroll (fun d => do scrolls.modify (·.push d); pure true)
+        |>.onScroll (fun d => do scrolls.modify (·.push d); pure d)
         |>.onTextInput (fun t => do texts.modify (·.push t); pure true))))
     cfg
   let cursors ← IO.mkRef (#[] : Array Sdl.SystemCursor)
@@ -636,6 +652,7 @@ def run : IO Unit := do
   hitWrapperOffsets
   consumptionBubbling
   scrollConsumption
+  scrollAxisSplit
   hoverEnterExit
   hoverCursor
   tapGesture

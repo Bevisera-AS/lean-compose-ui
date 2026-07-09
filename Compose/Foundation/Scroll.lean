@@ -19,9 +19,10 @@ a scroll-position write re-lays out exactly the scrolled node (cheap: the
 content's cached measurement short-circuits) — the placement-read idiom of
 Compose's `ScrollingLayoutNode`. Content/viewport changes re-clamp the value.
 
-Wheel events over the container scroll by `wheelScrollStep` px per notch and
-are consumed only when the container can actually scroll in that direction,
-so nested scrollables bubble unconsumed wheel to their parents.
+Wheel events over the container scroll by `wheelScrollStep` px per notch;
+each container consumes only its own axis and only what it could actually
+move, so a diagonal wheel event splits between nested horizontal + vertical
+containers and end-stopped remainders bubble to outer scrollables.
 -/
 
 /-- Pixels scrolled per mouse-wheel notch (the desktop-Compose-ish line
@@ -158,15 +159,19 @@ private def scrollLayoutBlock (state : ScrollState) (vertical : Bool) : CustomLa
     return (size, if vertical then ⟨0, off⟩ else ⟨off, 0⟩)⟩
 
 /-- The wheel handler shared by both axes: scroll by `wheelScrollStep` px per
-notch; consume only when movement actually happened, so an end-stopped inner
-scrollable lets the event bubble to an outer one. -/
+notch and consume this axis's delta iff movement actually happened — the
+cross axis is untouched (a diagonal wheel event feeds the other axis's
+container), while an *end-stopped* scrollable consumes nothing and lets its
+axis bubble to an outer one (partial movement at the boundary still consumes
+the axis in full, the documented pre-M14b behavior). -/
 private def scrollWheelHandler (state : ScrollState) (vertical : Bool) :
-    Offset → IO Bool := fun delta => do
+    Offset → IO Offset := fun delta => do
   -- Positive wheel y = away from the user = toward the content start.
   let notches := if vertical then delta.y else delta.x
-  if notches == 0 then return false
+  if notches == 0 then return .zero
   let moved ← state.scrollBy (-notches * wheelScrollStep)
-  return moved != 0
+  if moved == 0 then return .zero
+  return if vertical then ⟨0, notches⟩ else ⟨notches, 0⟩
 
 namespace Modifier
 

@@ -282,10 +282,14 @@ inductive PointerElem where
   /-- System cursor while the pointer hovers the wrapper region (topmost
   hovered wins). Mirrors `Modifier.pointerHoverIcon`. -/
   | hoverIcon (cursor : Sdl.SystemCursor)
-  /-- Wheel-scroll callback (delta in wheel ticks); `true` consumes. The
-  raw-elem shortcut under foundation's scroll plumbing — mirrors
-  `Modifier.scrollable`'s wheel handling, without the scroll state. -/
-  | onScroll (handler : Offset → IO Bool)
+  /-- Wheel-scroll callback: receives the event's *remaining* wheel delta
+  (ticks) and returns the part it consumed per axis (`.zero` = none, the
+  full delta = everything). Dispatch subtracts each handler's consumption,
+  so nested horizontal + vertical scrollables split one diagonal wheel
+  event between them. The raw-elem shortcut under foundation's scroll
+  plumbing — mirrors `Modifier.scrollable`'s wheel handling, without the
+  scroll state. -/
+  | onScroll (handler : Offset → IO Offset)
 
 /-- `input` compares by key (the coroutine's relaunch identity — Compose
 semantics: the handler lambda is *not* an identity); `hoverIcon` by cursor;
@@ -300,7 +304,7 @@ instance : BEq PointerElem where
 #guard (PointerElem.hoverIcon .text) != (PointerElem.hoverIcon .pointer)
 #guard (PointerElem.input 1 fun _ => pure ()) == (PointerElem.input 1 fun _ => pure ())
 #guard (PointerElem.input 1 fun _ => pure ()) != (PointerElem.input 2 fun _ => pure ())
-#guard (PointerElem.onScroll fun _ => pure false) != (PointerElem.onScroll fun _ => pure false)
+#guard (PointerElem.onScroll fun _ => pure .zero) != (PointerElem.onScroll fun _ => pure .zero)
 
 /-- A focus/keyboard modifier element. Mirrors the `FocusModifier` +
 `KeyInputModifier` families. -/
@@ -498,10 +502,13 @@ when nothing declares one. Mirrors `Modifier.pointerHoverIcon`. -/
 def pointerHoverIcon (cursor : Sdl.SystemCursor) (m : Modifier := {}) : Modifier :=
   m.append (.pointer (.hoverIcon cursor))
 
-/-- Handle wheel scrolls over this element (delta in wheel ticks, positive
-`y` = away from the user); return `true` to consume. Mirrors the wheel
-handling inside `Modifier.scrollable`. -/
-def onScroll (handler : Offset → IO Bool) (m : Modifier := {}) : Modifier :=
+/-- Handle wheel scrolls over this element: `handler` receives the event's
+remaining delta (wheel ticks, positive `y` = away from the user) and returns
+the part it consumed per axis — `.zero` consumes nothing, the full delta
+everything; per-axis consumption lets nested horizontal + vertical
+scrollables split one diagonal event. Mirrors the wheel handling inside
+`Modifier.scrollable`. -/
+def onScroll (handler : Offset → IO Offset) (m : Modifier := {}) : Modifier :=
   m.append (.pointer (.onScroll handler))
 
 /-! ## Focus combinators -/

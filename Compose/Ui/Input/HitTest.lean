@@ -19,9 +19,12 @@ in `Compose.Ui.Input.Pointer`, below `Modifier`):
 
 * **Dispatch** (`dispatchToPath`) delivers an event to the pointer elements
   along the path leaf→root (bubbling), innermost element first within a node,
-  honoring the per-dispatch consumed flag (`Modifier.onScroll` returning
-  `true` also consumes). Positions are localized to each element's wrapper
-  region. Mirrors the main pass of Compose's pointer-input dispatch.
+  honoring the per-dispatch consumed flag. Scroll events carry a per-dispatch
+  *remaining delta*: each `Modifier.onScroll` handler sees what is left and
+  returns what it consumed per axis, so nested horizontal + vertical
+  scrollables split one diagonal wheel event; the event counts as consumed
+  once the remainder hits zero. Positions are localized to each element's
+  wrapper region. Mirrors the main pass of Compose's pointer-input dispatch.
 
 * **Reconcile** (`LayoutNode.reconcilePointerInputs`) is where
   `Modifier.pointerInput` coroutines attach to the node lifecycle: `Layout`'s
@@ -94,9 +97,12 @@ end LayoutNode
 logic — the caller decides). `rootPos` is the event position in root
 coordinates; each element receives it localized to its wrapper region.
 `pointerInput` elements get it through their queue (waking a parked
-`awaitEvent` synchronously); `onScroll` handlers run for `scroll` events and
-consume by returning `true`. -/
-def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset) : IO Unit := do
+`awaitEvent` synchronously); `onScroll` handlers run for `scroll` events
+against `scrollRemaining` (the per-dispatch leftover delta, created by
+`dispatchToPath`): each returns what it consumed per axis, and the event
+counts as consumed when the remainder reaches zero. -/
+def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset)
+    (scrollRemaining : Option (IO.Ref Offset) := none) : IO Unit := do
   let d ← t.node.data
   let origin ← t.node.originInRoot
   -- Innermost element first (bubbling starts at the leaf-most handler).
@@ -107,23 +113,42 @@ def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset) : I
     let localPos := rootPos - origin - offset
     match d.modifier.elems[idx]? with
     | some (.pointer (.input _ _)) =>
+      -- Coroutines observing a partially consumed scroll see the remainder.
+      let delta ← match scrollRemaining with
+        | some rem => rem.get
+        | none => pure ev.scrollDelta
       for st in d.pointerInputs do
         if (← st.elemIdx.get) == idx then
-          st.offer { ev with position := localPos }
+          st.offer { ev with position := localPos, scrollDelta := delta }
     | some (.pointer (.onScroll f)) =>
       if ev.eventType == .scroll then
-        if ← f ev.scrollDelta then ev.consume
+        match scrollRemaining with
+        | some rem =>
+          let delta ← rem.get
+          if delta != .zero then
+            let used ← f delta
+            let left := delta - used
+            rem.set left
+            if left == .zero then ev.consume
+        | none =>
+          -- Defensive: without a remainder ref, any consumption is total.
+          if (← f ev.scrollDelta) != .zero then ev.consume
     | _ => pure ()
 
 /-- Dispatch `ev` (position in root coordinates) along `path` **leaf→root**,
-stopping at consumption; returns whether some handler consumed. The entry
+stopping at consumption; returns whether some handler consumed. Scroll
+events get a per-dispatch remaining-delta cell so `onScroll` handlers along
+the path each consume their own axis (see `HitTarget.deliver`). The entry
 point the input router (and tests) drive with translated events. -/
 def dispatchToPath (path : Array HitTarget) (ev : PointerEvent) : IO Bool := do
   let consumed ← IO.mkRef false
   let ev := { ev with consume := consumed.set true, isConsumed := consumed.get }
+  let scrollRemaining ←
+    if ev.eventType == .scroll then some <$> IO.mkRef ev.scrollDelta
+    else pure none
   for i in [0:path.size] do
     if ← consumed.get then break
-    (path[path.size - 1 - i]!).deliver ev ev.position
+    (path[path.size - 1 - i]!).deliver ev ev.position scrollRemaining
   consumed.get
 
 namespace LayoutNode

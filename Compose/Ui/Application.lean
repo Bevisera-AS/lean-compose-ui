@@ -365,8 +365,12 @@ composable def windowImpl (dialog : Bool) (title : String) (width height : Dp)
         return pure ()
       DisposableEffect (width, height) do -- resize only on parameter change
         if let some ctx ← node.ctxCell.get then
-          let d : Density := {}
-          let (w, h) := (d.dpRoundToPx width, d.dpRoundToPx height)
+          -- Window-coordinate size (see `windowCoordSize`): identity on
+          -- macOS/dummy, scaled on Windows where window coords are pixels.
+          let scale ← ctx.window.displayScale
+          let pixelDensity ← ctx.window.pixelDensity
+          let (w, h) := (windowCoordSize width scale pixelDensity,
+                         windowCoordSize height scale pixelDensity)
           let (cw, ch) ← ctx.window.getSize
           unless cw == w && ch == h do
             ctx.window.setSize w h

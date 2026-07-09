@@ -55,12 +55,41 @@ structure AppConfig where
 wakes). -/
 def idleWaitMs : UInt32 := 1000
 
+/-- Window size in **window coordinates** for a `Dp` extent, given the window's
+SDL `displayScale` and `pixelDensity`.
+
+SDL3's model: `sizeInPixels = size × pixelDensity`, and the `displayScale` this
+framework already uses for its `Density` is `pixelDensity × OS content scale`.
+Content is laid out at `displayScale`, so a `Dp` extent wants `dp × displayScale`
+physical pixels; dividing by `pixelDensity` gives the window-coordinate extent
+that yields exactly that. Identity on macOS/dummy (displayScale = pixelDensity,
+e.g. 2/2 or 1/1) — where window coordinates *are* the layout unit — and a
+scale-up on Windows, whose window coordinates are physical pixels (pixelDensity
+1, displayScale = the OS scaling factor, e.g. 1.5/1 → ×1.5). A nonpositive
+scale or density falls back to the density-1 estimate (`factor = 1`), so the
+correction never fires on drivers that don't report metrics. -/
+def windowCoordSize (dp : Dp) (displayScale pixelDensity : Float32) : Int32 :=
+  let factor := if displayScale > 0 && pixelDensity > 0 then displayScale / pixelDensity else 1
+  (dp.value * factor + 0.5).toInt32
+
+-- macOS Retina (2/2) and the dummy driver (1/1): identity — no correction.
+#guard windowCoordSize 400 2 2 == 400
+#guard windowCoordSize 300 1 1 == 300
+-- Windows at 150 % scaling (displayScale 1.5, pixelDensity 1): window coords
+-- are pixels, so the extent scales up to keep layout and window in agreement.
+#guard windowCoordSize 400 1.5 1 == 600
+#guard windowCoordSize 300 1.5 1 == 450
+-- Unreported metrics fall back to the density-1 estimate.
+#guard windowCoordSize 400 0 0 == 400
+
 /-- Build the per-window half of `bootstrap` on an *existing* scheduler and
 wake event (`Compose.application` shares one pair across all its windows):
 SDL window/renderer, text stack, root node, composition for `content`, and
 the input pipeline, wiring both invalidation hooks to the window's
 `needsFrame` flag — everything `step`/`renderFrame` need. `width`/`height`
-are `Dp` (SDL window coordinates are density-independent). Main thread only. -/
+are `Dp`; the window is created and kept at the matching window-coordinate
+size (`windowCoordSize` — identity on macOS/dummy, scaled on Windows where
+window coordinates are physical pixels). Main thread only. -/
 def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
     (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) : IO WindowContext := do
@@ -68,6 +97,16 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
     (if config.resizable then Sdl.WindowFlags.resizable else .none) ||| .highPixelDensity
   let window ← Sdl.createWindow title
     (({} : Density).dpRoundToPx width) (({} : Density).dpRoundToPx height) flags
+  -- Created at the density-1 estimate above; correct to the true window-
+  -- coordinate size now that the display metrics are known. A no-op on
+  -- macOS/dummy (displayScale = pixelDensity, so `getSize` already matches),
+  -- a scale-up on Windows (window coordinates are physical pixels).
+  let scale ← window.displayScale
+  let pixelDensity ← window.pixelDensity
+  let (ww, wh) := (windowCoordSize width scale pixelDensity,
+                   windowCoordSize height scale pixelDensity)
+  let (cw, ch) ← window.getSize
+  unless cw == ww && ch == wh do window.setSize ww wh
   let renderer ← Sdl.createRenderer window config.rendererName
   if config.vsync then
     try renderer.setVSync 1 catch _ => pure ()
@@ -75,7 +114,6 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
   let textContext : TextContext :=
     { fontStore := ← FontStore.create
       textEngine := ← Sdl.Ttf.createRendererTextEngine renderer }
-  let scale ← window.displayScale
   let densityState ← mutableStateOf ({ density := if scale > 0 then scale else 1 } : Density)
   let ctx : WindowContext :=
     { window, renderer, densityState, scheduler, wakeEvent, textContext
@@ -123,8 +161,8 @@ def initVideo : IO Unit := do
 /-- Create the SDL window/renderer, scheduler (woken by a registered SDL
 user event), root node, and composition for `content`, wiring both
 invalidation hooks to the window's `needsFrame` flag — everything `step`
-needs, without entering the loop. `width`/`height` are `Dp` (SDL window
-coordinates are density-independent). Main thread only. -/
+needs, without entering the loop. `width`/`height` are `Dp` (sized in window
+coordinates via `windowCoordSize`). Main thread only. -/
 def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) : IO WindowContext := do
   initVideo

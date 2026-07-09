@@ -77,6 +77,23 @@ private def resizeRemeasures : IO Unit := do
   check "resize: fill covers the new geometry"
     (colorNear (← pixel ctx (w1 - 2) (h1 - 2)) 0 255 0)
 
+/-- Window sizing agrees with the layout density. On macOS/dummy
+`displayScale = pixelDensity`, so `windowCoordSize` is the identity: the created
+window keeps its requested `Dp` extent and no spurious `setSize` fires. The
+Windows scale-up (window coordinates are physical pixels) can't run headless —
+it is covered by `windowCoordSize`'s `#guard`s. -/
+private def windowSizeMatchesDensity : IO Unit := do
+  let ctx ← boot (Box (Modifier.fillMaxSize |>.background .red))
+  let (w, h) ← ctx.window.getSize
+  checkEq "size: window keeps requested width (identity correction)" w 200
+  checkEq "size: window keeps requested height (identity correction)" h 150
+  let scale ← ctx.window.displayScale
+  let pd ← ctx.window.pixelDensity
+  checkEq "size: windowCoordSize is identity under these metrics (w)"
+    (windowCoordSize 200 scale pd) 200
+  checkEq "size: windowCoordSize is identity under these metrics (h)"
+    (windowCoordSize 150 scale pd) 150
+
 /-- `quit`/`windowCloseRequested` dispatch sets the quit flag; `runLoop`
 returns immediately. -/
 private def quitHandling : IO Unit := do
@@ -158,6 +175,7 @@ def run : IO Unit := do
   rendersComposition
   stateWriteRedraws
   resizeRemeasures
+  windowSizeMatchesDensity
   quitHandling
   frameCapHonored
   idleStepBlocks

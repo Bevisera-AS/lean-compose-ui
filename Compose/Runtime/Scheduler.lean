@@ -24,7 +24,10 @@ coroutine simply never continues — Compose's Job-cancellation semantics
 without unwinding across the FFI boundary. Code between suspension points
 always runs to the next suspension. A cancelled coroutine's pending timer
 stays queued and fires as a no-op (the scheduler may report its deadline —
-one spurious wakeup, never a missed one).
+one spurious wakeup, never a missed one). Because nothing unwinds, cleanup
+that must not be skipped registers on the token: `CancelToken.onCancel` runs
+it exactly once at cancellation, and `CancelToken.child` links `race`
+branches so parent cancellation reaches them.
 
 **Driving.** The owner (app loop or test) calls, per iteration:
 `nextDeadline` (to size its sleep), `runDue now` (starts, timers, completed
@@ -34,23 +37,49 @@ then reports `0`, so the loop comes right back without busy-spinning when
 idle.
 -/
 
-/-- Cancellation flag shared between a coroutine and its `Job`. Mirrors the
-cancelled state of a `kotlinx.coroutines.Job`. -/
+/-- Cancellation flag shared between a coroutine and its `Job`, plus the
+cleanup actions `cancel` runs exactly once (cancellation never unwinds, so
+state resets and child-token links register here instead of in a `finally`).
+Mirrors the cancelled state of a `kotlinx.coroutines.Job`. -/
 structure CancelToken where
   /-- `true` once cancelled (never reset). -/
   flag : IO.Ref Bool
+  /-- Pending `onCancel` cleanups, keyed for deregistration. -/
+  actions : IO.Ref (Array (Nat × IO Unit))
 
 namespace CancelToken
 
 /-- A fresh, un-cancelled token. -/
 def create : IO CancelToken :=
-  return ⟨← IO.mkRef false⟩
+  return ⟨← IO.mkRef false, ← IO.mkRef #[]⟩
 
 /-- Whether the token was cancelled. -/
 def isCancelled (t : CancelToken) : IO Bool := t.flag.get
 
-/-- Cancel: the owning coroutine stops at its next suspension check. -/
-def cancel (t : CancelToken) : IO Unit := t.flag.set true
+/-- Cancel: the owning coroutine stops at its next suspension check, and the
+registered `onCancel` cleanups run. Only the first call does anything. -/
+def cancel (t : CancelToken) : IO Unit := do
+  unless ← t.flag.modifyGet fun f => (f, true) do
+    (← t.actions.modifyGet fun a => (a, #[])).forM (·.2)
+
+/-- Register `act` to run exactly once when the token is cancelled
+(immediately when it already is). Returns a disposer: call it when the
+guarded work completes, so registrations do not accumulate on long-lived
+tokens (a gesture loop races once per press). -/
+def onCancel (t : CancelToken) (act : IO Unit) : IO (IO Unit) := do
+  if ← t.flag.get then
+    act
+    return pure ()
+  let id ← freshId
+  t.actions.modify (·.push (id, act))
+  return t.actions.modify (·.filter (·.1 != id))
+
+/-- A fresh token cancelled together with `t` but also cancellable on its
+own — the parent→child half of structured cancellation (`race` branches).
+Also returns the link's disposer, for when the child's work completes. -/
+def child (t : CancelToken) : IO (CancelToken × IO Unit) := do
+  let c ← create
+  return (c, ← t.onCancel c.cancel)
 
 end CancelToken
 
@@ -179,20 +208,18 @@ protected def await (t : Task α) : UiTask α := ⟨fun s tok k => do
 /-- Run `a` and `b` concurrently under this coroutine; complete with the first
 result and cancel the loser (it stops at its next suspension point; a pending
 loser timer fires as a no-op, per this module's cancellation contract). The
-Lean spelling of `kotlinx.coroutines.selects.select`/`race` as gesture
-detectors use it (e.g. long-press timeout vs. release).
-
-Caveat (documented, matching the exception-free cancellation model): if the
-*parent* is cancelled while both branches are suspended, the branches only
-stop at their own next resumption — code between suspension points still runs
-to the next suspension, exactly as for any cancelled coroutine. -/
+branches run under *child tokens* of the parent, so cancelling the parent
+`Job` cancels both: a parked branch never resumes after the parent is
+cancelled. The Lean spelling of `kotlinx.coroutines.selects.select`/`race` as
+gesture detectors use it (e.g. long-press timeout vs. release). -/
 protected def race (a b : UiTask α) : UiTask α := ⟨fun s tok k => do
   let winner ← IO.mkRef false
-  let ta ← CancelToken.create
-  let tb ← CancelToken.create
+  let (ta, da) ← tok.child
+  let (tb, db) ← tok.child
   let finish (loser : CancelToken) (v : α) : IO Unit := do
     unless ← winner.get do
       winner.set true
+      da; db  -- the race is over: unlink both branches from the parent
       loser.cancel
       unless ← tok.isCancelled do k v
   a.run s ta fun v => finish tb v

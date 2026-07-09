@@ -189,6 +189,54 @@ private def deadlineMath : IO Unit := do
   advance s clock (ms 30)
   checkEq "deadline: drained back to none" (← s.nextDeadline) none
 
+/-! ## UiTask.race -/
+
+/-- Branch that re-arms a 10 ms timer forever — the `awaitReleaseOrCancel`
+shape that leaked when parent cancellation did not reach race branches. -/
+private partial def rearmLoop (ticks : IO.Ref Nat) : UiTask Unit := do
+  UiTask.delay 10
+  ticks.modify (· + 1)
+  rearmLoop ticks
+
+/-- Cancelling the parent of a job parked in `race` cancels both branches:
+neither resumes, no completion is delivered, and the parked timers fire as
+inert no-ops — the scheduler drains back to idle instead of a looping branch
+re-arming forever. -/
+private def raceParentCancel : IO Unit := do
+  let (s, clock, _) ← fakeSched
+  let slowRan ← IO.mkRef false
+  let ticks ← IO.mkRef (0 : Nat)
+  let won ← IO.mkRef false
+  let job ← s.launch do
+    let _ ← UiTask.race
+      (do UiTask.delay 50; slowRan.set true)
+      (rearmLoop ticks)
+    won.set true
+  s.runDue 0  -- both branches parked: timers at 50 ms and 10 ms
+  job.cancel
+  advance s clock (ms 200)
+  check "race parent-cancel: delay branch never resumed" (!(← slowRan.get))
+  checkEq "race parent-cancel: loop branch never re-armed" (← ticks.get) 0
+  check "race parent-cancel: no completion after cancel" (!(← won.get))
+  checkEq "race parent-cancel: timers drained inert" (← s.nextDeadline) none
+
+/-- The first branch to finish wins; the loser is cancelled and never resumes
+past its suspension, its stale timer consumed inert. -/
+private def raceWinnerCancelsLoser : IO Unit := do
+  let (s, clock, _) ← fakeSched
+  let log ← IO.mkRef (#[] : Array String)
+  let _ ← s.launch do
+    let v ← UiTask.race
+      (do UiTask.delay 10; pure "fast")
+      (do UiTask.delay 30; log.modify (·.push "slow"); pure "slow")
+    log.modify (·.push s!"won:{v}")
+  s.runDue 0
+  advance s clock (ms 10)
+  checkEq "race winner: first to finish wins" (← log.get) #["won:fast"]
+  advance s clock (ms 50)
+  checkEq "race winner: loser never resumed" (← log.get) #["won:fast"]
+  checkEq "race winner: loser timer drained inert" (← s.nextDeadline) none
+
 /-! ## LaunchedEffect / rememberLaunchScope -/
 
 /-- `LaunchedEffect` launches on enter, relaunches on key change (the
@@ -277,6 +325,8 @@ def run : IO Unit := do
   yieldFairness
   launchInsideCoroutine
   deadlineMath
+  raceParentCancel
+  raceWinnerCancelsLoser
   launchedEffectLifecycle
   missingScheduler
   launchScopeAutoCancel

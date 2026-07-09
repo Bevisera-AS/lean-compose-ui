@@ -57,7 +57,7 @@ The M11 outlined single-line text field, mirroring
 TextField to single-line); the flag exists for API fidelity and controls
 newline stripping on insert/paste.
 
-`TextFieldS` is the `String`-convenience overload the 7GUIs demos consume: it
+`TextField` is the `String`-convenience overload the 7GUIs demos consume: it
 remembers the selection/composition internally and reports plain strings.
 -/
 
@@ -351,11 +351,14 @@ private def drawTextField (vis : FieldVisuals) : DrawM Unit := do
 
 /-! ## The composable -/
 
-/-- The Material-outlined single-line text field (see the module docstring
-for the full behavior). **Controlled**: `value` is the single source of
+/-- The full-state Material-outlined single-line text field (see the module
+docstring for the full behavior): `value` carries text *plus*
+selection/composition. **Controlled**: `value` is the single source of
 truth; every edit (typing, motion, selection, IME) is reported through
-`onValueChange` and takes effect when the caller echoes it back. Mirrors
-`androidx.compose.material3.OutlinedTextField` (with `TextFieldValue`).
+`onValueChange` and takes effect when the caller echoes it back. Most apps
+want the plain-`String` `TextField` instead. Mirrors
+`androidx.compose.material3.OutlinedTextField` (the `TextFieldValue`
+overload).
 
 Only `singleLine := true` is supported (the default; the flag controls
 newline stripping and exists for API fidelity).
@@ -363,7 +366,7 @@ newline stripping and exists for API fidelity).
 `minWidth` (default 280 dp, matching M3's `TextFieldDefaults.MinWidth`) is the
 field's minimum measured width; it is clamped to the incoming max constraint,
 so the field never forces its parent to overflow. -/
-composable def TextField (value : TextFieldValue)
+composable def ValueTextField (value : TextFieldValue)
     (onValueChange : TextFieldValue → IO Unit) (modifier : Modifier := {})
     (enabled : Bool := true) (isError : Bool := false)
     (placeholder : String := "") (label : Option String := none)
@@ -527,12 +530,13 @@ composable def TextField (value : TextFieldValue)
                       | some sp => mixKeys 0x11 sp.value.toBits.toUInt64)
               (mixKeys density.density.toBits.toUInt64 (if hasLabel then 1 else 0))))))
 
-/-- `String`-convenience `TextField`: remembers selection/composition
-internally and reports plain strings — what the 7GUIs demos want. An external
-`value` change (the app rewriting the text) resets the caret to the nearest
-boundary at or before its old position. Mirrors the `String` overload of
-`androidx.compose.material3.OutlinedTextField`. -/
-composable def TextFieldS (value : String) (onValueChange : String → IO Unit)
+/-- The Material-outlined single-line text field over plain `String` state:
+remembers selection/composition internally and reports plain strings — what
+most apps want (use `ValueTextField` for full selection/composition
+control). An external `value` change (the app rewriting the text) resets the
+caret to the nearest boundary at or before its old position. Mirrors the
+`String` overload of `androidx.compose.material3.OutlinedTextField`. -/
+composable def TextField (value : String) (onValueChange : String → IO Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) (isError : Bool := false)
     (placeholder : String := "") (label : Option String := none)
     (textStyle : TextStyle := {}) (minWidth : Dp := 280) : Composable Unit := do
@@ -542,7 +546,7 @@ composable def TextFieldS (value : String) (onValueChange : String → IO Unit)
   let v := if cur.text == value then cur
            else ({ text := value, selection := .caret cur.selection.active
                    composition := none } : TextFieldValue).normalized
-  TextField v
+  ValueTextField v
     (onValueChange := fun v' => do
       let prev ← internal.get
       internal.set v'

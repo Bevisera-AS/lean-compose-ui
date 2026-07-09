@@ -153,16 +153,16 @@ composable def crudBody (db : MutableState Db)
   Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
     (content := do
       Text "CRUD" (style := { fontSize := 22 })
-      TextFieldS f filter.set (modifier := Modifier.testTag "filter")
+      TextField f filter.set (modifier := Modifier.testTag "filter")
         (label := some "Filter prefix")
       Row {} (horizontalArrangement := .spacedBy 16) (content := do
         Column (Modifier.testTag "list" |>.width 220) (content :=
           for (id, e) in visible do
             keyed (toString id) (nameRow id e (sel == some id) (db.modify (·.select id))))
         Column {} (verticalArrangement := .spacedBy 8) (content := do
-          TextFieldS (← «name».get) «name».set (modifier := Modifier.testTag "name")
+          TextField (← «name».get) «name».set (modifier := Modifier.testTag "name")
             (label := some "Name")
-          TextFieldS (← surname.get) surname.set (modifier := Modifier.testTag "surname")
+          TextField (← surname.get) surname.set (modifier := Modifier.testTag "surname")
             (label := some "Surname")))
       Row {} (horizontalArrangement := .spacedBy 8) (content := do
         Button (do db.modify (·.create (← «name».get) (← surname.get)))

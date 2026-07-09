@@ -146,9 +146,9 @@ composable def flightBookerUi : Composable Unit := do
               for m in [oneWayLabel, returnLabel] do
                 keyed m (DropdownMenuItem m
                   (onClick := do mode.set m; expanded.set false))))
-        TextFieldS s startText.set (label := some "Start date")
+        TextField s startText.set (label := some "Start date")
           (isError := (parseDate s).isNone) (modifier := Modifier.testTag "start")
-        TextFieldS r returnText.set (enabled := isReturn) (label := some "Return date")
+        TextField r returnText.set (enabled := isReturn) (label := some "Return date")
           (isError := isReturn && (parseDate r).isNone)
           (modifier := Modifier.testTag "return")
         Button (dialogOpen.set true) (enabled := bookable)

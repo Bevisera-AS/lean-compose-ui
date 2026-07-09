@@ -102,7 +102,7 @@ def fmtTemp (x : Float) : String := fmtHundredths (roundHundredths x)
 /-! ## The demo. -/
 
 /-- The Temperature Converter screen (see the module docstring). Each field is
-a `TextFieldS`; on edit it stores the raw text and, only if it parses, writes
+a `TextField`; on edit it stores the raw text and, only if it parses, writes
 the converted value to the sibling. Unparseable input flips `isError` (error
 outline/label) and leaves the sibling untouched. -/
 composable def tempConverterUi : Composable Unit := do
@@ -114,7 +114,7 @@ composable def tempConverterUi : Composable Unit := do
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
       (content := do
         Text "Temperature Converter" (style := { fontSize := 22 })
-        TextFieldS c
+        TextField c
           (fun t => do
             celsius.set t
             match parseNumber t with
@@ -124,7 +124,7 @@ composable def tempConverterUi : Composable Unit := do
           (isError := !c.trimAscii.toString.isEmpty && (parseNumber c).isNone)
           (modifier := Modifier.testTag "celsius")
         Text "="
-        TextFieldS f
+        TextField f
           (fun t => do
             fahrenheit.set t
             match parseNumber t with

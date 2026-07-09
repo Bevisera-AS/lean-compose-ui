@@ -134,7 +134,7 @@ private def textFieldFlow : IO Unit := do
   let value ← mutableStateOf ""
   runComposeTest
     (content := Column {} (content := Tests.restartable 1 do
-      TextFieldS (← value.get) value.set (modifier := Modifier.testTag "name")
+      TextField (← value.get) value.set (modifier := Modifier.testTag "name")
       Text s!"len: {(← value.get).length}"))
     do
       assertTextEquals (.tag "name") ""
@@ -257,7 +257,7 @@ private def replaceAndFocusVerbs : IO Unit := do
   let value ← mutableStateOf "seed"
   runComposeTest
     (content := Column {} (content := Tests.restartable 1 do
-      TextFieldS (← value.get) value.set (modifier := Modifier.testTag "tf")
+      TextField (← value.get) value.set (modifier := Modifier.testTag "tf")
       Box (Modifier.testTag "target" |>.size 60 20 |>.focusable)))
     do
       assertTextEquals (.tag "tf") "seed"

@@ -6,7 +6,7 @@ import ComposeTests.TestApplier
 # TextField test group (`test/ComposeTests/TextField.lean`)
 
 M11's end-to-end editing suites, headless. The value-flow suites (typing,
-editing scripts, UTF-8, `TextFieldS`) are written in the MT framework
+editing scripts, UTF-8, `TextField`) are written in the MT framework
 (`Compose.Test`): `runComposeTest` + `typeText`/`pressKey` through the real
 input path, with `checkEq` on the controlled state for selection-precise
 expectations. The pixel/geometry suites (mouse selection, clipboard, caret
@@ -127,7 +127,7 @@ private def caretScreenX (r : TRig) (text : String) (off : Nat) : IO Float32 := 
     return 12 + (← l.measure none).width.toFloat32
   return 12 + (← l.byteOffsetToRect off).left
 
-/-- Boot a controlled `TextField` bound to fresh state; returns the rig, the
+/-- Boot a controlled `ValueTextField` bound to fresh state; returns the rig, the
 state, and the change log. -/
 private def fieldRig (initial : TextFieldValue := {}) (w : Dp := 240)
     (placeholder : String := "") (label : Option String := none)
@@ -140,20 +140,20 @@ private def fieldRig (initial : TextFieldValue := {}) (w : Dp := 240)
     | none => {}
   let r ← tboot (w := w) <| Tests.restartable 1 do
     let v ← value.get
-    TextField v (fun v' => do calls.modify (·.push v'); value.set v')
+    ValueTextField v (fun v' => do calls.modify (·.push v'); value.set v')
       (modifier := m) (enabled := enabled) (isError := isError)
       (placeholder := placeholder) (label := label)
   return (r, value, calls)
 
 /-! ## End-to-end typing (controlled loop, MT framework) -/
 
-/-- One tagged controlled `TextField` bound to `value`, logging every
+/-- One tagged controlled `ValueTextField` bound to `value`, logging every
 `onValueChange` into `calls` — the content of the MT-framework suites. -/
 private def fieldContent (value : MutableState TextFieldValue)
     (calls : IO.Ref (Array TextFieldValue)) : Composable Unit :=
   Tests.restartable 1 do
     let v ← value.get
-    TextField v (fun v' => do calls.modify (·.push v'); value.set v')
+    ValueTextField v (fun v' => do calls.modify (·.push v'); value.set v')
       (modifier := Modifier.testTag "field")
 
 private def typingEndToEnd : IO Unit := do
@@ -241,7 +241,7 @@ private def minWidthOverflow : IO Unit := do
   let v1 ← mutableStateOf ({} : TextFieldValue)
   runComposeTest (width := 400)
     (content := Row (Modifier.width 120 |>.testTag "row") (content :=
-      Tests.restartable 1 do TextField (← v1.get) v1.set (modifier := Modifier.testTag "tf")))
+      Tests.restartable 1 do ValueTextField (← v1.get) v1.set (modifier := Modifier.testTag "tf")))
     do
       let tf ← boundsOf (.tag "tf")
       let row ← boundsOf (.tag "row")
@@ -258,7 +258,7 @@ private def minWidthOverflow : IO Unit := do
       let sc ← rememberScrollState
       Row (Modifier.horizontalScroll sc) (content :=
         Tests.restartable 1 do
-          TextField (← v2.get) v2.set (minWidth := 60) (modifier := Modifier.testTag "tf2")))
+          ValueTextField (← v2.get) v2.set (minWidth := 60) (modifier := Modifier.testTag "tf2")))
     do
       let tf ← boundsOf (.tag "tf2")
       check s!"minWidth knob: unbounded field honors the 60 dp floor (w={tf.right - tf.left})"
@@ -588,14 +588,14 @@ private def placeholderAndLabel : IO Unit := do
       if near c L.primary 70 && c.r < 220 then floatPix := floatPix + 1
   check s!"label: floats into the strip when focused ({floatPix})" (floatPix > 0)
 
-/-! ## TextFieldS (String convenience, MT framework) -/
+/-! ## TextField (String convenience, MT framework) -/
 
 private def stringOverload : IO Unit := do
   let value ← mutableStateOf ""
   let calls ← IO.mkRef (#[] : Array String)
   runComposeTest
     (content := Tests.restartable 1 do
-      TextFieldS (← value.get) (fun s => do calls.modify (·.push s); value.set s)
+      TextField (← value.get) (fun s => do calls.modify (·.push s); value.set s)
         (modifier := Modifier.testTag "field"))
     do
       typeText (.tag "field") "hi"

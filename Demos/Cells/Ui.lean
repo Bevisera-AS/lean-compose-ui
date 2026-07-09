@@ -15,7 +15,7 @@ rows `1`–`99`) over the pure formula engine in `Demos/Cells/Engine.lean`.
   `LazyGrid`s sharing the cell grid's scroll state on their scrolling axis —
   pinned on the other. The corner cell is a plain box, pinned both ways.
 * **Editing**: click selects (committing any open edit), double-click or
-  `Enter` opens an editor (`TextFieldS` seeded with the cell's *source*),
+  `Enter` opens an editor (`TextField` seeded with the cell's *source*),
   typing starts an edit that replaces the content. `Enter` commits (the
   engine recomputes dependents incrementally), `Esc` cancels, `Delete`
   clears the selected cell, arrows move the selection (auto-scrolled into
@@ -103,7 +103,7 @@ def colLabel (c : Nat) : String := s!"{Char.ofNat (65 + c)}"
 
 /-- Everything the Cells screen remembers: the reactive sheet, the selected
 cell, the cell being edited (if any), and the editor's draft text. The draft
-lives here (not inside the `TextFieldS`) so commits triggered from outside
+lives here (not inside the `TextField`) so commits triggered from outside
 the field — `Enter` on the grid, click-away — see the latest text. -/
 structure CellsState where
   /-- The spreadsheet (always-notify policy: `Sheet` has no useful `BEq`). -/
@@ -268,7 +268,7 @@ composable def rowHeaders (st : CellsState) (vs : ScrollState)
     (itemContent := fun _ ri =>
       headerCell s!"rowh-{ri + 1}" s!"{ri + 1}" (ri + 1 == selRow))
 
-/-- One grid cell. Editing cells host the editor (`TextFieldS` over the
+/-- One grid cell. Editing cells host the editor (`TextField` over the
 shared draft, tagged `cell-editor`); resting cells render `Sheet.displayOf`
 with a selection background/outline, grid lines, and the error color for
 `#CYCLE!`/`#ERR!`/… values. Tagged `cell-{ref}` with its selection state
@@ -277,7 +277,7 @@ composable def cellView (st : CellsState) (ref : CellRef) : Composable Unit := d
   let colors ← MaterialTheme.colorScheme
   let ed ← st.editing.get
   if ed == some ref then
-    TextFieldS (← st.draft.get) st.draft.set
+    TextField (← st.draft.get) st.draft.set
       (modifier := Modifier.testTag "cell-editor")
       (textStyle := { fontSize := 12 })
   else

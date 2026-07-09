@@ -12,7 +12,7 @@ increments it. The framework's hello-world — deliberately tiny. Headless:
 namespace Demos.Counter
 open Compose
 
-/-- The Counter screen (see the module docstring). A disabled `TextFieldS`
+/-- The Counter screen (see the module docstring). A disabled `TextField`
 plays the spec's read-only field; the `Button` increments the remembered
 count. -/
 composable def counterUi : Composable Unit := do
@@ -22,7 +22,7 @@ composable def counterUi : Composable Unit := do
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
       (content := do
         Text "Counter" (style := { fontSize := 22 })
-        TextFieldS (toString n) (fun _ => pure ()) (enabled := false)
+        TextField (toString n) (fun _ => pure ()) (enabled := false)
           (modifier := Modifier.testTag "count")
         Button (count.modify (· + 1)) (modifier := Modifier.testTag "count-btn")
           (content := Text "Count")))

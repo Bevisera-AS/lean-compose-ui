@@ -44,6 +44,7 @@ import Compose.Ui.Input.Hover
 import Compose.Ui.Input.Router
 import Compose.Ui.Overlay
 import Compose.Ui.App
+import Compose.Ui.Application
 import Compose.Foundation.Layouts
 import Compose.Foundation.Gestures
 import Compose.Foundation.Interaction

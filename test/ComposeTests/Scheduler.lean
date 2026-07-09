@@ -189,6 +189,27 @@ private def deadlineMath : IO Unit := do
   advance s clock (ms 30)
   checkEq "deadline: drained back to none" (← s.nextDeadline) none
 
+/-! ## Cancellation cleanup -/
+
+/-- `UiTask.onCancel`: the cleanup runs exactly once when the coroutine is
+cancelled mid-task, and not at all once the task completed. -/
+private def cancelCleanup : IO Unit := do
+  let (s, clock, _) ← fakeSched
+  let cleanups ← IO.mkRef (0 : Nat)
+  let guarded := UiTask.onCancel (cleanups.modify (· + 1)) (UiTask.delay 10)
+  let job ← s.launch guarded
+  s.runDue 0  -- parks on the timer with the cleanup registered
+  checkEq "onCancel: nothing before cancel" (← cleanups.get) 0
+  job.cancel
+  checkEq "onCancel: cleanup ran on cancel" (← cleanups.get) 1
+  job.cancel
+  checkEq "onCancel: repeated cancel is a no-op" (← cleanups.get) 1
+  let job2 ← s.launch guarded
+  s.runDue 0
+  advance s clock (ms 20)  -- completes; cancelling afterwards runs nothing
+  job2.cancel
+  checkEq "onCancel: completion deregisters the cleanup" (← cleanups.get) 1
+
 /-! ## UiTask.race -/
 
 /-- Branch that re-arms a 10 ms timer forever — the `awaitReleaseOrCancel`
@@ -325,6 +346,7 @@ def run : IO Unit := do
   yieldFairness
   launchInsideCoroutine
   deadlineMath
+  cancelCleanup
   raceParentCancel
   raceWinnerCancelsLoser
   launchedEffectLifecycle

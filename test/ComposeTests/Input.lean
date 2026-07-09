@@ -524,6 +524,45 @@ private def clickableDisabled : IO Unit := do
   let _ ← r.im.keyEvent { key := .return }
   checkEq "clickable: disabled ignores the keyboard" (← clicks.get) 0
 
+/-- Cancelling `clickable`'s gesture coroutine mid-press (here: the `enabled`
+flip relaunch path) resets the pressed interaction instead of latching the
+state layer on. -/
+private def clickableCancelResetsPressed : IO Unit := do
+  let enabled ← mutableStateOf true
+  let srcCell ← IO.mkRef (none : Option InteractionSource)
+  let r ← rig <| Tests.restartable 1 <| Box {} (content := do
+    let src ← rememberInteractionSource
+    SideEffect (srcCell.set (some src))
+    leaf (Modifier.size 40 40
+      |>.clickable (pure ()) (enabled := (← enabled.get)) (source := some src)))
+  let some src ← srcCell.get | throw (IO.userError "interaction source not captured")
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  check "press-cancel: pressed while held" (← src.pressed.get)
+  enabled.set false
+  r.settle
+  check "press-cancel: relaunch mid-press resets pressed" (!(← src.pressed.get))
+
+open Compose.Test in
+/-- MT-level: hold a real press through the full pipeline, flip `enabled`
+mid-press, and the interaction source resets. -/
+private def clickableCancelMt : IO Unit := do
+  let enabled ← mutableStateOf true
+  let srcCell ← IO.mkRef (none : Option InteractionSource)
+  runComposeTest
+    (content := Tests.restartable 1 do
+      let src ← rememberInteractionSource
+      SideEffect (srcCell.set (some src))
+      Box (Modifier.testTag "hold" |>.size 60 30
+        |>.clickable (pure ()) (enabled := (← enabled.get)) (source := some src)))
+    do
+      let some src ← srcCell.get | throw (IO.userError "interaction source not captured")
+      mouseDown (← boundsOf (.tag "hold")).center
+      check "press-cancel MT: pressed while held" (← src.pressed.get)
+      enabled.set false
+      awaitIdle
+      check "press-cancel MT: enabled flip mid-press resets pressed"
+        (!(← src.pressed.get))
+
 /-! ## pointerInput lifecycle -/
 
 /-- The handler coroutine relaunches when the key changes (predecessor
@@ -667,6 +706,8 @@ def run : IO Unit := do
   textRouting
   clickableBehavior
   clickableDisabled
+  clickableCancelResetsPressed
+  clickableCancelMt
   pointerInputLifecycle
   missingScheduler
   raceSemantics

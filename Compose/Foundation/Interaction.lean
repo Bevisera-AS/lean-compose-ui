@@ -108,10 +108,14 @@ def clickable (onClick : IO Unit) (enabled : Bool := true)
     (if enabled then
       detectTapGestures
         (onTap := some fun _ => onClick)
-        (onPress := some fun ps => do
-          setPressed true
-          let _ ← ps.tryAwaitRelease
-          setPressed false)
+        (onPress := some fun ps =>
+          -- Cancellation mid-press (the `enabled`-flip relaunch, node
+          -- removal) must not latch the flag — the flags-only analog of
+          -- Compose's `PressInteraction.Cancel`.
+          UiTask.onCancel (setPressed false) do
+            setPressed true
+            let _ ← ps.tryAwaitRelease
+            setPressed false)
      else fun _ => pure ())
 
 end Modifier

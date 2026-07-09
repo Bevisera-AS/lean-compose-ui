@@ -26,8 +26,9 @@ always runs to the next suspension. A cancelled coroutine's pending timer
 stays queued and fires as a no-op (the scheduler may report its deadline —
 one spurious wakeup, never a missed one). Because nothing unwinds, cleanup
 that must not be skipped registers on the token: `CancelToken.onCancel` runs
-it exactly once at cancellation, and `CancelToken.child` links `race`
-branches so parent cancellation reaches them.
+it exactly once at cancellation (`UiTask.onCancel` scopes one to a task), and
+`CancelToken.child` links `race` branches so parent cancellation reaches
+them.
 
 **Driving.** The owner (app loop or test) calls, per iteration:
 `nextDeadline` (to size its sleep), `runDue now` (starts, timers, completed
@@ -225,6 +226,16 @@ protected def race (a b : UiTask α) : UiTask α := ⟨fun s tok k => do
   a.run s ta fun v => finish tb v
   unless ← winner.get do
     b.run s tb fun v => finish ta v⟩
+
+/-- Run `t` with `cleanup` registered on the coroutine's token: it runs
+exactly once if the coroutine is cancelled before `t` completes — the
+exception-free spelling of `try { t } finally { cleanup }` for cancellation
+(a cancelled coroutine never resumes, so latched state must be reset from
+the token). Completing `t` deregisters it. -/
+protected def onCancel (cleanup : IO Unit) (t : UiTask α) : UiTask α :=
+  ⟨fun s tok k => do
+    let dispose ← tok.onCancel cleanup
+    t.run s tok fun v => do dispose; k v⟩
 
 end UiTask
 

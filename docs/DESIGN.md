@@ -392,6 +392,46 @@ independent layout root measured with window constraints; input hit-tests
 overlays top-down first; a dialog's scrim swallows everything below.
 Anchor rects come from `Modifier.onGloballyPositioned` coordinates.
 
+### Multi-window (`Compose/Ui/Application.lean`)
+
+```lean
+Compose.application (content : Composable Unit) : IO UInt32
+Window (title) (width height : Dp) (onCloseRequest : IO Bool := pure true)
+  (config : AppConfig := {}) (content) : Composable Unit
+DialogWindow (…same…)   -- parented + modal to the composing window
+exitApplication : Composable (IO Unit)   -- the explicit-exit action
+```
+
+Compose-for-Desktop-style declarative windows (M15). `application` runs an
+*app-level composition* whose applier hosts no layout nodes (emitting a
+widget there throws); `Window` composables declare OS windows state-driven:
+each creates a full `WindowContext` via `bootstrapWindow` in a
+`DisposableEffect` on enter, disposes it on leave, and updates title/size
+via keyed effects on parameter change. Window content composes in the
+window's *own* composition; the app-level `CompositionLocal` scope is
+captured at the call site and appended under the window's providers (the
+overlay-entry pattern), so app-level theme flows in while per-window
+ambients win. `onCloseRequest` returns whether to close (default `true`,
+via an internal latch); `DialogWindow` additionally does
+`setParent`/`setModal true` toward the ambient `LocalWindowContext` window
+(best-effort — unset before disposal; drivers without reparenting get a
+plain window).
+
+**One** main loop (`stepApplication`/`runApplicationLoop`) drives all
+windows over a live registry (`ApplicationScope.windows`): events route by
+`Sdl.Event.windowId` to the owning window's `dispatchEvent`
+(`windowCloseRequested` to its `onCloseRequest`); `quit` and the wake user
+event are app-level. One **shared** `Scheduler` (and wake event) serves all
+windows — a per-window split would buy nothing since wakes land in the one
+SDL queue anyway. The single-window wake contract holds verbatim: timeout
+`0` iff the app composition or any window is dirty or the frame clock has
+subscribers, else the scheduler deadline, else the idle cap — idle stays
+0 % CPU. The application exits when no windows remain (the composition
+settles during `bootstrapApplication`, before the loop) or on
+`exitApplication`; `COMPOSE_MAX_FRAMES` caps loop passes as in `runApp`.
+`runApp` remains the single-window fast path on the same
+`bootstrapWindow`/`step` machinery.
+
 ## Animation (`Compose/Animation/*.lean`)
 
 Full-parity ambition, structured exactly like Compose:

@@ -252,8 +252,9 @@ MeasurePolicy := Array Measurable → Constraints → IO MeasureResult
 
 `LayoutNode`: mutable record (`IO.Ref` fields) — parent, children, modifier
 chain, measure policy, cached measurement (size, last constraints), position,
-dirty flags (`needsRemeasure`, `needsRelayout`, `needsRedraw`), and the
-resolved modifier wrapper chain. Measurement short-circuits when constraints
+dirty flags (`needsRemeasure`, `needsRelayout` — redraws are whole-frame,
+scheduled via the window's `needsFrame`, so there is no per-node redraw
+flag), and the resolved modifier wrapper chain. Measurement short-circuits when constraints
 are unchanged and the node isn't dirty. State reads inside measure/placement
 blocks are observed and invalidate remeasure of exactly that node.
 Remeasure requests walk up only while the parent's measurement depends on the
@@ -473,8 +474,8 @@ dependency graph, cycles).
   with `push`/`set!` linearly, no stray captures); the tessellator and event
   translation must not allocate per-frame beyond their output arrays.
 - Cache: text layouts per node (invalidate on content/style/density change),
-  fonts in `FontStore`, tessellation of static shapes in draw-modifier state
-  keyed by (shape, size, brush).
+  fonts in `FontStore`, tessellation of static shapes per node keyed by
+  (shape, size px, brush, density) — see the status note below.
 - Recomposition skipping via `BEq` args; `remember` derived values.
 - Debug overlay (`COMPOSE_DEBUG_OVERLAY=1`): fps + frame-time + recomposition
   counts via `Renderer.debugText`.
@@ -484,13 +485,20 @@ dependency graph, cycles).
 only under `COMPOSE_MAX_FRAMES`); frame clock ticks only with subscribers;
 root remeasure short-circuits O(1) when clean and dirty nodes re-measure in
 place; text layouts diff-update and fonts memoize; scroll offsets re-measure
-only the scrolled node; lazy windows recompose only on window shifts. **Known
-gap**: the shape-tessellation cache above is *not yet implemented* — every
-rounded background/border re-tessellates on each rendered frame (so any
-running animation re-triangulates all static shapes at 60 fps), and the
-per-node `needsRedraw` flag is maintained but unread (full-tree redraw per
-dirty frame, as documented). Fine at current tree sizes; the cache is the
-first lever if profiling ever shows draw-side cost.
+only the scrolled node; lazy windows recompose only on window shifts. The
+audit's one gap is closed: the tessellation cache above is implemented —
+each node's `background`/`border` mesh is cached in `LayoutNodeData.meshCache`
+keyed by a `Draw.MeshKey` holding the tessellation's fully resolved inputs
+(shape × size px × density fold into the `RoundRect`, brush into the color,
+border width × density into the stroke px), so size/shape/brush/density
+changes invalidate by key inequality and static shapes tessellate once, not
+per frame (`LayoutNode.cachedMesh`; asserted by the DrawCache test group via
+the debug `Draw.tessellationCount`). Meshes store `Int32` indices — the form
+`Renderer.geometry` consumes — so emission does no per-frame index
+conversion. The formerly write-only per-node `needsRedraw` flag was deleted
+rather than wired up: rendering clears the full backbuffer, so honoring it
+would need a damage-region/layer redesign — revisit only if profiling shows
+draw-side cost that the mesh cache doesn't cover.
 
 ## Testing
 

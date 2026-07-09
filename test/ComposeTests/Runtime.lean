@@ -518,6 +518,55 @@ def slotUnderflowReported : IO Unit := do
   s.set true
   checkThrows "slots: underflow reported" comp.drain
 
+/-- Removing a subtree severs its internal reference cycles (Lean's runtime
+is pure RC, no cycle collector): parent/scope/children/slots of every removed
+group are cleared, so the subtree is actually freeable. -/
+def removalSeversSubtree : IO Unit := do
+  let t ← TestTree.create
+  let flag ← mutableStateOf true
+  let captured ← IO.mkRef (none : Option Group)
+  let capturedScope ← IO.mkRef (none : Option RecomposeScope)
+  -- Raw combinators so the test can hold on to the group and its scope.
+  let capture : Composable Unit := fun c => do
+    let g ← c.startGroup 21 (isNode := false)
+    captured.set (some g)
+    let _ ← c.remember (IO.mkRef (0 : Nat))
+    let scope ← c.startRestartGroup 22
+    capturedScope.set (some scope)
+    (emitLabeled t "x").run c
+    c.endRestartGroup scope (pure ())
+    c.endGroup
+  let comp ← Composition.create t.applier <| restartable 1 do
+    if ← flag.get then
+      withGroup 11 capture
+    else
+      withGroup 12 (pure ())
+  checkEq "sever: initial tree" (← t.render) "(root x)"
+  flag.set false
+  comp.drain
+  checkEq "sever: node removed" (← t.render) "root"
+  match ← captured.get, ← capturedScope.get with
+  | some g, some scope =>
+    let gd ← g.data
+    check "sever: removed group's children cleared" gd.children.isEmpty
+    check "sever: removed group's slots cleared" gd.slots.isEmpty
+    check "sever: removed group's parent cleared" gd.parent.isNone
+    let sgd ← scope.group.data
+    check "sever: removed scope group's scope cleared" sgd.scope.isNone
+    check "sever: removed scope group's parent cleared" sgd.parent.isNone
+    check "sever: removed scope disposed" (← scope.disposed.get)
+  | _, _ => check "sever: captured group and scope" false
+  -- `dispose` severs the whole remaining tree the same way.
+  flag.set true
+  comp.drain
+  comp.dispose
+  match ← captured.get with
+  | some g =>
+    let gd ← g.data
+    check "sever: disposed tree children cleared" gd.children.isEmpty
+    check "sever: disposed tree parent cleared" gd.parent.isNone
+  | none => check "sever: recaptured group" false
+
 /-- All Runtime suites. -/
 def run : IO Unit := do
   rememberSame
@@ -543,5 +592,6 @@ def run : IO Unit := do
   derivedState
   setContentAndDispose
   slotUnderflowReported
+  removalSeversSubtree
 
 end Tests.Runtime

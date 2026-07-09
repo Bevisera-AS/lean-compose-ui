@@ -174,14 +174,16 @@ def setOnInvalidate (comp : Composition) (f : IO Unit) : IO Unit :=
   comp.composer.onInvalidate.set f
 
 /-- Tear down the composition: every remembered observer is forgotten
-(depth-first), the applier is cleared, further recompositions are inert.
-Mirrors `Composition.dispose`. -/
+(depth-first), the whole group tree is severed (`severSubtree` — reference
+cycles broken so RC can free it), the applier is cleared, further
+recompositions are inert. Mirrors `Composition.dispose`. -/
 def dispose (comp : Composition) : IO Unit := do
   if ← comp.disposed.get then return
   comp.disposed.set true
   let c := comp.composer
   c.collectDisposals c.rootGroup
-  c.rootGroup.modifyData fun d => { d with children := #[], slots := #[], nodes := 0 }
+  severSubtree c.rootGroup
+  c.invalidations.set #[]
   c.applier.onClear
   c.dispatchEffects
 

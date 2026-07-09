@@ -118,11 +118,26 @@ structure RecomposeScope where
   /-- `CompositionLocal` scope captured at the latest run, so a standalone
   re-run resolves the same provided values. -/
   locals : IO.Ref LocalMap
+  /-- Holds the enqueue-on-invalidate action run by `reads.dep.invalidate`.
+  The action closes over the scope itself, so it must be reset to a no-op
+  when the scope's group is removed — Lean's runtime is pure reference
+  counting, and this closure is the scope's self-cycle. -/
+  invalidateCell : IO.Ref (IO Unit)
 
 /-- Mark the scope invalid and enqueue it on its composer's invalidation
 queue (no-op once disposed). Mirrors `RecomposeScope.invalidate`. -/
 def RecomposeScope.invalidate (s : RecomposeScope) : IO Unit :=
   s.reads.dep.invalidate
+
+/-- Tear down a scope whose group left the composition: mark it disposed,
+unregister its state reads, and drop every closure that cycles back to the
+scope or retains the composer (invalidate action, rerun, captured locals). -/
+def RecomposeScope.sever (s : RecomposeScope) : IO Unit := do
+  s.disposed.set true
+  s.reads.clear
+  s.invalidateCell.set (pure ())
+  s.rerun.set (pure ())
+  s.locals.set .empty
 
 /-- Mutable payload of one group. -/
 structure GroupData where
@@ -164,6 +179,21 @@ def create (d : GroupData) : IO Group :=
   return ⟨SlotVal.mk (← IO.mkRef d)⟩
 
 end Group
+
+/-- Sever the reference cycles inside a subtree that left the composition so
+plain reference counting can free it (Lean's runtime has no cycle collector):
+parent↔child links, group↔scope links, remembered slots, and emitted-node
+references. Only for removed groups — matching and relocation need these
+edges on kept ones. Runs after `Composer.collectDisposals` (forget thunks
+close over what they need, not over the slots). -/
+partial def severSubtree (g : Group) : IO Unit := do
+  let gd ← g.data
+  if let some s := gd.scope then
+    s.sever
+  gd.children.forM severSubtree
+  g.modifyData fun d =>
+    { d with parent := none, scope := none, children := #[], slots := #[],
+             node := none, nodes := 0 }
 
 /-- One open group during composition: the group plus its child/slot cursors.
 
@@ -256,16 +286,17 @@ private def currentNodeParent (c : Composer) : IO NodeVal := do
 /-- Create a `RecomposeScope` for `g`, wired to this composer's invalidation
 queue (invalidations dedup by scope id). -/
 private def freshScope (c : Composer) (g : Group) : IO RecomposeScope := do
-  let invalidateRef ← IO.mkRef (pure () : IO Unit)
+  let invalidateCell ← IO.mkRef (pure () : IO Unit)
   let scope : RecomposeScope :=
     { id := ← freshId, group := g
       rerun := ← IO.mkRef (pure ())
       valid := ← IO.mkRef true
       disposed := ← IO.mkRef false
       reads := ← ObservationRegistry.create
-        { id := ← freshId, invalidate := do (← invalidateRef.get) }
-      locals := ← IO.mkRef .empty }
-  invalidateRef.set do
+        { id := ← freshId, invalidate := do (← invalidateCell.get) }
+      locals := ← IO.mkRef .empty
+      invalidateCell }
+  invalidateCell.set do
     unless ← scope.disposed.get do
       scope.valid.set false
       c.invalidations.modify fun q =>
@@ -274,17 +305,16 @@ private def freshScope (c : Composer) (g : Group) : IO RecomposeScope := do
   return scope
 
 /-- Collect disposal work for a removed subtree in document order: a group's
-remembered slots, then scope teardown, then children. `dispatchEffects` runs
-the collected forgets in reverse, so children's callbacks fire before their
-parents' — Compose's reverse-remember-order forgetting. -/
+remembered slots, then children. `dispatchEffects` runs the collected forgets
+in reverse, so children's callbacks fire before their parents' — Compose's
+reverse-remember-order forgetting. Scope teardown and cycle severing are
+`severSubtree`'s job, run after the applier removal that still needs the
+subtree intact. -/
 partial def collectDisposals (c : Composer) (g : Group) : IO Unit := do
   let gd ← g.data
   for s in gd.slots do
     if let some obs := s.observer then
       c.pendingForgets.modify (·.push obs.onForgotten)
-  if let some scope := gd.scope then
-    scope.disposed.set true
-    scope.reads.clear
   gd.children.forM (c.collectDisposals ·)
 
 /-- Dispatch deferred lifecycle events after a successful apply: forgotten
@@ -385,6 +415,7 @@ def endGroup (c : Composer) : IO Unit := do
       let n := (← ch.data).nodes
       if n > 0 then
         c.applier.remove np f.nodeIndex n
+      severSubtree ch
   -- Dispose leftover slots.
   for i in [f.slotCursor : gd.slots.size] do
     if let some obs := gd.slots[i]!.observer then

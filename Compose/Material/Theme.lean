@@ -204,8 +204,9 @@ initialize LocalContentColor : CompositionLocal Color ←
 and `LocalTextStyle := typography.bodyMedium` colored `onSurface` (so `Text`
 inside inherits the themed default). Nest with different `colors` for a
 mixed-theme screen. Mirrors `androidx.compose.material3.MaterialTheme`. -/
-def MaterialTheme (colors : ColorScheme := .light) (typography : Typography := {})
-    (shapes : Shapes := {}) (content : Composable Unit) : Composable Unit :=
+def MaterialTheme (content : Composable Unit)
+    (colors : ColorScheme := .light) (typography : Typography := {})
+    (shapes : Shapes := {}) : Composable Unit :=
   CompositionLocalProvider LocalColorScheme colors <|
     CompositionLocalProvider LocalTypography typography <|
       CompositionLocalProvider LocalShapes shapes <|

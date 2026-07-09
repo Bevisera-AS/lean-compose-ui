@@ -573,7 +573,7 @@ private def clickableCancelMt : IO Unit := do
     (content := Tests.restartable 1 do
       let src ← rememberInteractionSource
       SideEffect (srcCell.set (some src))
-      Box (Modifier.testTag "hold" |>.size 60 30
+      Box (modifier := Modifier.testTag "hold" |>.size 60 30
         |>.clickable (pure ()) (enabled := (← enabled.get)) (source := some src)))
     do
       let some src ← srcCell.get | throw (IO.userError "interaction source not captured")
@@ -778,7 +778,7 @@ private def hoverAppearUnderCursor : IO Unit := do
       let src ← rememberInteractionSource
       SideEffect (srcCell.set (some src))
       if ← show'.get then
-        withGroup 11 <| Box (Modifier.size 80 80 |>.hoverable src)
+        withGroup 11 <| Box (modifier := Modifier.size 80 80 |>.hoverable src)
       else
         withGroup 12 (pure ()))
     do
@@ -802,7 +802,7 @@ private def hoverDetachUnlatch : IO Unit := do
       let src ← rememberInteractionSource
       SideEffect (srcCell.set (some src))
       if ← show'.get then
-        withGroup 11 <| Box (Modifier.size 80 80 |>.hoverable src)
+        withGroup 11 <| Box (modifier := Modifier.size 80 80 |>.hoverable src)
       else
         withGroup 12 (pure ()))
     do

@@ -520,7 +520,7 @@ private def indeterminateProgress : IO Unit := do
 the interior and straight edges show the container. -/
 private def surfaceShapePixels : IO Unit := do
   let r ← mboot <| themed <|
-    Surface (Modifier.size 80 80) (shape := .rounded 16) (color := some L.primary)
+    Surface (modifier := Modifier.size 80 80) (shape := .rounded 16) (color := some L.primary)
   check "surface shape: interior is the container" (near (← r.pixel 40 40) L.primary)
   check "surface shape: straight edge is the container" (near (← r.pixel 2 40) L.primary)
   let corner ← r.pixel 2 2

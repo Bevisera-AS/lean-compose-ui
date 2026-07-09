@@ -222,10 +222,10 @@ stays composed while the exit animation runs and leaves the composition
 only once it completes; flipping `visible` back mid-exit reverses the
 animation from the current position with carried velocity. Mirrors
 `androidx.compose.animation.AnimatedVisibility`. -/
-def AnimatedVisibility (visible : Bool) (modifier : Modifier := {})
+def AnimatedVisibility (visible : Bool) (content : Composable Unit := pure ())
+    (modifier : Modifier := {})
     (enter : EnterTransition := fadeIn ++ expandVertically)
-    (exit : ExitTransition := fadeOut ++ shrinkVertically)
-    (content : Composable Unit := pure ()) : Composable Unit := do
+    (exit : ExitTransition := fadeOut ++ shrinkVertically) : Composable Unit := do
   -- Content initially composed visible appears without an enter animation
   -- (Compose: `MutableTransitionState(initialState = visible)`).
   let anim ← remember (Animatable.create (if visible then (1.0 : Float32) else 0.0) .float32)

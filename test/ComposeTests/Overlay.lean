@@ -390,7 +390,7 @@ outside click / Esc but not on inside clicks. -/
 private def popupBasics : IO Unit := do
   let open' ← mutableStateOf false
   let r ← oboot <| popupContent open' ⟨50, 50, 100, 70⟩
-    (Box (Modifier.size 60 40 |>.background .red))
+    (Box (modifier := Modifier.size 60 40 |>.background .red))
   check "popup: closed — backdrop everywhere" (near (← r.pixel 60 80) .green)
   open'.set true
   r.settle
@@ -422,7 +422,7 @@ to the window. -/
 private def popupFlip : IO Unit := do
   let open' ← mutableStateOf true
   let r ← oboot <| popupContent open' ⟨50, 250, 100, 290⟩
-    (Box (Modifier.size 60 40 |>.background .red))
+    (Box (modifier := Modifier.size 60 40 |>.background .red))
   r.settle
   -- No room below (290 + 40 > 300): above the anchor at y 210..250.
   check "popup flip: drawn above the anchor" (near (← r.pixel 60 230) .red)
@@ -439,14 +439,14 @@ private def popupStackedEsc : IO Unit := do
         if ← open1.get then
           withGroup 1 <| Popup (anchor := some ⟨20, 20, 40, 40⟩)
             (onDismissRequest := some (open1.set false))
-            (content := Box (Modifier.size 60 30 |>.background .red))
+            (content := Box (modifier := Modifier.size 60 30 |>.background .red))
         else
           withGroup 2 (pure ())
       Tests.restartable 2 do
         if ← open2.get then
           withGroup 3 <| Popup (anchor := some ⟨150, 20, 170, 40⟩)
             (onDismissRequest := some (open2.set false))
-            (content := Box (Modifier.size 60 30 |>.background .blue))
+            (content := Box (modifier := Modifier.size 60 30 |>.background .blue))
         else
           withGroup 4 (pure ()))
   r.settle
@@ -475,7 +475,7 @@ private def dialogModal : IO Unit := do
       Tests.restartable 1 do
         if ← open'.get then
           withGroup 1 <| Dialog (open'.set false)
-            (content := Box (Modifier.size 80 40 |>.background .red))
+            (content := Box (modifier := Modifier.size 80 40 |>.background .red))
         else
           withGroup 2 (pure ()))
   -- Baseline: the button works.

@@ -281,10 +281,11 @@ false` makes the popup inert (no dismiss scrim, no key routing, transparent to
 the pointer) while it is only mounted to play an exit animation. The popup
 itself emits no local layout — its content lives in the window's overlay host.
 Mirrors `androidx.compose.ui.window.Popup`. -/
-def Popup (anchor : Option Rect := none) (alignment : Alignment := .topStart)
+def Popup (content : Composable Unit := pure ())
+    (anchor : Option Rect := none) (alignment : Alignment := .topStart)
     (offset : IntOffset := ⟨0, 0⟩) (onDismissRequest : Option (IO Unit) := none)
     (focusable : Bool := false) (onKeyEvent : KeyEvent → IO Bool := fun _ => pure false)
-    (interactive : Bool := true) (content : Composable Unit := pure ()) : Composable Unit :=
+    (interactive : Bool := true) : Composable Unit :=
   overlayImpl anchor alignment offset onDismissRequest focusable onKeyEvent
     (scrimColor := none) (modal := false) interactive content
 

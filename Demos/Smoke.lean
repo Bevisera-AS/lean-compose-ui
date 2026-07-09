@@ -35,7 +35,7 @@ partial def animateWidth (width : MutableState Dp) : UiTask Unit := do
 
 /-- A fixed-size box filled with the palette color at `phase + offset`. -/
 composable def paletteBox (phase : Nat) (offset : Nat) : Composable Unit := do
-  Box (Modifier.size 120 40 |>.background palette[(phase + offset) % palette.size]!)
+  Box (modifier := Modifier.size 120 40 |>.background palette[(phase + offset) % palette.size]!)
 
 /-- The demo UI (see the module docstring). -/
 composable def smokeUi : Composable Unit := do
@@ -49,7 +49,7 @@ composable def smokeUi : Composable Unit := do
       for i in [0:3] do
         paletteBox p i
       let w ← width.get
-      Box (Modifier.size w 24 |>.background .darkGray))
+      Box (modifier := Modifier.size w 24 |>.background .darkGray))
 
 end Demos.Smoke
 

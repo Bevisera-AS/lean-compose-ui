@@ -67,7 +67,7 @@ anchored at the click point: click-away or Esc dismisses, choosing an entry
 runs its `onClick` then closes, and disabled entries never fire. Mirrors
 `androidx.compose.foundation.ContextMenuArea`. -/
 composable def ContextMenuArea (items : Array ContextMenuItem)
-    (modifier : Modifier := {}) (content : Composable Unit) : Composable Unit := do
+    (content : Composable Unit) (modifier : Modifier := {}) : Composable Unit := do
   let expanded ← remember (mutableStateOf false)
   let anchor ← remember (mutableStateOf Offset.zero)
   let rectRef ← remember (IO.mkRef Rect.zero)

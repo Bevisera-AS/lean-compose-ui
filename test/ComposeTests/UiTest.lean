@@ -209,7 +209,7 @@ private def scrollFlow : IO Unit := runComposeTest
     Box (Modifier.testTag "scroller" |>.width 60 |>.height 100
           |>.verticalScroll st)
       (content := Column {} (content := do
-        Box (Modifier.size 60 80 |>.testTag "top")
+        Box (modifier := Modifier.size 60 80 |>.testTag "top")
         Spacer (Modifier.size 60 400))))
   do
     assertThat (.tag "top") "starts at the viewport top" (fun n => n.bounds.top == 0)
@@ -229,7 +229,7 @@ private def animationClock : IO Unit := do
   runComposeTest
     (content := Column {} (content := Tests.restartable 1 do
       let w ← animateDpAsState (if (← big.get) then 200 else 40) (.tween 200 0 .linear)
-      Box (Modifier.testTag "box" |>.size (← w.get) 20)
+      Box (modifier := Modifier.testTag "box" |>.size (← w.get) 20)
       Button (big.set true) (content := Text "grow")))
     do
       assertThat (.tag "box") "starts at 40" (fun n => rw n.bounds == 40)
@@ -258,7 +258,7 @@ private def replaceAndFocusVerbs : IO Unit := do
   runComposeTest
     (content := Column {} (content := Tests.restartable 1 do
       TextField (← value.get) value.set (modifier := Modifier.testTag "tf")
-      Box (Modifier.testTag "target" |>.size 60 20 |>.focusable)))
+      Box (modifier := Modifier.testTag "target" |>.size 60 20 |>.focusable)))
     do
       assertTextEquals (.tag "tf") "seed"
       replaceText (.tag "tf") "fresh"          -- select-all + retype, not append
@@ -279,8 +279,8 @@ private def focusRequesterFlow : IO Unit := do
       -- An effect can grab initial focus before any user input.
       LaunchedEffect 0 frB.requestFocus
       Column {} (content := do
-        Box (Modifier.testTag "a" |>.size 60 20 |>.focusable |>.focusRequester frA)
-        Box (Modifier.testTag "b" |>.size 60 20 |>.focusable |>.focusRequester frB)
+        Box (modifier := Modifier.testTag "a" |>.size 60 20 |>.focusable |>.focusRequester frA)
+        Box (modifier := Modifier.testTag "b" |>.size 60 20 |>.focusable |>.focusRequester frB)
         Button frA.requestFocus (modifier := Modifier.testTag "grab")
           (content := Text "focus a")))
     do

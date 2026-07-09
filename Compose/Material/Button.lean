@@ -50,8 +50,8 @@ private def buttonImpl (onClick : IO Unit) (modifier : Modifier) (enabled : Bool
 
 /-- Filled button: `primary` container, `onPrimary` content. Mirrors
 `androidx.compose.material3.Button`. -/
-composable def Button (onClick : IO Unit) (modifier : Modifier := {})
-    (enabled : Bool := true) (content : Composable Unit) : Composable Unit := do
+composable def Button (onClick : IO Unit) (content : Composable Unit)
+    (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   buttonImpl onClick modifier enabled
     (container := if enabled then colors.primary
@@ -62,8 +62,8 @@ composable def Button (onClick : IO Unit) (modifier : Modifier := {})
 
 /-- Outlined button: transparent container, 1 dp `outline` border, `primary`
 content. Mirrors `androidx.compose.material3.OutlinedButton`. -/
-composable def OutlinedButton (onClick : IO Unit) (modifier : Modifier := {})
-    (enabled : Bool := true) (content : Composable Unit) : Composable Unit := do
+composable def OutlinedButton (onClick : IO Unit) (content : Composable Unit)
+    (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   buttonImpl onClick modifier enabled
     (container := .transparent)
@@ -76,8 +76,8 @@ composable def OutlinedButton (onClick : IO Unit) (modifier : Modifier := {})
 
 /-- Text button: no container or border, `primary` content, tighter padding.
 Mirrors `androidx.compose.material3.TextButton`. -/
-composable def TextButton (onClick : IO Unit) (modifier : Modifier := {})
-    (enabled : Bool := true) (content : Composable Unit) : Composable Unit := do
+composable def TextButton (onClick : IO Unit) (content : Composable Unit)
+    (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   buttonImpl onClick modifier enabled
     (container := .transparent)

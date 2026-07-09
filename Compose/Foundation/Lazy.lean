@@ -92,8 +92,9 @@ with `ScrollState` (wheel, scrollbar, `scrollTo`/`animateScrollTo`).
 `androidx.compose.foundation.lazy.LazyColumn` (fixed-height simplification —
 see the module docstring). -/
 composable def LazyColumn (state : ScrollState) (itemHeight : Dp) (count : Nat)
-    (key : Nat → UInt64 := (·.toUInt64)) (modifier : Modifier := {})
-    (itemContent : Nat → Composable Unit := fun _ => pure ()) : Composable Unit := do
+    (itemContent : Nat → Composable Unit := fun _ => pure ())
+    (key : Nat → UInt64 := (·.toUInt64)) (modifier : Modifier := {}) :
+    Composable Unit := do
   let density ← LocalDensity.current
   let itemPx := density.dpRoundToPx itemHeight
   -- The window derives from scroll value + viewport; readers (this scope)
@@ -146,10 +147,10 @@ detection), while `modifier` stays outside (tags, focus, keys, sizing).
 Mirrors `androidx.compose.foundation.lazy.grid.LazyVerticalGrid` /
 `LazyHorizontalGrid`, collapsed to the fixed-cell-size 2-axis case. -/
 composable def LazyGrid (columns rows : Nat) (cellWidth cellHeight : Dp)
+    (itemContent : Nat → Nat → Composable Unit := fun _ _ => pure ())
     (hState vState : Option ScrollState := none)
     (modifier : Modifier := {}) (contentModifier : Modifier := {})
-    (key : Nat → Nat → UInt64 := fun c r => (r * columns + c).toUInt64)
-    (itemContent : Nat → Nat → Composable Unit := fun _ _ => pure ()) :
+    (key : Nat → Nat → UInt64 := fun c r => (r * columns + c).toUInt64) :
     Composable Unit := do
   let density ← LocalDensity.current
   let cw := density.dpRoundToPx cellWidth

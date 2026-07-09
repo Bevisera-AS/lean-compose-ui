@@ -124,9 +124,10 @@ instead fixes the width to the anchor's — the exposed-dropdown convention
 (Material's `exposedDropdownSize`). Mirrors
 `androidx.compose.material3.DropdownMenu`. -/
 composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
+    (content : Composable Unit := pure ())
     (anchor : Option Rect := none) (offset : IntOffset := ⟨0, 2⟩)
-    (matchAnchorWidth : Bool := false) (modifier : Modifier := {})
-    (content : Composable Unit := pure ()) : Composable Unit := do
+    (matchAnchorWidth : Bool := false) (modifier : Modifier := {}) :
+    Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
   let density ← LocalDensity.current
@@ -253,9 +254,9 @@ toggle) through the scope. Pass the enclosed `DropdownMenu`
 exposed-dropdown convention). Mirrors
 `androidx.compose.material3.ExposedDropdownMenuBox`. -/
 composable def ExposedDropdownMenuBox (expanded : Bool)
-    (onExpandedChange : Bool → IO Unit) (modifier : Modifier := {})
-    (content : ExposedDropdownMenuBoxScope → Composable Unit := fun _ => pure ()) :
-    Composable Unit := do
+    (onExpandedChange : Bool → IO Unit)
+    (content : ExposedDropdownMenuBoxScope → Composable Unit := fun _ => pure ())
+    (modifier : Modifier := {}) : Composable Unit := do
   let scope : ExposedDropdownMenuBoxScope ← remember do
     pure { anchorRect := ← mutableStateOf Rect.zero
            expandedRef := ← IO.mkRef expanded

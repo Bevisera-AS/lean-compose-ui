@@ -22,7 +22,7 @@ private def staticShapeAcrossAnimation : IO Unit := do
   runComposeTest
     (content := Column {} (content := Tests.restartable 1 do
       -- The static shape: rounded background + rounded border = two meshes.
-      Box (Modifier.testTag "static" |>.size (← side.get) (← side.get)
+      Box (modifier := Modifier.testTag "static" |>.size (← side.get) (← side.get)
             |>.background Color.red (.rounded 8)
             |>.border 2 Color.blue (.rounded 8))
       -- The animating neighbor: a plain rectangular background (the crisp
@@ -30,7 +30,7 @@ private def staticShapeAcrossAnimation : IO Unit := do
       -- so every animation frame recomposes, remeasures it, and redraws the
       -- whole tree.
       let x ← animateDpAsState (← target.get) (.tween 200 0 .linear)
-      Box (Modifier.offset (← x.get) 0 |>.size 20 20 |>.background Color.green)))
+      Box (modifier := Modifier.offset (← x.get) 0 |>.size 20 20 |>.background Color.green)))
     do
       awaitIdle
       let t ← uiTest

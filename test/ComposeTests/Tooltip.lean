@@ -18,7 +18,7 @@ open Compose Compose.Test Tests.Harness
 private def content : Composable Unit :=
   Column {} (content := do
     Tooltip "Help text" (delayMs := 300) (modifier := Modifier.testTag "target")
-      (content := Box (Modifier.size 60 30))
+      (content := Box (modifier := Modifier.size 60 30))
     Spacer (Modifier.size 120 120 |>.testTag "empty"))
 
 /-! ## Delay: nothing until the timer elapses, then the tooltip shows -/

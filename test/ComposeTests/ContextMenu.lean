@@ -24,7 +24,7 @@ private def tree (picked : MutableState String) (disabledFired : IO.Ref Bool) :
           { label := "Copy", onClick := picked.set "Copy" },
           { label := "Paste", enabled := false, onClick := disabledFired.set true }]
         (modifier := Modifier.testTag "area")
-        (content := Box (Modifier.size 80 40))
+        (content := Box (modifier := Modifier.size 80 40))
       Text s!"picked: {← picked.get}")
 
 /-! ## Right-click opens; choosing an entry runs it and closes -/
@@ -97,7 +97,7 @@ private def leftClickBubbles : IO Unit := do
       Box (Modifier.clickable (clicks.modify (· + 1)) |>.testTag "outer")
         (content :=
           ContextMenuArea #[{ label := "Cut", onClick := pure () }]
-            (content := Box (Modifier.size 80 40))))
+            (content := Box (modifier := Modifier.size 80 40))))
     do
       click (.tag "outer")
       checkEq "left click reached the ancestor clickable" (← clicks.get) 1

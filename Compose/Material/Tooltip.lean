@@ -58,8 +58,8 @@ private partial def tooltipGesture (rectRef : IO.Ref Rect) (pos : MutableState O
 least `delayMs`; exit or press hides it. Mirrors Compose Desktop's
 `androidx.compose.foundation.TooltipArea` (see the module docstring for the
 overlay/positioning details). Use `Tooltip` for the common text case. -/
-composable def TooltipArea (tooltip : Composable Unit) (delayMs : Nat := 500)
-    (modifier : Modifier := {}) (content : Composable Unit) : Composable Unit := do
+composable def TooltipArea (tooltip : Composable Unit) (content : Composable Unit)
+    (delayMs : Nat := 500) (modifier : Modifier := {}) : Composable Unit := do
   let visible ← remember (mutableStateOf false)
   let pos ← remember (mutableStateOf Offset.zero)
   let rectRef ← remember (IO.mkRef Rect.zero)
@@ -88,9 +88,9 @@ composable def TooltipSurface (text : String) : Composable Unit := do
 
 /-- `TooltipArea` with the default `TooltipSurface` body — the common
 "hover a control, see a text label" case. -/
-composable def Tooltip (text : String) (delayMs : Nat := 500)
-    (modifier : Modifier := {}) (content : Composable Unit) : Composable Unit :=
-  TooltipArea (tooltip := TooltipSurface text) (delayMs := delayMs)
-    (modifier := modifier) (content := content)
+composable def Tooltip (text : String) (content : Composable Unit)
+    (delayMs : Nat := 500) (modifier : Modifier := {}) : Composable Unit :=
+  TooltipArea (TooltipSurface text) content (delayMs := delayMs)
+    (modifier := modifier)
 
 end Compose

@@ -431,8 +431,9 @@ re-enters the composition) or `false` to keep it open — flip your own state
 there for fully state-driven closing. `config.onCloseRequest` is ignored
 here (this parameter wins). Mirrors `androidx.compose.ui.window.Window`. -/
 def Window (title : String) (width height : Dp)
-    (onCloseRequest : IO Bool := pure true) (config : AppConfig := {})
-    (content : Composable Unit := pure ()) : Composable Unit :=
+    (content : Composable Unit := pure ())
+    (onCloseRequest : IO Bool := pure true) (config : AppConfig := {}) :
+    Composable Unit :=
   windowImpl false title width height onCloseRequest config content
 
 /-- `Window`, as a modal dialog of the window that composed it: the new OS
@@ -441,8 +442,9 @@ modal (both best-effort — drivers without modal support get a plain window;
 modality is unset before disposal). Compose it from a window's content.
 Mirrors `androidx.compose.ui.window.DialogWindow`. -/
 def DialogWindow (title : String) (width height : Dp)
-    (onCloseRequest : IO Bool := pure true) (config : AppConfig := {})
-    (content : Composable Unit := pure ()) : Composable Unit :=
+    (content : Composable Unit := pure ())
+    (onCloseRequest : IO Bool := pure true) (config : AppConfig := {}) :
+    Composable Unit :=
   windowImpl true title width height onCloseRequest config content
 
 end Compose

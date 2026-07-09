@@ -201,10 +201,10 @@ end Modifier
 
 /-- Lay children out horizontally. Mirrors
 `androidx.compose.foundation.layout.Row`. -/
-def Row (modifier : Modifier := {})
+def Row (content : Composable Unit := pure ())
+    (modifier : Modifier := {})
     (horizontalArrangement : Arrangement := .start)
-    (verticalAlignment : Alignment.Vertical := .top)
-    (content : Composable Unit := pure ()) : Composable Unit :=
+    (verticalAlignment : Alignment.Vertical := .top) : Composable Unit :=
   Layout modifier (rowColumnPolicy true horizontalArrangement verticalAlignment.bias)
     content
     (policyInputs := some (mixKeys 0x526f77 (mixKeys (arrangementKey horizontalArrangement)
@@ -212,10 +212,10 @@ def Row (modifier : Modifier := {})
 
 /-- Lay children out vertically. Mirrors
 `androidx.compose.foundation.layout.Column`. -/
-def Column (modifier : Modifier := {})
+def Column (content : Composable Unit := pure ())
+    (modifier : Modifier := {})
     (verticalArrangement : Arrangement := .top)
-    (horizontalAlignment : Alignment.Horizontal := .start)
-    (content : Composable Unit := pure ()) : Composable Unit :=
+    (horizontalAlignment : Alignment.Horizontal := .start) : Composable Unit :=
   Layout modifier (rowColumnPolicy false verticalArrangement horizontalAlignment.bias)
     content
     (policyInputs := some (mixKeys 0x436f6c (mixKeys (arrangementKey verticalArrangement)
@@ -271,9 +271,9 @@ private def boxPolicy (contentAlign : Alignment) : MeasurePolicy := fun _ childr
 
 /-- Stack children on top of each other (later children draw on top).
 Mirrors `androidx.compose.foundation.layout.Box`. -/
-def Box (modifier : Modifier := {})
-    (contentAlignment : Alignment := .topStart)
-    (content : Composable Unit := pure ()) : Composable Unit :=
+def Box (content : Composable Unit := pure ())
+    (modifier : Modifier := {})
+    (contentAlignment : Alignment := .topStart) : Composable Unit :=
   Layout modifier (boxPolicy contentAlignment) content
     (policyInputs := some (mixKeys 0x426f78
       (mixKeys contentAlignment.horizontalBias.toBits.toUInt64

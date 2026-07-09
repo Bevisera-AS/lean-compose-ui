@@ -456,9 +456,9 @@ private def sharedScrollStickyHeader : IO Unit := do
     (content := Column {} (content := Tests.restartable 1 do
       let w : Dp := if ← wide.get then 1000 else 300
       Box (Modifier.width 200 |>.height 20 |>.horizontalScroll s) (content :=
-        Box (Modifier.testTag "header" |>.width 1000 |>.height 20))
+        Box (modifier := Modifier.testTag "header" |>.width 1000 |>.height 20))
       Box (Modifier.width 200 |>.height 100 |>.horizontalScroll s) (content :=
-        Box (Modifier.testTag "main" |>.width w |>.height 100))))
+        Box (modifier := Modifier.testTag "main" |>.width w |>.height 100))))
     do
       s.scrollTo 10000 -- clamps to maxValue = 1000 - 200 = 800
       Compose.Test.awaitIdle

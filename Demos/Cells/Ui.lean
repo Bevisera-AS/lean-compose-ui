@@ -356,7 +356,7 @@ composable def cellsScreen (st : CellsState) (hs vs : ScrollState) :
       formulaBar st
       Row (Modifier.weight 1 |>.fillMaxWidth) (content := do
         Column (Modifier.width headerW) (content := do
-          Box (Modifier.size headerW headerH |>.testTag "corner"
+          Box (modifier := Modifier.size headerW headerH |>.testTag "corner"
                 |>.background colors.surfaceVariant
                 |>.drawBehind (gridLineDraw colors.outlineVariant))
           rowHeaders st vs (Modifier.weight 1 |>.fillMaxWidth))

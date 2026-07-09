@@ -40,7 +40,7 @@ private def pixel (e : WindowEntry) (x y : Int32) : IO Sdl.Color := do
 /-- A full-window click-counting region (bumps `hits` through the real
 pointer path). -/
 private def clickCounter (hits : IO.Ref Nat) (color : Color) : Composable Unit :=
-  Box (Modifier.fillMaxSize |>.background color |>.clickable (hits.modify (· + 1)))
+  Box (modifier := Modifier.fillMaxSize |>.background color |>.clickable (hits.modify (· + 1)))
 
 /-- Synthesize a click (press + release) at window coordinates `(x, y)` of
 `e`'s window, routed through the application dispatcher by window id. -/
@@ -114,10 +114,10 @@ private def stateDrivenCloseAndReopen : IO Unit := do
   let openB ← mutableStateOf true
   let app ← bootstrapApplication do
     Window "sd-a" 120 100 (config := cfg)
-      (content := Box (Modifier.size 40 40 |>.background .green))
+      (content := Box (modifier := Modifier.size 40 40 |>.background .green))
     if ← openB.get then
       Window "sd-b" 120 100 (config := cfg)
-        (content := Box (Modifier.size 40 40 |>.background .blue))
+        (content := Box (modifier := Modifier.size 40 40 |>.background .blue))
   let _ ← stepApplication app (idleCapMs := 5)
   checkEq "both windows open" (← app.windows.get).size 2
   openB.set false
@@ -170,7 +170,7 @@ private def dialogParentAndModal : IO Unit := do
   let app ← bootstrapApplication do
     Window "dlg-owner" 200 150 (config := cfg) (content := do
       DialogWindow "dlg" 100 80 (config := cfg)
-        (content := Box (Modifier.size 20 20 |>.background .red)))
+        (content := Box (modifier := Modifier.size 20 20 |>.background .red)))
   let _ ← stepApplication app (idleCapMs := 5)
   checkEq "dialog registers as a live window" (← app.windows.get).size 2
   let owner ← entryTitled! app "dlg-owner"
@@ -229,7 +229,7 @@ private def appLocalsFlowIntoWindows : IO Unit := do
 error instead of silently vanishing. -/
 private def appLevelWidgetsThrow : IO Unit := do
   checkThrows "emitting layout at the app level throws" do
-    let app ← bootstrapApplication (Box (Modifier.size 10 10))
+    let app ← bootstrapApplication (Box (modifier := Modifier.size 10 10))
     (← app.composition).dispose
   checkThrows "Window outside an application throws" do
     let ctx ← bootstrap "no-app" 100 80 (Window "w" 50 50) cfg

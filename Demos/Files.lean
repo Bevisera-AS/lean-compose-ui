@@ -352,7 +352,7 @@ composable def fileRow (scope : LaunchScope) (fs : FsSource) (st : FilesState)
     (verticalAlignment := .centerVertically)
     (horizontalArrangement := .spacedBy 10) (content := do
       -- A simple drawn glyph: a filled square (accent for dirs, muted for files).
-      Box (Modifier.width 14 |>.height 14
+      Box (modifier := Modifier.width 14 |>.height 14
             |>.background (if e.isDir then colors.primary else colors.outline)
               (shape := .rounded 3))
       Text (if e.isDir then e.name ++ "/" else e.name) (modifier := Modifier.weight 1)

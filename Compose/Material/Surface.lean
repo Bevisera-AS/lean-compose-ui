@@ -30,10 +30,10 @@ inside. `color` defaults to the theme's `surface`; `contentColor` defaults to
 the scheme's `on*` pair for `color` (or the ambient content color when
 `color` is no scheme role). Content is clipped to `shape`. Mirrors
 `androidx.compose.material3.Surface`. -/
-def Surface (modifier : Modifier := {}) (shape : Shape := .rectangle)
+def Surface (content : Composable Unit := pure ())
+    (modifier : Modifier := {}) (shape : Shape := .rectangle)
     (color : Option Color := none) (contentColor : Option Color := none)
-    (border : Option BorderStroke := none)
-    (content : Composable Unit := pure ()) : Composable Unit := do
+    (border : Option BorderStroke := none) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let ambientContent ← LocalContentColor.current
   let container := color.getD colors.surface

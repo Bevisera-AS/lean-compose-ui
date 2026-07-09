@@ -30,7 +30,7 @@ private def pixel (ctx : WindowContext) (x y : Int32) : IO Sdl.Color := do
 
 /-- First step renders the composition; probes hit content and clear color. -/
 private def rendersComposition : IO Unit := do
-  let ctx ← boot <| Box (Modifier.size 50 50 |>.background .red)
+  let ctx ← boot <| Box (modifier := Modifier.size 50 50 |>.background .red)
   check "app: bootstrap leaves the window dirty" (← ctx.needsFrame.get)
   check "app: first step renders" (← step ctx cfg)
   check "app: content pixel red" (colorNear (← pixel ctx 10 10) 255 0 0)
@@ -44,7 +44,7 @@ private def stateWriteRedraws : IO Unit := do
   let color ← mutableStateOf Color.red
   let ctx ← boot <| Tests.restartable 1 do
     let c ← color.get
-    Box (Modifier.size 50 50 |>.background c)
+    Box (modifier := Modifier.size 50 50 |>.background c)
   let _ ← step ctx cfg
   check "app: initial color rendered" (colorNear (← pixel ctx 10 10) 255 0 0)
   check "app: clean step renders nothing" (!(← step ctx cfg (idleCapMs := 10)))
@@ -83,7 +83,7 @@ window keeps its requested `Dp` extent and no spurious `setSize` fires. The
 Windows scale-up (window coordinates are physical pixels) can't run headless —
 it is covered by `windowCoordSize`'s `#guard`s. -/
 private def windowSizeMatchesDensity : IO Unit := do
-  let ctx ← boot (Box (Modifier.fillMaxSize |>.background .red))
+  let ctx ← boot (Box (modifier := Modifier.fillMaxSize |>.background .red))
   let (w, h) ← ctx.window.getSize
   checkEq "size: window keeps requested width (identity correction)" w 200
   checkEq "size: window keeps requested height (identity correction)" h 150
@@ -97,13 +97,13 @@ private def windowSizeMatchesDensity : IO Unit := do
 /-- `quit`/`windowCloseRequested` dispatch sets the quit flag; `runLoop`
 returns immediately. -/
 private def quitHandling : IO Unit := do
-  let ctx ← boot (Box (Modifier.size 10 10))
+  let ctx ← boot (Box (modifier := Modifier.size 10 10))
   dispatchEvent ctx cfg (.quit ⟨0⟩)
   check "quit: quit event requests exit" (← ctx.quitRequested.get)
   runLoop ctx cfg  -- must return promptly
   check "quit: loop exited" (← ctx.quitRequested.get)
   -- onCloseRequest decides for windowCloseRequested
-  let ctx2 ← boot (Box (Modifier.size 10 10))
+  let ctx2 ← boot (Box (modifier := Modifier.size 10 10))
   dispatchEvent ctx2 { cfg with onCloseRequest := pure false } (.windowCloseRequested ⟨0, ⟨0⟩, 0, 0⟩)
   check "quit: vetoed close keeps running" (!(← ctx2.quitRequested.get))
   dispatchEvent ctx2 cfg (.windowCloseRequested ⟨0, ⟨0⟩, 0, 0⟩)
@@ -119,13 +119,13 @@ private partial def frameCapHonored : IO Unit := do
     LaunchedEffect 0 (growForever ticks w)
     Tests.restartable 1 do
       let v ← w.get
-      Box (Modifier.size v 10 |>.background .red)
+      Box (modifier := Modifier.size v 10 |>.background .red)
   runLoop ctx cfg (maxPasses := some 3)
   checkEq "max passes: busy loop renders every pass" (← ctx.framesRendered.get) 3
   check "max passes: frame clock drove the loop" ((← ticks.get) ≥ 1)
   -- Static content: nothing schedules frames after the first render, yet the
   -- capped loop must terminate (the smokePump-less smoke mode).
-  let ctx2 ← boot (Box (Modifier.size 10 10 |>.background .red))
+  let ctx2 ← boot (Box (modifier := Modifier.size 10 10 |>.background .red))
   runLoop ctx2 cfg (maxPasses := some 5)
   checkEq "max passes: static content renders once" (← ctx2.framesRendered.get) 1
   check "max passes: static content terminates" (!(← ctx2.quitRequested.get))
@@ -141,7 +141,7 @@ where
 event wait until the cap instead of spinning. Coarse bounds: at least most
 of the timeout, well under ten times it. -/
 private def idleStepBlocks : IO Unit := do
-  let ctx ← boot (Box (Modifier.size 10 10 |>.background .red))
+  let ctx ← boot (Box (modifier := Modifier.size 10 10 |>.background .red))
   let _ ← step ctx cfg  -- render; now fully idle
   let t0 ← Sdl.getTicks
   let rendered ← step ctx cfg (idleCapMs := 80)
@@ -159,7 +159,7 @@ private def timerWakesAndRenders : IO Unit := do
       color.set .blue)
     Tests.restartable 1 do
       let c ← color.get
-      Box (Modifier.size 50 50 |>.background c)
+      Box (modifier := Modifier.size 50 50 |>.background c)
   let _ ← step ctx cfg  -- initial render; LaunchedEffect queued → next step starts it
   let _ ← step ctx cfg (idleCapMs := 500)  -- starts the coroutine (parks 30 ms timer)
   -- Within a bounded number of waits the timer fires and repaints blue.

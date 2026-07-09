@@ -34,6 +34,9 @@ as demos.
   state layers + bounded ripple, `Button`/`Checkbox`/`RadioButton`/`Switch`/
   `Slider`/`ProgressIndicator`/`TextField`, scroll, lazy lists, popups,
   dropdown menus, dialogs.
+- **Desktop components** — declarative multi-window `application` with
+  `Window`/`DialogWindow`, an in-window `MenuBar`, `ContextMenuArea`,
+  `TooltipArea`, and a system `Tray`.
 - **MT UI-test framework** (`Compose.Test`) — a headless
   `androidx.compose.ui.test` analog: a semantics tree, matcher-first finders,
   and actions synthesized through the *real* input router, with a fake clock.
@@ -53,7 +56,8 @@ Run a demo directly with `lake exe <name>`:
 
 ```
 demo-widgets   demo-overlays  demo-counter  demo-tempconv  demo-flight
-demo-timer     demo-crud      demo-circles  demo-cells     demo-smoke
+demo-timer     demo-crud      demo-circles  demo-cells     demo-desktop
+demo-smoke
 ```
 
 ## Your first app

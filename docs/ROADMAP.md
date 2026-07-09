@@ -22,8 +22,9 @@ with its tests; a milestone is done when `lake build` is clean and
 | M12 | Demos 1–6 | Counter, TempConverter, FlightBooker, Timer, CRUD, CircleDrawer (+ gallery launcher `--list`) | each matches the 7GUIs spec; headless smoke; undo/redo correct in CircleDrawer; **each demo ships a behavior test suite written with the MT framework** (which dogfoods MT itself) |
 | M13 | Cells | 2-axis virtualized grid w/ sticky headers, selection/editing, formula parser+evaluator+dependency graph (pure), reactive recalc, cycle detection | formula `#guard` suite; scrolling stays 60fps on 99×26; change propagation matches spec; **grid/editing behavior tests written with MT** |
 | M14 | Polish | **phase 1** ✅ widget polish (ripple, animated menu exit, modal focus scoping, TextField keys) + framework promotions (LazyGrid, shared scrollbar core, `FocusRequester`); **phase 2** ✅ Foundation/MT ergonomics pass (dropped `Row`/`Column`/`Box` receiver scopes; MT `replaceText`/`requestFocus`) + perf audit (DESIGN.md "Performance"); **phase 3** ✅ README + `docs/screenshots/` (via `COMPOSE_SCREENSHOT`) + gallery launcher UI + tessellation cache (DESIGN.md "Performance") | ✅ `lake build` clean; `lake exe test` green; README quick start verified; idle blocks (no busy-spin) |
+| M15 | Desktop components | multi-window `application`/`Window`/`DialogWindow`, system `Tray`, in-window `MenuBar`, `ContextMenuArea`, `TooltipArea` (scrollbars landed in M14) | ✅ per-component MT suites + `demo-desktop` showcase and smoke |
 
-Status: complete — all milestones (M0–M14, MT) have landed.
+Status: complete — all milestones (M0–M15, MT) have landed.
 
 Parallelization: M1 ∥ M3 · then M2 ∥ M4 · M5 · then M6 ∥ M7 ∥ M8 ·
 M9 · then M10 ∥ M11 · MT · then M12 ∥ M13 · M14.

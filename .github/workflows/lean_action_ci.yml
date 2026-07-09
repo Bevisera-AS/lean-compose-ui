@@ -13,6 +13,8 @@ jobs:
     env:
       SDL_VIDEO_DRIVER: dummy
       SDL_AUDIO_DRIVER: dummy
+      # No window server in the runner: createTray would abort() (uncatchable).
+      SDL_LEAN_SKIP_TRAY: 1
 
     steps:
       - uses: actions/checkout@v5
@@ -35,6 +37,8 @@ jobs:
       SDL_PREFIX: /home/runner/sdl-prefix
       SDL_VIDEO_DRIVER: dummy
       SDL_AUDIO_DRIVER: dummy
+      # No window server / D-Bus tray host in the runner: skip the tray group.
+      SDL_LEAN_SKIP_TRAY: 1
 
     steps:
       - uses: actions/checkout@v5
@@ -55,7 +59,8 @@ jobs:
           git clone --depth 1 --branch "release-$SDL_VERSION" \
             https://github.com/libsdl-org/SDL.git
           cmake -S SDL -B SDL/build -GNinja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$SDL_PREFIX"
+            -DCMAKE_INSTALL_PREFIX="$SDL_PREFIX" \
+            -DSDL_UNIX_CONSOLE_BUILD=ON
           cmake --build SDL/build
           cmake --install SDL/build
           git clone --depth 1 --branch "release-$SDL_TTF_VERSION" \

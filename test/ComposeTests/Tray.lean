@@ -135,6 +135,13 @@ private def sdlBody : IO Unit := do
 open TrayItem in
 def run : IO Unit := do
   pureChecks
+  -- On a headless macOS CI runner `createTray` doesn't throw — it trips a
+  -- CoreGraphics assertion (`CGSConnectionByID`: no window server) and calls
+  -- `abort()`, which the probe's `try/catch` below cannot intercept. Skip the
+  -- SDL layer when the environment tells us there's no window server / GUI session.
+  if (← IO.getEnv "SDL_LEAN_SKIP_TRAY").isSome then
+    check "tray skipped (SDL_LEAN_SKIP_TRAY set — no window server)" true
+    return
   -- Probe availability once; on any failure, skip the SDL layer with one pass.
   let available ← try
       let t ← createTray none (some "probe")

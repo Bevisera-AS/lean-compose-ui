@@ -178,4 +178,5 @@ single test runner. -/
 lean_lib Demos where
   srcDir := "."
   globs := #[.one `Demos.Counter, .one `Demos.TempConverter,
-    .one `Demos.FlightBooker, .one `Demos.Timer, .one `Demos.Crud]
+    .one `Demos.FlightBooker, .one `Demos.Timer, .one `Demos.Crud,
+    .one `Demos.Gallery]

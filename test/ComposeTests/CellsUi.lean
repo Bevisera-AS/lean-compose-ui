@@ -19,7 +19,7 @@ open Compose Compose.Test Tests.Harness Demos.Cells
 /-- Boot the Cells screen on an empty sheet in a window large enough for a
 several-column × a-dozen-row viewport. -/
 private def cellsTest (body : TestM Unit) : IO Unit :=
-  runComposeTest (content := cellsUi false (initial := Sheet.empty)) body
+  runComposeTest (content := cellsUi (initial := Sheet.empty)) body
     (width := 480) (height := 360)
 
 /-- Commit `input` into the cell tagged `cell-{ref}` through the real edit

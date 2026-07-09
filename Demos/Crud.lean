@@ -173,30 +173,12 @@ composable def crudBody (db : MutableState Db)
         Button (db.modify (·.delete)) (enabled := sel.isSome)
           (modifier := Modifier.testTag "delete") (content := Text "Delete")))
 
-/-- Cycle the filter text once per frame so the headless smoke run keeps
-presenting frames (the CRUD screen is otherwise static, like the overlay
-gallery). Exercises live filtering in CI as a side benefit. -/
-private partial def smokeCycle (filter : MutableState String)
-    (steps : List String) : UiTask Unit := do
-  for s in steps do
-    filter.set s
-    let _ ← UiTask.awaitFrame
-  smokeCycle filter steps
-
-/-- Headless-smoke frame driver (enabled only under `COMPOSE_MAX_FRAMES`). -/
-composable def smokeDriver (filter : MutableState String) (enabled : Bool) :
-    Composable Unit :=
-  LaunchedEffect enabled do
-    if enabled then
-      smokeCycle filter ["", "M", "Mu", "M", "", "T", "Ti", "T"]
-
 /-- The CRUD demo screen (see the module docstring). -/
-composable def crudUi (smoke : Bool) : Composable Unit := do
+composable def crudUi : Composable Unit := do
   let db ← remember (mutableStateOf seed)
   let filter ← remember (mutableStateOf "")
   let «name» ← remember (mutableStateOf "")
   let surname ← remember (mutableStateOf "")
-  smokeDriver filter smoke
   MaterialTheme (content := crudBody db filter «name» surname)
 
 end Demos.Crud

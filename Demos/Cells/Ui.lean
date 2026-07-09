@@ -27,8 +27,7 @@ rows `1`–`99`) over the pure formula engine in `Demos/Cells/Engine.lean`.
   horizontal variant (an M14 promotion candidate — see `HorizontalScrollbar`).
 
 Headless smoke: `SDL_VIDEO_DRIVER=dummy COMPOSE_MAX_FRAMES=60 lake exe
-demo-cells` (an auto scroll bounce keeps frames coming, as in
-`demo-overlays`).
+demo-cells`.
 -/
 
 namespace Demos.Cells
@@ -460,20 +459,6 @@ composable def formulaBar (st : CellsState) : Composable Unit := do
       Text src (modifier := Modifier.testTag "formula-src")
         (style := { fontSize := 12 }))
 
-/-- An endless scroll bounce — the headless-smoke frame driver (the
-`demo-overlays` pattern: a settled Cells screen idles by design, so
-`COMPOSE_MAX_FRAMES` needs an animation to count frames against). -/
-private partial def bounce (scroll : ScrollState) : UiTask Unit := do
-  scroll.animateScrollTo 600 (.tween 1000 0 .linear)
-  scroll.animateScrollTo 0 (.tween 1000 0 .linear)
-  bounce scroll
-
-/-- Launch the smoke bounce when enabled. -/
-composable def autoScroll (scroll : ScrollState) (enabled : Bool) :
-    Composable Unit := do
-  LaunchedEffect enabled do
-    if enabled then bounce scroll
-
 /-- The assembled screen: formula bar on top; below it the pinned corner +
 column headers, the pinned row headers, and the scrolling cell grid with
 both scrollbars overlaid. -/
@@ -497,13 +482,11 @@ composable def cellsScreen (st : CellsState) (hs vs : ScrollState) :
             HorizontalScrollbar hs (bs.align .bottomCenter |>.fillMaxWidth)))))
 
 /-- The Cells demo UI (see the module docstring). `initial` seeds the sheet
-(tests boot it empty); `smoke` enables the headless frame driver. -/
-composable def cellsUi (smoke : Bool) (initial : Sheet := seedSheet) :
-    Composable Unit := do
+(tests boot it empty). -/
+composable def cellsUi (initial : Sheet := seedSheet) : Composable Unit := do
   let st ← remember (CellsState.create initial)
   let hs ← rememberScrollState
   let vs ← rememberScrollState
-  autoScroll vs smoke
   MaterialTheme (content := cellsScreen st hs vs)
 
 end Demos.Cells

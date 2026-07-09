@@ -9,7 +9,7 @@ Drives M5's `bootstrap`/`step`/`runLoop` headless (dummy video driver,
 software renderer): first-frame pixels, state-write → dirty → re-render with
 changed pixels (the invalidation→frame wiring end to end), clean steps render
 nothing, synthetic resize events remeasure, quit dispatch, the
-`COMPOSE_MAX_FRAMES`-style frame cap of `runLoop`, and idle blocking (a
+`COMPOSE_MAX_FRAMES`-style pass cap of `runLoop`, and idle blocking (a
 workless step sleeps its wait out instead of spinning).
 -/
 
@@ -92,9 +92,9 @@ private def quitHandling : IO Unit := do
   dispatchEvent ctx2 cfg (.windowCloseRequested ⟨0, ⟨0⟩, 0, 0⟩)
   check "quit: default close quits" (← ctx2.quitRequested.get)
 
-/-- `runLoop` with a frame cap exits after exactly that many presented
-frames (the `COMPOSE_MAX_FRAMES` mechanism), kept busy by a frame-clock
-coroutine. -/
+/-- `runLoop` with a pass cap exits after exactly that many loop passes (the
+`COMPOSE_MAX_FRAMES` mechanism): an animating window presents one frame per
+pass, and a fully static one still terminates (idle passes count too). -/
 private partial def frameCapHonored : IO Unit := do
   let ticks ← IO.mkRef (0 : Nat)
   let ctx ← boot do
@@ -103,9 +103,15 @@ private partial def frameCapHonored : IO Unit := do
     Tests.restartable 1 do
       let v ← w.get
       Box (Modifier.size v 10 |>.background .red)
-  runLoop ctx cfg (maxFrames := some 3)
-  checkEq "max frames: rendered exactly the cap" (← ctx.framesRendered.get) 3
-  check "max frames: frame clock drove the loop" ((← ticks.get) ≥ 1)
+  runLoop ctx cfg (maxPasses := some 3)
+  checkEq "max passes: busy loop renders every pass" (← ctx.framesRendered.get) 3
+  check "max passes: frame clock drove the loop" ((← ticks.get) ≥ 1)
+  -- Static content: nothing schedules frames after the first render, yet the
+  -- capped loop must terminate (the smokePump-less smoke mode).
+  let ctx2 ← boot (Box (Modifier.size 10 10 |>.background .red))
+  runLoop ctx2 cfg (maxPasses := some 5)
+  checkEq "max passes: static content renders once" (← ctx2.framesRendered.get) 1
+  check "max passes: static content terminates" (!(← ctx2.quitRequested.get))
 where
   /-- Grow the width by 1 dp per frame, forever. -/
   growForever (ticks : IO.Ref Nat) (w : MutableState Dp) : UiTask Unit := do

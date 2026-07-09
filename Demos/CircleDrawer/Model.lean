@@ -174,33 +174,14 @@ where
     | .exit    => return none
     | _        => awaitRelease scope
 
-/-- Headless-smoke frame driver: cycle a circle in and out of the document.
-The settled canvas is static, so under `COMPOSE_MAX_FRAMES` nothing would
-repaint and the loop would idle forever; this keeps frames flowing (and
-exercises create/undo in CI). The add/undo pair leaves the history bounded. -/
-partial def smokeBounce (history : MutableState History) : UiTask Unit := do
-  history.modify (·.addCircle ⟨80, 80⟩)
-  UiTask.delay 16
-  history.modify (·.undo)
-  UiTask.delay 16
-  smokeBounce history
-
-/-- Runs `smokeBounce` while `enabled` (the headless-smoke frame driver). -/
-composable def smokeDriver (history : MutableState History) (enabled : Bool) :
-    Composable Unit :=
-  LaunchedEffect enabled do
-    if enabled then smokeBounce history
-
-/-- The CircleDrawer screen (see the module docstring). `smoke` enables the
-headless frame driver only. -/
-composable def circleDrawerUi (smoke : Bool := false) : Composable Unit := do
+/-- The CircleDrawer screen (see the module docstring). -/
+composable def circleDrawerUi : Composable Unit := do
   let history   ← remember (mutableStateOf History.empty)
   let hoverPos  ← remember (mutableStateOf (none : Option Offset))
   let menuAt    ← remember (mutableStateOf (none : Option (Nat × Offset)))
   let dialogFor ← remember (mutableStateOf (none : Option Nat))
   let liveDiam  ← remember (mutableStateOf defaultDiameter)
   let canvasRect ← remember (mutableStateOf Rect.zero)
-  smokeDriver history smoke
 
   -- Pointer callbacks touch only stable refs (see `canvasGestures`).
   let onLeft  := fun (p : Offset) => history.modify (·.addCircle p)

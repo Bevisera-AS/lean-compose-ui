@@ -134,19 +134,4 @@ composable def tempConverterUi : Composable Unit := do
           (isError := !f.trimAscii.toString.isEmpty && (parseNumber f).isNone)
           (modifier := Modifier.testTag "fahrenheit")))
 
-/-- Headless-smoke frame pump (see `Demos/Counter.lean`): keeps frames coming
-under `COMPOSE_MAX_FRAMES` on an otherwise static screen; inert interactively. -/
-composable def smokePump (enabled : Bool) : Composable Unit := do
-  if enabled then
-    let it ← rememberInfiniteTransition
-    let phase ← it.animateFloat 0 1 (.infiniteRepeatable (.tween 500 0 .linear))
-    let _ ← phase.get
-    pure ()
-
-/-- The demo's window: the frame pump plus the screen. `smoke` is set from
-`COMPOSE_MAX_FRAMES` by the entry point in `Demos/TempConverterMain.lean`. -/
-composable def tempConverterApp (smoke : Bool) : Composable Unit := do
-  smokePump smoke
-  tempConverterUi
-
 end Demos.TempConverter

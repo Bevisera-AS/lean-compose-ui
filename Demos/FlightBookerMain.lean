@@ -8,8 +8,7 @@ why the entry point is split out from the library module).
 -/
 
 /-- Entry point. -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
+def main : IO UInt32 :=
   Compose.runApp "compose flight booker" 360 360
-    (Demos.FlightBooker.flightBookerApp smoke)
+    Demos.FlightBooker.flightBookerUi
     { clearColor := Compose.ColorScheme.light.background }

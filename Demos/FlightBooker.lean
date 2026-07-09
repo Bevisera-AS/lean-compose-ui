@@ -159,19 +159,4 @@ composable def flightBookerUi : Composable Unit := do
             (text := bookMessage isReturn s r)
             (confirmButton := TextButton (dialogOpen.set false) (content := Text "OK"))))
 
-/-- Headless-smoke frame pump (see `Demos/Counter.lean`): keeps frames coming
-under `COMPOSE_MAX_FRAMES` on an otherwise static screen; inert interactively. -/
-composable def smokePump (enabled : Bool) : Composable Unit := do
-  if enabled then
-    let it ← rememberInfiniteTransition
-    let phase ← it.animateFloat 0 1 (.infiniteRepeatable (.tween 500 0 .linear))
-    let _ ← phase.get
-    pure ()
-
-/-- The demo's window: the frame pump plus the screen. `smoke` is set from
-`COMPOSE_MAX_FRAMES` by the entry point in `Demos/FlightBookerMain.lean`. -/
-composable def flightBookerApp (smoke : Bool) : Composable Unit := do
-  smokePump smoke
-  flightBookerUi
-
 end Demos.FlightBooker

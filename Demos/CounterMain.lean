@@ -10,7 +10,6 @@ one import closure, so each demo's entry point is split out here.
 -/
 
 /-- Entry point. -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
-  Compose.runApp "compose counter" 320 200 (Demos.Counter.counterApp smoke)
+def main : IO UInt32 :=
+  Compose.runApp "compose counter" 320 200 Demos.Counter.counterUi
     { clearColor := Compose.ColorScheme.light.background }

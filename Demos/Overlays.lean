@@ -51,27 +51,12 @@ composable def dialogSection (dialogOpen : MutableState Bool) : Composable Unit 
       (confirmButton := TextButton (dialogOpen.set false) (content := Text "Discard"))
       (dismissButton := some (TextButton (dialogOpen.set false) (content := Text "Keep")))
 
-/-- An endless animated scroll bounce (the headless-smoke frame driver). -/
-private partial def bounce (scroll : ScrollState) : UiTask Unit := do
-  scroll.animateScrollTo 400 (.tween 1000 0 .linear)
-  scroll.animateScrollTo 0 (.tween 1000 0 .linear)
-  bounce scroll
-
-/-- Headless-smoke driver: the overlay screen is static once settled (the
-loop then idles, by design), so under `COMPOSE_MAX_FRAMES` an endless
-animated scroll bounce keeps frames coming — and exercises scroll +
-scrollbar activity in CI. -/
-composable def autoScroll (scroll : ScrollState) (enabled : Bool) : Composable Unit := do
-  LaunchedEffect enabled do
-    if enabled then bounce scroll
-
 /-- The gallery screen (see the module docstring). -/
-composable def overlaysUi (smoke : Bool) : Composable Unit := do
+composable def overlaysUi : Composable Unit := do
   let scroll ← rememberScrollState
   let choice ← remember (mutableStateOf "Vanilla")
   let menuOpen ← remember (mutableStateOf false)
   let dialogOpen ← remember (mutableStateOf false)
-  autoScroll scroll smoke
   MaterialTheme (content :=
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
       (content := fun _ => do
@@ -85,7 +70,6 @@ composable def overlaysUi (smoke : Bool) : Composable Unit := do
 end Demos.Overlays
 
 /-- Entry point. -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
-  Compose.runApp "compose overlays" 480 420 (Demos.Overlays.overlaysUi smoke)
+def main : IO UInt32 :=
+  Compose.runApp "compose overlays" 480 420 Demos.Overlays.overlaysUi
     { clearColor := Compose.ColorScheme.light.background }

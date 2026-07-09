@@ -27,22 +27,4 @@ composable def counterUi : Composable Unit := do
         Button (count.modify (· + 1)) (modifier := Modifier.testTag "count-btn")
           (content := Text "Count")))
 
-/-- Headless-smoke frame pump: a fully static screen idles (presents no
-frames), so under `COMPOSE_MAX_FRAMES` the loop would never reach its cap and
-exit. When `enabled` (smoke runs only), an infinite transition keeps frame
-work scheduled — mirrors the auto-driver in `Demos/Overlays.lean`. Draws
-nothing; disabled (and thus inert) in interactive runs. -/
-composable def smokePump (enabled : Bool) : Composable Unit := do
-  if enabled then
-    let it ← rememberInfiniteTransition
-    let phase ← it.animateFloat 0 1 (.infiniteRepeatable (.tween 500 0 .linear))
-    let _ ← phase.get
-    pure ()
-
-/-- The demo's window: the frame pump plus the screen. `smoke` is set from
-`COMPOSE_MAX_FRAMES` by the entry point in `Demos/CounterMain.lean`. -/
-composable def counterApp (smoke : Bool) : Composable Unit := do
-  smokePump smoke
-  counterUi
-
 end Demos.Counter

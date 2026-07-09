@@ -12,8 +12,7 @@ libraries. See `Demos/Crud.lean` for the demo itself.
 
 open Compose
 
-/-- Entry point. Honors `COMPOSE_MAX_FRAMES` (headless smoke). -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
-  runApp "compose crud" 540 420 (Demos.Crud.crudUi smoke)
+/-- Entry point. -/
+def main : IO UInt32 :=
+  runApp "compose crud" 540 420 Demos.Crud.crudUi
     { clearColor := ColorScheme.light.background }

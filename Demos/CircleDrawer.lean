@@ -11,7 +11,6 @@ just the executable entry point. Headless:
 -/
 
 /-- Entry point. -/
-def main : IO UInt32 := do
-  let smoke := (← IO.getEnv "COMPOSE_MAX_FRAMES").isSome
-  Compose.runApp "compose circles" 520 480 (Demos.CircleDrawer.circleDrawerUi smoke)
+def main : IO UInt32 :=
+  Compose.runApp "compose circles" 520 480 Demos.CircleDrawer.circleDrawerUi
     { clearColor := Compose.ColorScheme.light.background }

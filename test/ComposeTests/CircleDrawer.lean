@@ -22,7 +22,7 @@ open Demos.CircleDrawer (circleDrawerUi)
 /-- A left-click creates a circle (Undo enables); undo empties it (Redo
 enables); redo restores it. -/
 private def createUndoRedo : IO Unit :=
-  runComposeTest (content := circleDrawerUi false) (width := 520) (height := 480) do
+  runComposeTest (content := circleDrawerUi) (width := 520) (height := 480) do
     assertDisabled (.tag "undo")
     assertDisabled (.tag "redo")
     let r ← boundsOf (.tag "canvas")
@@ -38,7 +38,7 @@ private def createUndoRedo : IO Unit :=
 
 /-- A fresh action after an undo invalidates the redo branch. -/
 private def newActionClearsRedo : IO Unit :=
-  runComposeTest (content := circleDrawerUi false) (width := 520) (height := 480) do
+  runComposeTest (content := circleDrawerUi) (width := 520) (height := 480) do
     let r ← boundsOf (.tag "canvas")
     clickAt ⟨r.left + 60, r.top + 60⟩
     clickAt ⟨r.left + 150, r.top + 150⟩   -- two circles
@@ -50,7 +50,7 @@ private def newActionClearsRedo : IO Unit :=
 
 /-- Hovering the pointer over a circle fills it grey (the selection). -/
 private def hoverFillsSelection : IO Unit :=
-  runComposeTest (content := circleDrawerUi false) (width := 520) (height := 480) do
+  runComposeTest (content := circleDrawerUi) (width := 520) (height := 480) do
     let r ← boundsOf (.tag "canvas")
     let cx := r.left + 120
     let cy := r.top + 120
@@ -65,7 +65,7 @@ private def hoverFillsSelection : IO Unit :=
 circle live; closing commits one undo step that a later undo reverts (a point
 inside only the enlarged circle is filled, then bare after undo). -/
 private def adjustDiameterFlow : IO Unit :=
-  runComposeTest (content := circleDrawerUi false) (width := 520) (height := 480) do
+  runComposeTest (content := circleDrawerUi) (width := 520) (height := 480) do
     let r ← boundsOf (.tag "canvas")
     let cx := r.left + 150
     let cy := r.top + 150

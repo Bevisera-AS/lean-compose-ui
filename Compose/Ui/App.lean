@@ -25,7 +25,8 @@ power-friendly event loop from DESIGN.md:
 State writes anywhere schedule frames through the M5 invalidation hooks
 (`Composition.setOnInvalidate`, `LayoutNode.setOnRequestRemeasure`) — the
 loop never polls for dirtiness. `COMPOSE_MAX_FRAMES=<n>` exits successfully
-after n presented frames (headless CI). The loop body is the testable
+after n loop passes (headless CI; passes rather than presented frames, so
+static content terminates). The loop body is the testable
 `Compose.step`; `Compose.bootstrap` builds a `WindowContext` without entering
 the loop so tests can drive it manually.
 -/
@@ -202,26 +203,39 @@ def step (ctx : WindowContext) (config : AppConfig := {})
     return true
   return false
 
-/-- Run the loop until quit — or, when `maxFrames` is set, until that many
-frames have been presented (then exit successfully; the headless CI mode). -/
+/-- Idle-wait cap per pass while a pass budget is active, ms: capped passes
+must terminate promptly even when the content is fully static (nothing wakes
+the loop), so the headless smoke run never hangs on a settled screen. -/
+def cappedIdleWaitMs : UInt32 := 5
+
+/-- Run the loop until quit — or, when `maxPasses` is set, for that many
+loop *passes* (then exit successfully; the headless CI mode). Counting
+passes rather than presented frames guarantees termination for fully static
+content — a settled screen presents nothing, but every pass still counts —
+and while capped the idle wait shrinks to `cappedIdleWaitMs` so those idle
+passes tick by promptly. -/
 partial def runLoop (ctx : WindowContext) (config : AppConfig := {})
-    (maxFrames : Option Nat := none) : IO Unit := do
-  if ← ctx.quitRequested.get then return
-  if let some m := maxFrames then
-    if (← ctx.framesRendered.get) ≥ m then return
-  let _ ← step ctx config
-  runLoop ctx config maxFrames
+    (maxPasses : Option Nat := none) : IO Unit := do
+  let idleCap := if maxPasses.isSome then cappedIdleWaitMs else idleWaitMs
+  go maxPasses idleCap
+where
+  go (remaining : Option Nat) (idleCap : UInt32) : IO Unit := do
+    if ← ctx.quitRequested.get then return
+    if remaining == some 0 then return
+    let _ ← step ctx config idleCap
+    go (remaining.map (· - 1)) idleCap
 
 /-- Run a Compose application: create the window (`width`/`height` in `Dp`),
 compose `content`, and drive the dirty-driven event loop until quit. Honors
-`COMPOSE_MAX_FRAMES=<n>` (exit 0 after n presented frames — headless CI,
-mirroring lean-sdl3's `SDL_LEAN_MAX_FRAMES`). Call from `main` (main thread
-only). Mirrors `androidx.compose.ui.window.singleWindowApplication`. -/
+`COMPOSE_MAX_FRAMES=<n>` (exit 0 after n loop passes — headless CI,
+mirroring lean-sdl3's `SDL_LEAN_MAX_FRAMES`; passes, not presented frames,
+so fully static demos terminate too). Call from `main` (main thread only).
+Mirrors `androidx.compose.ui.window.singleWindowApplication`. -/
 def runApp (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) : IO UInt32 := do
   let ctx ← bootstrap title width height content config
-  let maxFrames := (← IO.getEnv "COMPOSE_MAX_FRAMES").bind (·.toNat?)
-  runLoop ctx config maxFrames
+  let maxPasses := (← IO.getEnv "COMPOSE_MAX_FRAMES").bind (·.toNat?)
+  runLoop ctx config maxPasses
   (← ctx.composition).dispose
   return 0
 

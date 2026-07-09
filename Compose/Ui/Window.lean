@@ -112,7 +112,8 @@ structure WindowContext where
   needsFrame : IO.Ref Bool
   /-- The loop exits at the next iteration once set. -/
   quitRequested : IO.Ref Bool
-  /-- Frames presented so far (drives `COMPOSE_MAX_FRAMES`). -/
+  /-- Frames presented so far (observability; the smoke cap counts loop
+  passes — see `Compose.runLoop`). -/
   framesRendered : IO.Ref Nat
   /-- M6's input hook: every event the shell does not consume (pointer, key,
   text, …) is offered here; `true` means handled. M5 installs the default

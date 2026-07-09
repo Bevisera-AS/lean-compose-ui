@@ -1,5 +1,7 @@
 # compose-ui
 
+[![CI](https://github.com/philnguyen/lean-compose-ui/actions/workflows/lean_action_ci.yml/badge.svg)](https://github.com/philnguyen/lean-compose-ui/actions/workflows/lean_action_ci.yml)
+
 A [Jetpack Compose](https://github.com/jetbrains/compose-multiplatform)-style
 declarative UI framework for [Lean 4](https://lean-lang.org), rendered with
 SDL3 via [lean-sdl3](https://github.com/philnguyen/lean-sdl3). You write

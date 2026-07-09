@@ -5,22 +5,28 @@ import Compose.Ui.Window
 namespace Compose
 
 /-!
-# LazyColumn-lite (`Compose/Foundation/Lazy.lean`)
+# LazyColumn-lite and LazyGrid-lite (`Compose/Foundation/Lazy.lean`)
 
-Fixed-item-height vertical virtualization over the M10 scroll primitives —
-the documented simplification of `androidx.compose.foundation.lazy.LazyColumn`
-(every item is `itemHeight` tall; no per-item measurement pass drives the
-window). Only the visible index window (±`overscan` items) is composed, via
-`keyed`, and each item sits in its own restart scope that skips when its
-index is unchanged — so scrolling composes exactly the *entering* items,
-disposes the leaving ones, and keeps the state of survivors.
+Fixed-item-size virtualization over the M10 scroll primitives — the
+documented simplification of `androidx.compose.foundation.lazy.LazyColumn` /
+`lazy.grid.LazyVerticalGrid` (every item has the stated fixed size; no
+per-item measurement pass drives the window). Only the visible index window
+(±`overscan` items) is composed, via `keyed`; in `LazyColumn` each item
+additionally sits in its own restart scope that skips when its index is
+unchanged — so scrolling composes exactly the *entering* items, disposes the
+leaving ones, and keeps the state of survivors.
 
 The scroll position itself never recomposes anything: items are placed at
-`index × itemHeight` inside a content block whose total height is
-`count × itemHeight`, and `Modifier.verticalScroll` offsets that block during
+`index × itemSize` inside a content block whose total extent is
+`count × itemSize`, and the scroll modifiers offset that block during
 *measurement*. Recomposition happens only when the visible window shifts
 (a `derivedStateOf` over the scroll value/viewport, invalidating readers only
-when the `(first, last)` pair actually changes).
+when the window pair actually changes).
+
+`LazyGrid` virtualizes both axes at once (the M13b Cells pattern, promoted in
+M14b): per axis either a shared `ScrollState` (scrolling, windowed) or `none`
+(pinned, fully composed) — so a spreadsheet grid, its sticky header strips,
+and a plain lazy row are all the same component.
 -/
 
 /-- The composed index window for a lazy column: `[first, lastEx)` with
@@ -102,5 +108,71 @@ composable def LazyColumn (state : ScrollState) (itemHeight : Dp) (count : Nat)
     (content := do
       for i in [first:lastEx] do
         keyed (key i) (lazyItem i itemContent))
+
+/-! ## LazyGrid -/
+
+/-- The lazy grid's measure policy: children are the composed cell window,
+each measured at exactly `cw × ch` px and placed row-major into the
+`cols`-wide window starting at cell `(c0, r0)`; the reported size is the
+*full* virtual extent (`columns × rows` cells), so enclosing scroll modifiers
+see the whole sheet. A pinned header strip is just the 1-high/1-wide case. -/
+private def lazyGridPolicy (c0 r0 cols columns rows : Nat) (cw ch : Int32) :
+    MeasurePolicy := fun _ ms c => do
+  let ps ← ms.mapM (·.measure (Constraints.fixed cw ch))
+  return { size := c.constrain ⟨cw * Int32.ofNat columns, ch * Int32.ofNat rows⟩
+           placement := do
+             if cols == 0 then return
+             let mut j := 0
+             for p in ps do
+               p.placeAt ⟨cw * Int32.ofNat (c0 + j % cols),
+                          ch * Int32.ofNat (r0 + j / cols)⟩
+               j := j + 1 }
+
+/-- A stable hash of a lazy grid's window + cell geometry (policy inputs). -/
+private def lazyGridKey (c0 c1 r0 r1 : Nat) (cw ch : Int32) : UInt64 :=
+  mixKeys c0.toUInt64 <| mixKeys c1.toUInt64 <| mixKeys r0.toUInt64 <|
+    mixKeys r1.toUInt64 <|
+      mixKeys cw.toFloat32.toBits.toUInt64 ch.toFloat32.toBits.toUInt64
+
+/-- A 2-axis virtualized grid of `columns × rows` fixed-size cells: only the
+visible cell window (±1 cell per scrolling axis) is composed, each cell under
+`keyed` (state survives while it stays in the window). Per axis, pass a
+`ScrollState` to make it scroll (wheel, scrollbar, `scrollTo`; the state may
+be shared with other grids — sticky headers are 1-axis grids sharing the main
+grid's state) or `none` to pin it (that axis composes fully). `itemContent
+col row` composes one cell; `contentModifier` lands *inside* the scroll
+wrappers, so its pointer handlers see content-local positions (grid-level tap
+detection), while `modifier` stays outside (tags, focus, keys, sizing).
+Mirrors `androidx.compose.foundation.lazy.grid.LazyVerticalGrid` /
+`LazyHorizontalGrid`, collapsed to the fixed-cell-size 2-axis case. -/
+composable def LazyGrid (columns rows : Nat) (cellWidth cellHeight : Dp)
+    (hState vState : Option ScrollState := none)
+    (modifier : Modifier := {}) (contentModifier : Modifier := {})
+    (key : Nat → Nat → UInt64 := fun c r => (r * columns + c).toUInt64)
+    (itemContent : Nat → Nat → Composable Unit := fun _ _ => pure ()) :
+    Composable Unit := do
+  let density ← LocalDensity.current
+  let cw := density.dpRoundToPx cellWidth
+  let ch := density.dpRoundToPx cellHeight
+  let sizeKey := mixKeys cw.toFloat32.toBits.toUInt64 ch.toFloat32.toBits.toUInt64
+  -- Per-axis window: lazily derived on a scrolling axis, the full range on a
+  -- pinned one. Readers wake only when a window pair actually changes.
+  let win ← rememberKeyed sizeKey
+    (derivedStateOf (α := (Nat × Nat) × Nat × Nat) do
+      let axis (state? : Option ScrollState) (itemPx : Int32) (count : Nat) :
+          IO (Nat × Nat) := do
+        match state? with
+        | some s => return lazyWindow (← s.value) (← s.viewportSize) itemPx count
+        | none => return (0, count)
+      return (← axis hState cw columns, ← axis vState ch rows))
+  let ((c0, c1), r0, r1) ← win.get
+  let m := match hState with | some s => modifier.horizontalScroll s | none => modifier
+  let m := match vState with | some s => m.verticalScroll s | none => m
+  Layout (m.then contentModifier) (lazyGridPolicy c0 r0 (c1 - c0) columns rows cw ch)
+    (policyInputs := some (mixKeys 0x6c677269 (lazyGridKey c0 c1 r0 r1 cw ch)))
+    (content := do
+      for r in [r0:r1] do
+        for c in [c0:c1] do
+          keyed (key c r) (itemContent c r))
 
 end Compose

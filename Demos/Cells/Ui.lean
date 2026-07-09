@@ -7,15 +7,13 @@ import Demos.Cells.Engine
 The 7GUIs **Cells** demo: a scrollable 26×99 spreadsheet (columns `A`–`Z`,
 rows `1`–`99`) over the pure formula engine in `Demos/Cells/Engine.lean`.
 
-* **2-axis virtualization**: only the visible cell window composes. Two
-  `ScrollState`s (one per axis) drive `lazyWindow`-derived index windows;
-  the grid is a single `Layout` that reports the *full* content size inside
-  `Modifier.horizontalScroll |>.verticalScroll`, so the framework scroll
-  containers own clipping, wheel handling, and offset placement.
-* **Sticky headers**: the column-header row and row-header column are
-  independent virtualized strips sharing the grid's scroll states on their
-  one scrolling axis — pinned on the other. The corner cell is a plain box,
-  pinned both ways.
+* **2-axis virtualization**: the cell area is a `LazyGrid` over two
+  `ScrollState`s (one per axis) — only the visible cell window composes,
+  while the grid reports the *full* sheet extent to the framework scroll
+  containers (clipping, wheel handling, offset placement).
+* **Sticky headers**: the column-header row and row-header column are 1-axis
+  `LazyGrid`s sharing the cell grid's scroll state on their scrolling axis —
+  pinned on the other. The corner cell is a plain box, pinned both ways.
 * **Editing**: click selects (committing any open edit), double-click or
   `Enter` opens an editor (`TextFieldS` seeded with the cell's *source*),
   typing starts an edit that replaces the content. `Enter` commits (the
@@ -232,28 +230,6 @@ private def gridLineDraw (c : Color) : DrawM Unit := do
   DrawScope.drawRect (.solid c) ⟨sz.width - 1, 0⟩ ⟨1, sz.height⟩
   DrawScope.drawRect (.solid c) ⟨0, sz.height - 1⟩ ⟨sz.width, 1⟩
 
-/-- Measure policy of a virtualized strip (headers) or the cell grid:
-children measure at exactly `iw × ih` px and land row-major into the
-`cols`-wide index window starting at `(c0, r0)`; the reported size is the
-*full* virtual extent (`countW × countH` cells), so the enclosing scroll
-modifiers see the whole sheet. A strip is just the 1-high/1-wide case. -/
-private def gridPolicy (c0 r0 cols countW countH : Nat) (iw ih : Int32) :
-    MeasurePolicy := fun _ ms c => do
-  let ps ← ms.mapM (·.measure (Constraints.fixed iw ih))
-  return { size := c.constrain ⟨iw * Int32.ofNat countW, ih * Int32.ofNat countH⟩
-           placement := do
-             if cols == 0 then return
-             let mut j := 0
-             for p in ps do
-               p.placeAt ⟨iw * Int32.ofNat (c0 + j % cols),
-                          ih * Int32.ofNat (r0 + j / cols)⟩
-               j := j + 1 }
-
-/-- A stable hash for a policy's window/geometry inputs. -/
-private def windowKey (a b c : Nat) (iw ih : Int32) : UInt64 :=
-  mixKeys a.toUInt64 <| mixKeys b.toUInt64 <| mixKeys c.toUInt64 <|
-    mixKeys iw.toFloat32.toBits.toUInt64 ih.toFloat32.toBits.toUInt64
-
 /-- One header cell (column letter or row number), highlighted when its
 column/row holds the selection. -/
 composable def headerCell (tag label : String) (highlight : Bool) :
@@ -268,44 +244,29 @@ composable def headerCell (tag label : String) (highlight : Bool) :
       Text label (style := { fontSize := 12 })
         (color := some colors.onSurfaceVariant))
 
-/-- The pinned column-header row (`A`–`Z`): a horizontal virtualized strip
-sharing the grid's horizontal scroll state, so it follows the grid exactly
-while staying vertically pinned. -/
+/-- The pinned column-header row (`A`–`Z`): a 1-row `LazyGrid` sharing the
+grid's horizontal scroll state, so it follows the grid exactly while staying
+vertically pinned. -/
 composable def columnHeaders (st : CellsState) (hs : ScrollState) :
     Composable Unit := do
-  let density ← LocalDensity.current
-  let cwPx := density.dpRoundToPx cellW
-  let hhPx := density.dpRoundToPx headerH
-  let win ← rememberKeyed cwPx.toFloat32.toBits.toUInt64
-    (derivedStateOf (α := Nat × Nat) do
-      return lazyWindow (← hs.value) (← hs.viewportSize) cwPx colCount)
-  let (c0, c1) ← win.get
   let selCol := (← st.selected.get).col
-  Layout (Modifier.height headerH |>.horizontalScroll hs)
-    (gridPolicy c0 0 (c1 - c0) colCount 1 cwPx hhPx)
-    (policyInputs := some (mixKeys 0x63686472 (windowKey c0 c1 0 cwPx hhPx)))
-    (content := do
-      for ci in [c0:c1] do
-        keyed ci (headerCell s!"colh-{colLabel ci}" (colLabel ci) (ci == selCol)))
+  LazyGrid (columns := colCount) (rows := 1)
+    (cellWidth := cellW) (cellHeight := headerH) (hState := some hs)
+    (modifier := Modifier.height headerH)
+    (itemContent := fun ci _ =>
+      headerCell s!"colh-{colLabel ci}" (colLabel ci) (ci == selCol))
 
 /-- The pinned row-header column (`1`–`99`): the vertical counterpart of
-`columnHeaders`, sharing the grid's vertical scroll state. -/
+`columnHeaders`, a 1-column `LazyGrid` sharing the grid's vertical scroll
+state. -/
 composable def rowHeaders (st : CellsState) (vs : ScrollState)
     (modifier : Modifier := {}) : Composable Unit := do
-  let density ← LocalDensity.current
-  let chPx := density.dpRoundToPx cellH
-  let hwPx := density.dpRoundToPx headerW
-  let win ← rememberKeyed chPx.toFloat32.toBits.toUInt64
-    (derivedStateOf (α := Nat × Nat) do
-      return lazyWindow (← vs.value) (← vs.viewportSize) chPx rowCount)
-  let (r0, r1) ← win.get
   let selRow := (← st.selected.get).row
-  Layout (modifier.verticalScroll vs)
-    (gridPolicy 0 r0 1 1 rowCount hwPx chPx)
-    (policyInputs := some (mixKeys 0x72686472 (windowKey r0 r1 0 hwPx chPx)))
-    (content := do
-      for ri in [r0:r1] do
-        keyed ri (headerCell s!"rowh-{ri + 1}" s!"{ri + 1}" (ri + 1 == selRow)))
+  LazyGrid (columns := 1) (rows := rowCount)
+    (cellWidth := headerW) (cellHeight := cellH) (vState := some vs)
+    (modifier := modifier)
+    (itemContent := fun _ ri =>
+      headerCell s!"rowh-{ri + 1}" s!"{ri + 1}" (ri + 1 == selRow))
 
 /-- One grid cell. Editing cells host the editor (`TextFieldS` over the
 shared draft, tagged `cell-editor`); resting cells render `Sheet.displayOf`
@@ -334,43 +295,33 @@ composable def cellView (st : CellsState) (ref : CellRef) : Composable Unit := d
           (style := { fontSize := 12 })
           (color := some (if isErr then colors.error else colors.onSurface)))
 
-/-- The scrolling cell area: a single `Layout` composing only the visible
-cell window (derived from both scroll states), reporting the full sheet
-extent inside `horizontalScroll |>.verticalScroll`. One grid-level pointer
-detector — placed *inside* the scroll wrappers, so its positions are
-content-local — turns taps into selection and double-taps into editing via
-`refAt`; the grid is focusable and a text-input client, so keys and typing
-work without a programmatic focus API. -/
+/-- The scrolling cell area: a `LazyGrid` on both scroll states, composing
+only the visible cell window while reporting the full sheet extent. One
+grid-level tap detector rides `contentModifier` — inside the scroll
+wrappers, so its positions are content-local — turning taps into selection
+and double-taps into editing via `refAt`; the grid is focusable and a
+text-input client, so keys and typing work without clicking a cell editor
+first. -/
 composable def gridCells (st : CellsState) (hs vs : ScrollState) :
     Composable Unit := do
   let density ← LocalDensity.current
-  let cwPx := density.dpRoundToPx cellW
-  let chPx := density.dpRoundToPx cellH
-  let sizeKey := mixKeys cwPx.toFloat32.toBits.toUInt64 chPx.toFloat32.toBits.toUInt64
-  let win ← rememberKeyed sizeKey
-    (derivedStateOf (α := (Nat × Nat) × Nat × Nat) do
-      return (lazyWindow (← hs.value) (← hs.viewportSize) cwPx colCount,
-              lazyWindow (← vs.value) (← vs.viewportSize) chPx rowCount))
-  let ((c0, c1), r0, r1) ← win.get
-  let cwF := cwPx.toFloat32
-  let chF := chPx.toFloat32
-  let m := Modifier.testTag "grid"
-    |>.focusable
-    |>.onKeyEvent (st.onKey hs vs cwF chF)
-    |>.onTextInput st.typeInto
-    |>.horizontalScroll hs
-    |>.verticalScroll vs
-    |>.pointerInput (mixKeys (stringKey "Demos.Cells.grid") sizeKey)
-        (detectTapGestures
-          (onTap := some fun p => st.select (refAt p cwF chF))
-          (onDoubleTap := some fun p => st.openEditor (refAt p cwF chF)))
-  Layout m (gridPolicy c0 r0 (c1 - c0) colCount rowCount cwPx chPx)
-    (policyInputs := some (mixKeys 0x67726964 <|
-      mixKeys (windowKey c0 c1 r0 cwPx chPx) r1.toUInt64))
-    (content := do
-      for ri in [r0:r1] do
-        for ci in [c0:c1] do
-          keyed ((ri + 1) * 26 + ci) (cellView st ⟨ci, ri + 1⟩))
+  let cwF := (density.dpRoundToPx cellW).toFloat32
+  let chF := (density.dpRoundToPx cellH).toFloat32
+  let sizeKey := mixKeys cwF.toBits.toUInt64 chF.toBits.toUInt64
+  LazyGrid (columns := colCount) (rows := rowCount)
+    (cellWidth := cellW) (cellHeight := cellH)
+    (hState := some hs) (vState := some vs)
+    (modifier := Modifier.testTag "grid"
+      |>.focusable
+      |>.onKeyEvent (st.onKey hs vs cwF chF)
+      |>.onTextInput st.typeInto)
+    (contentModifier := Modifier.pointerInput
+      (mixKeys (stringKey "Demos.Cells.grid") sizeKey)
+      (detectTapGestures
+        (onTap := some fun p => st.select (refAt p cwF chF))
+        (onDoubleTap := some fun p => st.openEditor (refAt p cwF chF))))
+    (key := fun ci ri => ((ri + 1) * 26 + ci).toUInt64)
+    (itemContent := fun ci ri => cellView st ⟨ci, ri + 1⟩)
 
 /-! ## The screen -/
 

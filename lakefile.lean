@@ -64,7 +64,7 @@ package «compose-ui» where
   moreLinkArgs := sdlLinkArgs
 
 require sdl from git
-  "https://github.com/philnguyen/lean-sdl3" @ "e5dc25504402b87fbc9368ac366922fd8e66974c"
+  "https://github.com/philnguyen/lean-sdl3" @ "v0.1.0-alpha"
 
 @[default_target]
 lean_lib Compose

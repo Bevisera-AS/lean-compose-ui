@@ -3,6 +3,7 @@ import Compose.Runtime.Recomposer
 import Compose.Runtime.LaunchedEffect
 import Compose.Runtime.Macro
 import Compose.Ui.Node
+import Compose.Ui.Input.Focus
 import Compose.Ui.Text.Fonts
 import Compose.Ui.Text.Paragraph
 
@@ -130,6 +131,9 @@ structure WindowContext where
   /-- Overlay key handlers (see `OverlayKeyHandler`); consulted by the input
   router. -/
   keyHandlers : IO.Ref (Array OverlayKeyHandler)
+  /-- The window's `FocusManager`, installed by `installInput` (M14b): the
+  bridge `FocusRequester`s use to reach focus from composition. -/
+  focusManager : IO.Ref (Option FocusManager)
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app

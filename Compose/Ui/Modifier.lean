@@ -328,17 +328,25 @@ inductive FocusElem where
   to the focused node like `onTextInput` (M11 addition). Mirrors the
   composition half of `BasicTextField`'s input session. -/
   | onTextEditing (handler : String → Int32 → Int32 → IO Bool)
+  /-- Marks the node as the target of the `FocusRequester` with this id, so
+  `FocusRequester.requestFocus` can find it (see `Compose.Ui.Input.Focus`;
+  attach via `Modifier.focusRequester`). Mirrors the node side of
+  `Modifier.focusRequester(fr)`. -/
+  | requester (id : UInt64)
 
-/-- Only `focusable` carries comparable data; handler elements never compare
-equal (capturing-lambda behavior). -/
+/-- `focusable` compares by its flag and `requester` by its id; handler
+elements never compare equal (capturing-lambda behavior). -/
 instance : BEq FocusElem where
   beq
     | .focusable a, .focusable b => a == b
+    | .requester a, .requester b => a == b
     | _, _ => false
 
 #guard (FocusElem.focusable true) == (FocusElem.focusable true)
 #guard (FocusElem.focusable true) != (FocusElem.focusable false)
 #guard (FocusElem.onFocusChanged fun _ => pure ()) != (FocusElem.onFocusChanged fun _ => pure ())
+#guard (FocusElem.requester 3) == (FocusElem.requester 3)
+#guard (FocusElem.requester 3) != (FocusElem.requester 4)
 
 /-- One element of a modifier chain. Mirrors `Modifier.Element`.
 `layout` elements shape the wrapper chain; `draw`, `pointer`, `focus`, and

@@ -233,6 +233,22 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
     let (rx, ry) ← ctx.renderer.coordinatesFromWindow x y
     pure (⟨rx, ry⟩ : Offset)
   ctx.inputSink.set (im.sdlEvent conv)
+  -- M14b: publish the focus manager so composition-side FocusRequesters
+  -- (rememberFocusRequester) can reach it.
+  ctx.focusManager.set (some im.focus)
   return im
+
+/-- Create a `FocusRequester` remembered at this composition position, bound
+to the ambient window's focus manager: attach it with
+`Modifier.focusRequester` (plus `Modifier.focusable`) and call
+`.requestFocus` from handlers or effects. Mirrors
+`remember { FocusRequester() }` + `androidx.compose.ui.focus.FocusRequester`. -/
+def rememberFocusRequester : Composable FocusRequester := do
+  let ctx? ← LocalWindowContext.current
+  remember do
+    let manager ← match ctx? with
+      | some ctx => pure ctx.focusManager
+      | none => IO.mkRef none
+    return { id := (← freshId).toUInt64, manager }
 
 end Compose

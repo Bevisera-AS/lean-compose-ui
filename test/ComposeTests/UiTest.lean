@@ -250,6 +250,30 @@ private def animationClock : IO Unit := do
       settle
       assertThat (.tag "box") "stable after settle" (fun n => rw n.bounds == 200)
 
+/-! ## Programmatic focus: FocusRequester from handlers and effects -/
+
+private def focusRequesterFlow : IO Unit := do
+  runComposeTest
+    (content := do
+      let frA ← rememberFocusRequester
+      let frB ← rememberFocusRequester
+      -- An effect can grab initial focus before any user input.
+      LaunchedEffect 0 frB.requestFocus
+      Column {} (content := fun _ => do
+        Box (Modifier.testTag "a" |>.size 60 20 |>.focusable |>.focusRequester frA)
+        Box (Modifier.testTag "b" |>.size 60 20 |>.focusable |>.focusRequester frB)
+        Button frA.requestFocus (modifier := Modifier.testTag "grab")
+          (content := Text "focus a")))
+    do
+      assertFocused (.tag "b")                -- the launch-time request landed
+      -- A handler moves focus after its own click-to-focus ran.
+      click (.tag "grab")
+      assertFocused (.tag "a")
+      assertNotFocused (.tag "b")
+      -- Tab traversal keeps working from the programmatic position.
+      pressKey .tab
+      assertFocused (.tag "b")
+
 /-! ## Overlays: alert dialog in the semantics tree -/
 
 private def dialogFlow : IO Unit := do
@@ -304,6 +328,7 @@ def run : IO Unit := do
   scenario "widgetStates" widgetStates
   scenario "sliderDragAndKeys" sliderDragAndKeys
   scenario "scrollFlow" scrollFlow
+  scenario "focusRequesterFlow" focusRequesterFlow
   scenario "animationClock" animationClock
   scenario "dialogFlow" dialogFlow
   scenario "menuFlow" menuFlow

@@ -165,6 +165,70 @@ where
     | some p => up p
     | none => return false
 
+/-- The node whose chain carries `Modifier.focusRequester` with id `rid`, if
+any (tree preorder; the first match wins). -/
+partial def findRequester (fm : FocusManager) (rid : UInt64) :
+    IO (Option LayoutNode) :=
+  go fm.root
+where
+  go (n : LayoutNode) : IO (Option LayoutNode) := do
+    let d ← n.data
+    let mine := d.modifier.elems.any fun e =>
+      match e with
+      | .focus (.requester i) => i == rid
+      | _ => false
+    if mine then return some n
+    for ch in d.children do
+      if let some hit ← go ch then return some hit
+    return none
+
 end FocusManager
+
+/-! ## Programmatic focus requests (M14b) -/
+
+/-- A handle for moving focus programmatically: create one in composition
+with `rememberFocusRequester`, attach it to a focusable node via
+`Modifier.focusRequester` (alongside `Modifier.focusable`), and call
+`requestFocus` from handlers or effects. Mirrors
+`androidx.compose.ui.focus.FocusRequester`. -/
+structure FocusRequester where
+  /-- Identity linking the handle to its `Modifier.focusRequester` element. -/
+  id : UInt64
+  /-- The window's focus manager, installed by the input pipeline (shared
+  cell — re-installing input rebinds every requester). -/
+  manager : IO.Ref (Option FocusManager)
+
+instance : Nonempty FocusRequester :=
+  ⟨{ id := 0, manager := Classical.choice inferInstance }⟩
+
+/-- Move focus to the node this requester is attached to. Throws a clear
+misuse error when the requester was never attached (`Modifier.focusRequester`
+missing), the node is not focusable, or no input pipeline is installed.
+Mirrors `FocusRequester.requestFocus`. -/
+def FocusRequester.requestFocus (r : FocusRequester) : IO Unit := do
+  let some fm ← r.manager.get
+    | throw (IO.userError
+        "Compose: FocusRequester has no focus manager — create it with \
+         rememberFocusRequester inside a window's composition")
+  match ← fm.findRequester r.id with
+  | some n =>
+    unless (← n.data).modifier.focusEnabled do
+      throw (IO.userError
+        "Compose: FocusRequester's node is not focusable — add Modifier.focusable")
+    fm.requestFocus (some n)
+  | none =>
+    throw (IO.userError
+      "Compose: FocusRequester is not attached — add Modifier.focusRequester \
+       to the target node")
+
+namespace Modifier
+
+/-- Attach `r` to this node so `FocusRequester.requestFocus` targets it; the
+node still needs `Modifier.focusable` to accept focus. Mirrors
+`Modifier.focusRequester(focusRequester)`. -/
+def focusRequester (r : FocusRequester) (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.requester r.id))
+
+end Modifier
 
 end Compose

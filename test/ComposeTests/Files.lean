@@ -45,8 +45,30 @@ private def fakeFs : FsSource := fun path =>
   | "/home/user/secret" => .error "permission denied"
   | _ => .ok #[]
 
-/-- Fresh demo state navigated to the fake home. -/
-private def fresh : IO FilesState := FilesState.init fakeFs "/home/user"
+/-- Fresh demo state pointing at the fake home (the listing loads on the first
+composition of `filesBody`). -/
+private def fresh : IO FilesState := FilesState.init "/home/user"
+
+/-- Drive the demo's async directory load(s) to completion: drain due work, and
+while a background `fs` read is still in flight block on it (test thread only) so
+the next drain delivers its listing on the main loop — deterministic despite the
+real worker thread. Ends once nothing is loading and no read is pending. -/
+def settleLoad (st : FilesState) : TestM Unit := do
+  let t ← uiTest
+  for _ in [0:2000] do
+    awaitIdle
+    let waits ← t.sched.taskWaits.get
+    if waits.isEmpty && !(← st.loading.get) then return
+    -- Every read pending at a settle point is expected to finish; block on it.
+    for (finished, _) in waits do
+      for _ in [0:10000000] do
+        if ← finished then break
+  throw (IO.userError "settleLoad: async listing never settled")
+
+/-- Click a directory / breadcrumb row and drain the resulting async load. -/
+def navClick (st : FilesState) (m : Matcher) : TestM Unit := do
+  click m
+  settleLoad st
 
 /-! ## Pure core -/
 
@@ -83,6 +105,7 @@ private def pureCore : IO Unit := do
 private def initialListing : IO Unit := do
   let st ← fresh
   runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+    settleLoad st
     -- Directories (shown with a trailing slash) and files are all present.
     assertExists (.tag "row:Documents")
     assertExists (.tag "row:Pictures")
@@ -109,7 +132,8 @@ private def initialListing : IO Unit := do
 private def enterDirectory : IO Unit := do
   let st ← fresh
   runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
-    click (.tag "row:Documents")
+    settleLoad st
+    navClick st (.tag "row:Documents")
     checkEq "cwd moved into Documents" (← st.cwd.get) "/home/user/Documents"
     -- The listing changed to the subdirectory's contents.
     assertExists (.tag "row:report.pdf")
@@ -123,15 +147,16 @@ private def enterDirectory : IO Unit := do
 private def breadcrumbUp : IO Unit := do
   let st ← fresh
   runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
-    click (.tag "row:Documents")
+    settleLoad st
+    navClick st (.tag "row:Documents")
     checkEq "descended into Documents" (← st.cwd.get) "/home/user/Documents"
     -- Click the "user" breadcrumb segment to go back up.
-    click (.tag "crumb:/home/user")
+    navClick st (.tag "crumb:/home/user")
     checkEq "breadcrumb navigated back up" (← st.cwd.get) "/home/user"
     assertExists (.tag "row:notes.txt")
     assertMissing (.tag "row:report.pdf")
     -- Going all the way to root works too.
-    click (.tag "crumb:/")
+    navClick st (.tag "crumb:/")
     checkEq "breadcrumb navigated to root" (← st.cwd.get) "/"
     assertExists (.tag "row:home")
 
@@ -140,6 +165,7 @@ private def breadcrumbUp : IO Unit := do
 private def fileInfo : IO Unit := do
   let st ← fresh
   runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+    settleLoad st
     -- Nothing selected initially → the hint is shown.
     assertExists (.text "Select a file to see its details.")
     click (.tag "row:notes.txt")
@@ -151,7 +177,7 @@ private def fileInfo : IO Unit := do
     assertExists (.text "2048 bytes (2.0 KB)")
     assertExists (.text "modified: 2024-01-01 00:00:00 UTC")
     -- Clicking a directory row does not select a file (it navigates instead).
-    click (.tag "row:Documents")
+    navClick st (.tag "row:Documents")
     check "selection cleared on navigation" ((← st.selected.get) == none)
 
 /-! ## A permission-denied directory shows the error state; breadcrumb recovers -/
@@ -159,7 +185,8 @@ private def fileInfo : IO Unit := do
 private def permissionDenied : IO Unit := do
   let st ← fresh
   runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
-    click (.tag "row:secret")
+    settleLoad st
+    navClick st (.tag "row:secret")
     checkEq "cwd moved into secret" (← st.cwd.get) "/home/user/secret"
     -- The listing is the inline error state, not a crash.
     assertExists (.tag "error")
@@ -167,7 +194,7 @@ private def permissionDenied : IO Unit := do
     assertMissing (.tag "row:notes.txt")
     -- The breadcrumb still works, so the user can escape.
     assertExists (.tag "crumb:/home/user")
-    click (.tag "crumb:/home/user")
+    navClick st (.tag "crumb:/home/user")
     checkEq "recovered from the error via breadcrumb" (← st.cwd.get) "/home/user"
     assertMissing (.tag "error")
     assertExists (.tag "row:notes.txt")
@@ -177,6 +204,7 @@ private def permissionDenied : IO Unit := do
 private def hiddenToggle : IO Unit := do
   let st ← fresh
   runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+    settleLoad st
     -- Off by default: the dotfile row is absent, visible rows are unaffected.
     assertMissing (.tag "row:.hidden")
     assertExists (.tag "row:notes.txt")
@@ -199,6 +227,61 @@ private def hiddenToggle : IO Unit := do
     check "visible selection survives"
       ((← st.selected.get) == some (file "notes.txt" 2048 (some 1704067200)))
 
+/-! ## Listing is loaded asynchronously off the UI thread (fix #3) -/
+
+/-- A slow (gated) directory read must not wedge the UI: the breadcrumb advances
+and the previous listing stays up (with a loading hint) while the read is in
+flight, and the new listing lands once it completes. -/
+private def asyncCompletes : IO Unit := do
+  let gate ← IO.Promise.new (α := Except String (Array FsEntry))
+  let fs : FsSource := fun path => match path with
+    | "/root" => return .ok #[dir "sub"]
+    | "/root/sub" => IO.wait gate.result!
+    | _ => return .ok #[]
+  let st ← FilesState.init "/root"
+  runComposeTest (content := filesBody fs st) (width := 640) (height := 480) do
+    settleLoad st
+    assertExists (.tag "row:sub")
+    -- Navigate into the gated directory: the click returns immediately.
+    click (.tag "row:sub")
+    checkEq "cwd advanced while the read is pending" (← st.cwd.get) "/root/sub"
+    check "still loading" (← st.loading.get)
+    assertExists (.tag "loading")             -- the in-flight hint is shown
+    assertExists (.tag "row:sub")             -- previous listing still visible
+    -- Complete the read; the new listing lands.
+    gate.resolve (.ok #[file "deep.txt" 3])
+    settleLoad st
+    check "done loading" (!(← st.loading.get))
+    assertExists (.tag "row:deep.txt")
+    assertMissing (.tag "row:sub")
+
+/-- A superseded navigation's late-arriving result must be dropped: navigate into
+a slow (gated) directory, then back to `/root` before it returns; when the slow
+read finally completes it must not overwrite the current listing. -/
+private def asyncStaleResult : IO Unit := do
+  let gate ← IO.Promise.new (α := Except String (Array FsEntry))
+  let fs : FsSource := fun path => match path with
+    | "/root" => return .ok #[dir "slow", file "root.txt" 1]
+    | "/root/slow" => IO.wait gate.result!
+    | _ => return .ok #[]
+  let st ← FilesState.init "/root"
+  runComposeTest (content := filesBody fs st) (width := 640) (height := 480) do
+    settleLoad st
+    -- Navigate into the slow directory (generation 1); its read is still pending.
+    click (.tag "row:slow")
+    checkEq "cwd is slow" (← st.cwd.get) "/root/slow"
+    check "still loading slow" (← st.loading.get)
+    -- …then navigate back to /root (generation 2) before the slow read returns.
+    click (.tag "crumb:/root")
+    checkEq "cwd back at root" (← st.cwd.get) "/root"
+    -- Let the superseded slow read complete: its result must be dropped.
+    gate.resolve (.ok #[file "deep.txt" 9])
+    settleLoad st
+    checkEq "cwd still root" (← st.cwd.get) "/root"
+    assertExists (.tag "row:slow")            -- the current (gen 2) listing stands
+    assertExists (.tag "row:root.txt")
+    assertMissing (.tag "row:deep.txt")       -- the stale (gen 1) result was dropped
+
 /-- The Files group. -/
 def run : IO Unit := do
   scenario "pureCore" pureCore
@@ -208,5 +291,7 @@ def run : IO Unit := do
   scenario "fileInfo" fileInfo
   scenario "permissionDenied" permissionDenied
   scenario "hiddenToggle" hiddenToggle
+  scenario "asyncCompletes" asyncCompletes
+  scenario "asyncStaleResult" asyncStaleResult
 
 end Tests.Files

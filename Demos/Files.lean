@@ -238,6 +238,11 @@ structure FilesState where
   selected : MutableState (Option FsEntry)
   /-- Whether dotfiles are listed (the header switch; off by default). -/
   showHidden : MutableState Bool
+  /-- Whether a directory read is currently in flight (the async listing gap). -/
+  loading : MutableState Bool
+  /-- Monotonic id bumped by every `navigate`; a completed read only writes the
+  listing when it still matches, dropping results a newer navigation raced past. -/
+  generation : IO.Ref Nat
 
 /-- Flip the hidden-files switch. Turning it off also drops a selected dotfile
 (its row just disappeared; the info panel must not describe an invisible
@@ -248,32 +253,52 @@ def FilesState.setShowHidden (st : FilesState) (b : Bool) : IO Unit := do
     if let some e ← st.selected.get then
       if isHidden e.name then st.selected.set none
 
-/-- Navigate to `path`: re-read it through the injected `FsSource`, update the
-listing (error included), and clear any selection. Synchronous IO, so clicks
-update the model deterministically (no scheduler round-trip). -/
-def navigate (fs : FsSource) (st : FilesState) (path : String) : IO Unit := do
-  let r ← fs path
+/-- Navigate to `path`. The path and selection update **synchronously** (so the
+breadcrumb responds to a click at once), then the directory is read **off the UI
+thread** (`IO.asTask`) and its listing delivered back on the main loop through
+`scope` — a blocking or network-mounted read never freezes the UI. A per-request
+generation guard drops a result a newer navigation has superseded, so rapid
+navigation never lands a stale directory; the previous listing stays visible
+(`loading` flags the gap) until the new one arrives. -/
+def navigate (scope : LaunchScope) (fs : FsSource) (st : FilesState)
+    (path : String) : IO Unit := do
   st.cwd.set path
-  st.listing.set r
   st.selected.set none
+  st.loading.set true
+  let gen ← st.generation.modifyGet (fun g => (g + 1, g + 1))
+  -- A dedicated thread: a directory read is blocking IO and must not occupy a
+  -- shared compute-pool worker (that starves other work / can deadlock a small
+  -- pool when several reads are in flight).
+  let task ← IO.asTask (fs path) (prio := .dedicated)
+  let _ ← scope.launch do
+    let outcome ← UiTask.await task
+    -- Only the latest request may write the listing (stale-result guard).
+    if (← st.generation.get) == gen then
+      st.listing.set (match outcome with
+        | .ok r => r
+        | .error e => .error (toString e))
+      st.loading.set false
 
-/-- Fresh state already navigated to `home` (used by the app and the tests). -/
-def FilesState.init (fs : FsSource) (home : String) : IO FilesState := do
+/-- Fresh, unloaded state pointing at `home`; the first composition of
+`filesBody` kicks off the initial (async) listing load. Used by the tests. -/
+def FilesState.init (home : String) : IO FilesState := do
   let st : FilesState :=
     { cwd := ← mutableStateOf home,
       -- `Except` has no `BEq`, and every navigation genuinely re-reads, so
       -- always-notify is both required and correct here.
       listing := ← mutableStateOfAlwaysNotify (.ok #[]),
       selected := ← mutableStateOf none,
-      showHidden := ← mutableStateOf false }
-  navigate fs st home
+      showHidden := ← mutableStateOf false,
+      loading := ← mutableStateOf false,
+      generation := ← IO.mkRef 0 }
   return st
 
 /-! ## Composables -/
 
 /-- The breadcrumb strip: the path's segments, `›`-separated, each a clickable
 target. Horizontally scrollable so a long path never breaks the layout. -/
-composable def breadcrumbBar (fs : FsSource) (st : FilesState) : Composable Unit := do
+composable def breadcrumbBar (scope : LaunchScope) (fs : FsSource) (st : FilesState) :
+    Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let path ← st.cwd.get
   let scroll ← rememberScrollState
@@ -286,18 +311,19 @@ composable def breadcrumbBar (fs : FsSource) (st : FilesState) : Composable Unit
         if i > 0 then
           Text " › " (color := some colors.onSurfaceVariant)
         Text label (modifier := Modifier.testTag s!"crumb:{target}"
-              |>.clickable (navigate fs st target)
+              |>.clickable (navigate scope fs st target)
               |>.padding (horizontal := some 4) (vertical := some 2))
           (color := some colors.primary))
 
 /-- One listing row: a drawn folder/file glyph, the name, and (for files) a
 human-readable size. Clicking a directory navigates in; clicking a file selects
 it. Highlighted when selected. -/
-composable def fileRow (fs : FsSource) (st : FilesState) (cwd : String)
-    (e : FsEntry) (isSelected : Bool) : Composable Unit := do
+composable def fileRow (scope : LaunchScope) (fs : FsSource) (st : FilesState)
+    (cwd : String) (e : FsEntry) (isSelected : Bool) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let onClick : IO Unit :=
-    if e.isDir then navigate fs st (childPath cwd e.name) else st.selected.set (some e)
+    if e.isDir then navigate scope fs st (childPath cwd e.name)
+    else st.selected.set (some e)
   Row (Modifier.testTag s!"row:{e.name}"
         |>.semantics (selected := some isSelected)
         |>.clickable onClick
@@ -339,14 +365,15 @@ composable def infoPanel (st : FilesState) : Composable Unit := do
 
 /-- The listing area: the sorted rows in a virtualized `LazyColumn` with a
 `VerticalScrollbar`, or an inline error / empty state. -/
-composable def listingArea (fs : FsSource) (st : FilesState) : Composable Unit := do
+composable def listingArea (scope : LaunchScope) (fs : FsSource) (st : FilesState) :
+    Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let cwd ← st.cwd.get
   let sel ← st.selected.get
   let showHidden ← st.showHidden.get
   let scroll ← rememberScrollState
   Box (Modifier.fillMaxWidth |>.fillMaxHeight |>.background colors.surface)
-    (content :=
+    (content := do
     match ← st.listing.get with
     | .error msg =>
       Box (Modifier.testTag "error" |>.fillMaxSize |>.padding (all := 16))
@@ -368,8 +395,13 @@ composable def listingArea (fs : FsSource) (st : FilesState) : Composable Unit :
           (modifier := Modifier.fillMaxSize)
           (itemContent := fun i =>
             let e := sorted[i]!
-            fileRow fs st cwd e (sel == some e))
-        VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight))
+            fileRow scope fs st cwd e (sel == some e))
+        VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
+    -- A subtle in-flight hint, shown over the (still-visible) previous listing.
+    if ← st.loading.get then
+      Text "Loading…" (modifier := Modifier.testTag "loading"
+          |>.align .bottomStart |>.padding (all := 8))
+        (color := some colors.onSurfaceVariant))
 
 /-- The header's hidden-files toggle: a labeled `Switch` (a standalone,
 immediate-effect option — Material's switch case, not a checkbox's). -/
@@ -386,25 +418,32 @@ composable def showHiddenToggle (st : FilesState) : Composable Unit := do
 /-- The whole browser: header (breadcrumb + hidden-files switch), listing, and
 info panel. Factored on the injected `FsSource` + `FilesState` so the MT suite
 drives it over a fake tree. -/
-composable def filesBody (fs : FsSource) (st : FilesState) : Composable Unit :=
+composable def filesBody (fs : FsSource) (st : FilesState) : Composable Unit := do
+  -- A launch scope tied to the whole screen (not a row): in-flight loads must
+  -- survive the row recycling that navigation triggers.
+  let scope ← rememberLaunchScope
+  -- Kick off the initial listing load exactly once (async, like every other
+  -- navigation), so a slow home directory never blocks first composition.
+  let _ ← remember (do navigate scope fs st (← st.cwd.get); pure true)
   Column (Modifier.fillMaxSize) (content := do
     Row (Modifier.fillMaxWidth) (verticalAlignment := .centerVertically)
       (content := do
-        Box (Modifier.weight 1) (content := breadcrumbBar fs st)
+        Box (Modifier.weight 1) (content := breadcrumbBar scope fs st)
         showHiddenToggle st)
-    Box (Modifier.weight 1 |>.fillMaxWidth) (content := listingArea fs st)
+    Box (Modifier.weight 1 |>.fillMaxWidth) (content := listingArea scope fs st)
     infoPanel st)
 
-/-- The file-manager screen: remembers the state (navigated to `home` once) and
-mounts `filesBody`. `home` is `$HOME` in production; a fake root in tests. -/
+/-- The file-manager screen: remembers the state and mounts `filesBody` (which
+kicks off the initial `home` load). `home` is `$HOME` in production; a fake root
+in tests. -/
 composable def filesUi (fs : FsSource) (home : String) : Composable Unit := do
   let cwd ← remember (mutableStateOf home)
   let listing ← remember (mutableStateOfAlwaysNotify (.ok #[] : Except String (Array FsEntry)))
   let selected ← remember (mutableStateOf (none : Option FsEntry))
   let showHidden ← remember (mutableStateOf false)
-  let st : FilesState := { cwd, listing, selected, showHidden }
-  -- Load the home directory exactly once (remember runs its init a single time).
-  let _ ← remember (do navigate fs st home; pure true)
+  let loading ← remember (mutableStateOf false)
+  let generation ← remember (IO.mkRef 0)
+  let st : FilesState := { cwd, listing, selected, showHidden, loading, generation }
   MaterialTheme (content := filesBody fs st)
 
 /-- The real app: browse the actual filesystem starting at `$HOME` (or `/`). -/

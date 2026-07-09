@@ -284,4 +284,33 @@ Mirrors `androidx.compose.foundation.layout.Spacer`. -/
 def Spacer (modifier : Modifier := {}) : Composable Unit :=
   Layout modifier .leaf (policyInputs := some 0x53706163)
 
+/-! ## Intrinsic width -/
+
+/-- Identity key of `Modifier.widthIntrinsicMax`'s layout block (it captures
+nothing, so one process-wide key suffices). -/
+private def widthIntrinsicMaxKey : UInt64 := 0x77496d78
+
+namespace Modifier
+
+/-- Fix the width to the content's **maximal intrinsic width**: size to the
+widest child, then stretch fill-width children to exactly that width. Two
+measure passes: a width-unbounded probe finds the content's natural width (a
+`fillMaxWidth` child is a no-op on the unbounded axis, so the widest
+wrap-content child wins), then the real pass re-measures with the width fixed
+to the probe result clamped into the incoming constraints — the last
+measurement defines the resolved geometry (see `CustomLayout`). Height
+constraints pass through unchanged. This is how a dropdown menu wraps its
+widest item while the items' hover rows still span the whole menu. Mirrors
+`androidx.compose.foundation.layout.width(IntrinsicSize.Max)`. -/
+def widthIntrinsicMax (m : Modifier := {}) : Modifier :=
+  m.customLayout widthIntrinsicMaxKey
+    { run := fun _ c inner => do
+        if c.hasFixedWidth then
+          return (← inner c, .zero)
+        let natural ← inner { c with minWidth := 0, maxWidth := Constraints.infinity }
+        let w := c.constrainWidth natural.width
+        return (← inner { c with minWidth := w, maxWidth := w }, .zero) }
+
+end Modifier
+
 end Compose

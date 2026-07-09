@@ -261,6 +261,72 @@ private def boxAndSpacer : IO Unit := do
     let _ ← root.remeasure { maxWidth := 200, maxHeight := 200 }
     checkEq "spacer: bare wraps to zero" (← sizeAt root [0]) (⟨0, 0⟩ : IntSize)
 
+/-! ## Intrinsic width (two-pass measurement) -/
+
+private def intrinsicWidthBasics : IO Unit := do
+  -- size to the widest child; fill-width children stretch to the winner
+  do
+    let (root, _) ← composeTree <| Column (Modifier.widthIntrinsicMax) (content := do
+      leaf (Modifier.fillMaxWidth |>.height 10)
+      leaf (Modifier.size 80 10)
+      leaf (Modifier.size 50 10))
+    let _ ← root.remeasure { maxWidth := 400, maxHeight := 400 }
+    checkEq "intrinsic: column sizes to widest child" (← sizeAt root [0]) (⟨80, 30⟩ : IntSize)
+    checkEq "intrinsic: fill child stretches to the winner"
+      (← sizeAt root [0, 0]) (⟨80, 10⟩ : IntSize)
+    checkEq "intrinsic: children at x 0" (← childXs root) [0, 0, 0]
+    checkEq "intrinsic: children stacked" (← childYs root) [0, 10, 20]
+  -- the natural width clamps into a bounded incoming maximum
+  do
+    let (root, _) ← composeTree <| Column (Modifier.widthIntrinsicMax) (content := do
+      leaf (Modifier.size 80 10)
+      leaf (Modifier.fillMaxWidth |>.height 10))
+    let _ ← root.remeasure { maxWidth := 60, maxHeight := 400 }
+    checkEq "intrinsic: natural width clamps to max" (← sizeAt root [0]) (⟨60, 20⟩ : IntSize)
+    checkEq "intrinsic: fill child gets the clamped width"
+      (← sizeAt root [0, 1]) (⟨60, 10⟩ : IntSize)
+  -- an inner minimum (sizeIn) floors the probe result
+  do
+    let (root, _) ← composeTree <|
+      Column (Modifier.widthIntrinsicMax |>.sizeIn (minWidth := some 112)) (content := do
+        leaf (Modifier.size 50 10)
+        leaf (Modifier.fillMaxWidth |>.height 10))
+    let _ ← root.remeasure { maxWidth := 400, maxHeight := 400 }
+    checkEq "intrinsic: inner minWidth floors the result"
+      (← sizeAt root [0]) (⟨112, 20⟩ : IntSize)
+    checkEq "intrinsic: fill child fills the floored width"
+      (← sizeAt root [0, 1]) (⟨112, 10⟩ : IntSize)
+
+/-- The soundness proof of two-pass measurement: a child whose reported size
+depends on its constraints ("greedy": takes the bounded max width, wraps to 30
+when unbounded) is measured exactly twice under the intrinsic wrapper — first
+width-unbounded (probe), then at the fixed winner width — and the node's
+cached size and placement come from the SECOND measure (`measureIn`
+recomputes because the constraints changed; the `.custom` chain fold keeps
+the last inner measurement). -/
+private def intrinsicTwoPassSound : IO Unit := do
+  let log ← IO.mkRef (#[] : Array Constraints)
+  let greedy : MeasurePolicy := fun _ _ c => do
+    log.modify (·.push c)
+    return { size := ⟨if c.hasBoundedWidth then c.maxWidth else 30, 10⟩ }
+  let (root, _) ← composeTree <| Column (Modifier.widthIntrinsicMax) (content := do
+    Layout {} greedy
+    leaf (Modifier.size 80 10))
+  let c : Constraints := { maxWidth := 400, maxHeight := 400 }
+  let _ ← root.remeasure c
+  let cs ← log.get
+  checkEq "two-pass: greedy child measured exactly twice" cs.size 2
+  check "two-pass: probe is width-unbounded"
+    (cs[0]!.maxWidth == Constraints.infinity)
+  checkEq "two-pass: real pass sees the winner width" cs[1]!.maxWidth 80
+  checkEq "two-pass: second measure wins (cached size)"
+    (← sizeAt root [0, 0]) (⟨80, 10⟩ : IntSize)
+  checkEq "two-pass: wrapper sized by the second pass" (← sizeAt root [0]) (⟨80, 20⟩ : IntSize)
+  checkEq "two-pass: placement from the second pass" (← childYs root) [0, 10]
+  -- Unchanged constraints still short-circuit: a clean re-pass measures nothing.
+  let _ ← root.remeasure c
+  checkEq "two-pass: clean re-pass measures nothing" (← log.get).size 2
+
 /-! ## Invalidation and caching -/
 
 private def recompositionRemeasures : IO Unit := do
@@ -386,6 +452,8 @@ def run : IO Unit := do
   rowWeights
   columnBasics
   boxAndSpacer
+  intrinsicWidthBasics
+  intrinsicTwoPassSound
   recompositionRemeasures
   constraintsShortCircuit
   measureStateTargeting

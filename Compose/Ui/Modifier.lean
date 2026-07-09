@@ -160,9 +160,11 @@ end Shape
 /-- The measure block of a `Modifier.customLayout` element: the generic
 layout-modifier hook (M10, added for foundation's scroll containers). Given
 the ambient density, the incoming constraints, and a `measureInner` function
-that measures the rest of the wrapper chain (call it **exactly once** per
-measure), it returns the wrapper's size and the offset at which the inner
-content is placed. State reads inside run under the node's measure
+that measures the rest of the wrapper chain (call it **at least once**; when
+a block measures more than once — an intrinsic probe followed by the real
+pass, see `Modifier.widthIntrinsicMax` — the **last** call defines the
+resolved geometry), it returns the wrapper's size and the offset at which the
+inner content is placed. State reads inside run under the node's measure
 observation, so reading e.g. a scroll offset here re-lays the node out when
 it changes. Mirrors `androidx.compose.ui.layout.LayoutModifier.measure`
 (with placement collapsed to an offset — our chain has no arbitrary
@@ -457,7 +459,8 @@ def withParentData (pd : ParentData) (m : Modifier := {}) : Modifier :=
   m.append (.layout (.parentData pd))
 
 /-- Install a generic layout hook (see `CustomLayout`): `block` measures the
-inner chain with constraints of its choosing (exactly once) and reports the
+inner chain with constraints of its choosing (one or more times; the last
+measurement wins) and reports the
 wrapper size plus the inner content's placement offset. `key` is the block's
 identity for measurement invalidation (like `Layout`'s `policyInputs`).
 The raw element behind foundation's `Modifier.verticalScroll`. Mirrors

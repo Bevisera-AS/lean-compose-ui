@@ -348,7 +348,9 @@ private partial def measureChain (n : LayoutNode) (density : Density)
       -- Parent data is consumed by the parent's policy, not the chain.
       | .parentData _ => measureChain n density elems (i + 1) c
       -- `Modifier.customLayout` (the generic hook, e.g. scroll): the block
-      -- measures the inner chain once and reports (size, content offset).
+      -- measures the inner chain — possibly several times (an intrinsic
+      -- probe, then the real pass); the last call wins — and reports
+      -- (size, content offset).
       | .custom _ blk =>
         let innerRef ← IO.mkRef (none : Option ChainMeasured)
         let measureInner (cc : Constraints) : IO IntSize := do

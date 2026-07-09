@@ -18,8 +18,10 @@ The M11 outlined single-line text field, mirroring
   content padding, placeholder in `onSurfaceVariant`, disabled content at the
   Material 38 %/12 % alphas.
 - **Label**: when a `label` is given the node reserves a 14 dp strip above
-  the outline; the label crossfades/slides between the placeholder position
-  (empty + unfocused) and that strip (`animateFloatAsState`). *Documented
+  the outline; the label continuously animates its font size (text size ↔
+  11 sp) and position between the placeholder position (empty + unfocused)
+  and that strip, driven by `animateFloatAsState` (one layout rebuilt at the
+  interpolated size, like M3 animating the label's textStyle). *Documented
   deviation*: M3 floats the label onto the outline, cutting a gap into the
   stroke — the reserved-strip variant avoids outline surgery.
 - **Editing**: all edits go through the pure `EditModel`
@@ -42,11 +44,12 @@ The M11 outlined single-line text field, mirroring
 - **Mouse**: click places the caret (nearest boundary), drag selects from
   the press anchor, double-click selects the word, triple-click selects all;
   I-beam hover cursor.
-- **Keyboard**: arrows/Home/End with Shift extension, ctrl-or-gui (and alt,
-  for macOS option-arrows) word variants, Backspace/Delete (+word),
-  ctrl-or-gui A/C/V/X via the SDL clipboard. Tab/Esc are left unconsumed for
-  the focus fallbacks. Key repeat arrives as extra key-downs and is handled
-  per event.
+- **Keyboard**: arrows/Home/End with Shift extension, ctrl/alt word variants,
+  gui (⌘) line variants (⌘-Left/Right = Home/End, ⌘-Backspace/Delete =
+  delete-to-line-start/end — macOS habits, accepted on every platform),
+  Backspace/Delete (+word), ctrl-or-gui A/C/V/X via the SDL clipboard. Tab/Esc
+  are left unconsumed for the focus fallbacks. Key repeat arrives as extra
+  key-downs and is handled per event.
 - **Auto-scroll**: text wider than the box scrolls horizontally so the caret
   stays visible; hit testing compensates.
 
@@ -74,11 +77,18 @@ command shortcuts with `gui`). -/
 def isShortcutMod (m : Sdl.Keymod) : Bool :=
   (m &&& (Sdl.Keymod.ctrl ||| Sdl.Keymod.gui)) != Sdl.Keymod.none
 
-/-- Whether a word-motion modifier is held: Ctrl, Gui, or Alt (macOS word
-motions are option-arrows; accepting all three keeps every platform habit
-working — a documented, permissive simplification). -/
+/-- Whether a word-motion modifier is held: Ctrl or Alt (macOS word motions
+are option-arrows, Ctrl covers Windows/Linux; ⌘/Gui is reserved for
+line-motions, see `isLineMod`). -/
 def isWordMod (m : Sdl.Keymod) : Bool :=
-  (m &&& (Sdl.Keymod.ctrl ||| Sdl.Keymod.gui ||| Sdl.Keymod.alt)) != Sdl.Keymod.none
+  (m &&& (Sdl.Keymod.ctrl ||| Sdl.Keymod.alt)) != Sdl.Keymod.none
+
+/-- Whether a line-motion modifier is held: Gui (⌘). macOS binds ⌘-Left/Right
+to line start/end and ⌘-Backspace to delete-to-line-start; SDL delivers ⌘ as
+`gui`. Accepted unconditionally (no platform gate) alongside Home/End — the
+Super key is otherwise unused for text editing on other desktops. -/
+def isLineMod (m : Sdl.Keymod) : Bool :=
+  (m &&& Sdl.Keymod.gui) != Sdl.Keymod.none
 
 /-- Map a key event to the field action it requests (`none` = not ours; Tab
 and Esc always fall through to the focus fallbacks). Key repeat is a fresh
@@ -88,14 +98,19 @@ def textFieldKeyAction (ke : KeyEvent) : Option TextFieldKeyAction :=
   else
     let shift := ke.hasShift
     let word := isWordMod ke.mods
+    let line := isLineMod ke.mods
     let short := isShortcutMod ke.mods
     match ke.key with
-    | .left => some (.edit (if word then .wordLeft shift else .left shift))
-    | .right => some (.edit (if word then .wordRight shift else .right shift))
+    | .left =>
+      some (.edit (if line then .home shift else if word then .wordLeft shift else .left shift))
+    | .right =>
+      some (.edit (if line then .«end» shift else if word then .wordRight shift else .right shift))
     | .home => some (.edit (.home shift))
     | .«end» => some (.edit (.«end» shift))
-    | .backspace => some (.edit (if word then .deleteWordBack else .backspace))
-    | .delete => some (.edit (if word then .deleteWordForward else .deleteForward))
+    | .backspace =>
+      some (.edit (if line then .deleteToLineStart else if word then .deleteWordBack else .backspace))
+    | .delete =>
+      some (.edit (if line then .deleteToLineEnd else if word then .deleteWordForward else .deleteForward))
     | .a => if short then some (.edit .selectAll) else none
     | .c => if short then some .copy else none
     | .v => if short then some .paste else none
@@ -105,15 +120,21 @@ def textFieldKeyAction (ke : KeyEvent) : Option TextFieldKeyAction :=
 #guard textFieldKeyAction { key := .left } == some (.edit (.left false))
 #guard textFieldKeyAction { key := .left, mods := .lShift } == some (.edit (.left true))
 #guard textFieldKeyAction { key := .left, mods := .lCtrl } == some (.edit (.wordLeft false))
-#guard textFieldKeyAction { key := .right, mods := .lGui ||| .lShift }
-        == some (.edit (.wordRight true))
 #guard textFieldKeyAction { key := .left, mods := .lAlt } == some (.edit (.wordLeft false))
+-- ⌘ (gui) makes arrows line-motions (macOS Home/End), keeping Shift extension.
+#guard textFieldKeyAction { key := .left, mods := .lGui } == some (.edit (.home false))
+#guard textFieldKeyAction { key := .right, mods := .lGui } == some (.edit (.«end» false))
+#guard textFieldKeyAction { key := .right, mods := .lGui ||| .lShift }
+        == some (.edit (.«end» true))
 #guard textFieldKeyAction { key := .home, mods := .lShift } == some (.edit (.home true))
 #guard textFieldKeyAction { key := .«end» } == some (.edit (.«end» false))
 #guard textFieldKeyAction { key := .backspace } == some (.edit .backspace)
 #guard textFieldKeyAction { key := .backspace, mods := .lCtrl } == some (.edit .deleteWordBack)
+-- ⌘-Backspace / ⌘-Delete delete to the line start / end.
+#guard textFieldKeyAction { key := .backspace, mods := .lGui } == some (.edit .deleteToLineStart)
 #guard textFieldKeyAction { key := .delete } == some (.edit .deleteForward)
-#guard textFieldKeyAction { key := .delete, mods := .lGui } == some (.edit .deleteWordForward)
+#guard textFieldKeyAction { key := .delete, mods := .lGui } == some (.edit .deleteToLineEnd)
+#guard textFieldKeyAction { key := .delete, mods := .lCtrl } == some (.edit .deleteWordForward)
 #guard textFieldKeyAction { key := .a, mods := .lCtrl } == some (.edit .selectAll)
 #guard textFieldKeyAction { key := .a, mods := .lGui } == some (.edit .selectAll)
 #guard textFieldKeyAction { key := .a } == none                    -- plain letter: IME's
@@ -227,8 +248,9 @@ private def insetRR (rr : RoundRect) (d : Float32) : RoundRect :=
 private structure FieldVisuals where
   layout : TextLayout
   placeholder? : Option TextLayout
-  labelSmall? : Option TextLayout
-  labelRest? : Option TextLayout
+  /-- The label laid out at the current interpolated font size (`none` when the
+  field has no label). One layout, morphed each animation frame. -/
+  label? : Option TextLayout
   value : TextFieldValue
   focused : Bool
   enabled : Bool
@@ -306,15 +328,13 @@ private def drawTextField (vis : FieldVisuals) : DrawM Unit := do
         DrawScope.drawRect (.solid vis.textColor) ⟨x0, lineH - px 1⟩ ⟨x1 - x0, px 1⟩
       if vis.focused && vis.enabled && vis.caretOn then
         DrawScope.drawRect (.solid vis.caretColor) ⟨caretX, 0⟩ ⟨caretW, lineH⟩
-  -- Label crossfade: resting (placeholder position) ↔ floating (top strip).
+  -- Label float: one label continuously morphing font size *and* position
+  -- between the resting text band (p = 0) and the floating top strip (p = 1),
+  -- driven by `labelProgress` (Compose animates the label's textStyle, not a
+  -- crossfade of two pre-laid layouts).
   if vis.hasLabel then
-    let p := vis.labelProgress
-    if p < 0.999 then
-      if let some rest := vis.labelRest? then
-        DrawScope.withAlpha (1 - p) (rest.draw ⟨pad, textTop⟩)
-    if p > 0.001 then
-      if let some small := vis.labelSmall? then
-        DrawScope.withAlpha p (small.draw ⟨pad, (1 - p) * textTop⟩)
+    if let some lbl := vis.label? then
+      lbl.draw ⟨pad, (1 - vis.labelProgress) * textTop⟩
   -- IME: publish the caret area (window coordinates) when it moved.
   if vis.focused && vis.enabled then
     if let some w := vis.window? then
@@ -338,12 +358,17 @@ truth; every edit (typing, motion, selection, IME) is reported through
 `androidx.compose.material3.OutlinedTextField` (with `TextFieldValue`).
 
 Only `singleLine := true` is supported (the default; the flag controls
-newline stripping and exists for API fidelity). -/
+newline stripping and exists for API fidelity).
+
+`minWidth` (default 280 dp, matching M3's `TextFieldDefaults.MinWidth`) is the
+field's minimum measured width; it is clamped to the incoming max constraint,
+so the field never forces its parent to overflow. -/
 composable def TextField (value : TextFieldValue)
     (onValueChange : TextFieldValue → IO Unit) (modifier : Modifier := {})
     (enabled : Bool := true) (isError : Bool := false)
     (placeholder : String := "") (label : Option String := none)
-    (textStyle : TextStyle := {}) (singleLine : Bool := true) : Composable Unit := do
+    (textStyle : TextStyle := {}) (minWidth : Dp := 280)
+    (singleLine : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shape := (← MaterialTheme.shapes).extraSmall
   let ambient ← LocalTextStyle.current
@@ -372,8 +397,7 @@ composable def TextField (value : TextFieldValue)
       (IO.mkRef (none : Option (Int32 × Int32 × Int32 × Int32 × Int32)))
     let cellText ← remember (IO.mkRef (none : Option TextLayout))
     let cellPlaceholder ← remember (IO.mkRef (none : Option TextLayout))
-    let cellLabelSmall ← remember (IO.mkRef (none : Option TextLayout))
-    let cellLabelRest ← remember (IO.mkRef (none : Option TextLayout))
+    let cellLabel ← remember (IO.mkRef (none : Option TextLayout))
     -- Colors and styles.
     let textColor := if enabled then colors.onSurface
                      else colors.onSurface.withAlpha disabledContentAlpha
@@ -395,16 +419,19 @@ composable def TextField (value : TextFieldValue)
       let style := { resolvedStyle with
                      color := if enabled then colors.onSurfaceVariant else textColor }
       pure (some (← obtainFieldLayout cellPlaceholder tc placeholder style density))
-    let labelSmall? ← match label with
+    -- Label float progress (0 = resting in the text band, 1 = floated up).
+    let floating := focused || !value.text.isEmpty
+    let labelProgress ← (← animateFloatAsState (if floating then 1 else 0)
+      (.tween 150 0 .fastOutSlowIn)).get
+    -- One label, laid out at the interpolated font size between the resting
+    -- text size and the 11 sp floating size — draws continuously, no crossfade.
+    let label? ← match label with
       | none => pure none
       | some l => do
-        let style := { resolvedStyle with fontSize := 11, color := labelColor }
-        pure (some (← obtainFieldLayout cellLabelSmall tc l style density))
-    let labelRest? ← match label with
-      | none => pure none
-      | some l => do
-        let style := { resolvedStyle with color := labelColor }
-        pure (some (← obtainFieldLayout cellLabelRest tc l style density))
+        let restSp := resolvedStyle.fontSize.value
+        let lblSize : Sp := ⟨restSp + (11 - restSp) * labelProgress⟩
+        let style := { resolvedStyle with fontSize := lblSize, color := labelColor }
+        pure (some (← obtainFieldLayout cellLabel tc l style density))
     -- Edit application: optimistic ref first (so back-to-back events between
     -- recompositions compose), then the controlled callback.
     let sanitize (t : String) : String := if singleLine then stripNewlines t else t
@@ -460,14 +487,10 @@ composable def TextField (value : TextFieldValue)
         pure (((← phase.get) < 0.5 : Bool))
       else
         pure false
-    -- Label float progress.
-    let floating := focused || !value.text.isEmpty
-    let labelProgress ← animateFloatAsState (if floating then 1 else 0)
-      (.tween 150 0 .fastOutSlowIn)
     let vis : FieldVisuals :=
-      { layout, placeholder?, labelSmall?, labelRest?
+      { layout, placeholder?, label?
         value := value.normalized, focused, enabled, caretOn
-        labelProgress := ← labelProgress.get
+        labelProgress
         outlineColor, outlineWidth, caretColor
         selectionColor := colors.primary.withAlpha 0.40
         textColor, shape, hasLabel := label.isSome
@@ -478,7 +501,12 @@ composable def TextField (value : TextFieldValue)
       let lineH ← layout.lineHeight
       let labelSpace := if hasLabel then d.dpRoundToPx labelStripDp else 0
       let boxH := max (d.dpRoundToPx 40) (lineH + d.dpRoundToPx 16)
-      return { size := c.constrain ⟨d.dpRoundToPx 280, boxH + labelSpace⟩ }
+      -- Clamp the desired min-width to the incoming max so the field never
+      -- forces its parent to overflow (a hard-coded 280 dp min once collapsed
+      -- a demo's Row to zero height).
+      let wantW := d.dpRoundToPx minWidth
+      let w := if c.hasBoundedWidth then min wantW c.maxWidth else wantW
+      return { size := c.constrain ⟨w, boxH + labelSpace⟩ }
     let m := modifier
       |>.then (if enabled then Modifier.pointerHoverIcon .text else {})
       |>.focusable enabled
@@ -492,11 +520,12 @@ composable def TextField (value : TextFieldValue)
       |>.drawBehind (drawTextField vis)
     Layout m policy
       (policyInputs := some
-        (mixKeys (resolvedStyle.fontSize.value.toBits.toUInt64)
-          (mixKeys (match resolvedStyle.lineHeight with
-                    | none => 0
-                    | some sp => mixKeys 0x11 sp.value.toBits.toUInt64)
-            (mixKeys density.density.toBits.toUInt64 (if hasLabel then 1 else 0)))))
+        (mixKeys minWidth.value.toBits.toUInt64
+          (mixKeys (resolvedStyle.fontSize.value.toBits.toUInt64)
+            (mixKeys (match resolvedStyle.lineHeight with
+                      | none => 0
+                      | some sp => mixKeys 0x11 sp.value.toBits.toUInt64)
+              (mixKeys density.density.toBits.toUInt64 (if hasLabel then 1 else 0))))))
 
 /-- `String`-convenience `TextField`: remembers selection/composition
 internally and reports plain strings — what the 7GUIs demos want. An external
@@ -506,7 +535,7 @@ boundary at or before its old position. Mirrors the `String` overload of
 composable def TextFieldS (value : String) (onValueChange : String → IO Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) (isError : Bool := false)
     (placeholder : String := "") (label : Option String := none)
-    (textStyle : TextStyle := {}) : Composable Unit := do
+    (textStyle : TextStyle := {}) (minWidth : Dp := 280) : Composable Unit := do
   let internal ← remember (mutableStateOf
     ({ text := value, selection := .caret value.utf8ByteSize } : TextFieldValue))
   let cur ← internal.get
@@ -520,5 +549,6 @@ composable def TextFieldS (value : String) (onValueChange : String → IO Unit)
       unless v'.text == prev.text do onValueChange v'.text)
     (modifier := modifier) (enabled := enabled) (isError := isError)
     (placeholder := placeholder) (label := label) (textStyle := textStyle)
+    (minWidth := minWidth)
 
 end Compose

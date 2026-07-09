@@ -634,6 +634,74 @@ private def menuKeyboard : IO Unit := do
   check "menu keys: Esc dismisses" ((← f.expanded.cell.get) == false)
   checkEq "menu keys: Esc selects nothing" (← f.selected.cell.get) "Beta"
 
+/-- A dropdown kept mounted only to play its exit animation is *inert*: while
+closing (mounted but no longer `expanded`) it neither dismiss-catches clicks
+nor grabs keys, and its whole layer is transparent to hit-testing — so input
+aimed elsewhere is not swallowed by the dying menu. Re-opening mid-exit
+restores interactivity. The exit window is driven by frame ticks (`s`), so
+`render`/`runDue` progress input without unmounting the menu. -/
+private def menuExitInert : IO Unit := do
+  let expanded ← mutableStateOf false
+  let btn ← IO.mkRef (0 : Nat)
+  let keyHits ← IO.mkRef (0 : Nat)
+  let r ← oboot <| themed <| Column (Modifier.fillMaxSize |>.background .white)
+    (content := do
+      Spacer (Modifier.size 100 200)
+      Spacer (Modifier.size 80 40 |>.background .blue |>.clickable (btn.modify (· + 1)))
+      Tests.restartable 1 do
+        DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false)
+          (anchor := some ⟨10, 10, 60, 30⟩) (content :=
+            DropdownMenuItem "Pick" (onClick := expanded.set false)))
+  -- A normal (non-capture) app key handler standing in for "the rest of the
+  -- app": an inert menu must let keys reach it.
+  let hid ← freshId
+  r.ctx.registerKeyHandler
+    { id := hid, capture := false
+      handler := fun ke => do
+        if ke.down && ke.key == .down then keyHits.modify (· + 1)
+        return false }
+  r.settle
+  -- Baseline: with no menu open, the button at (40, 220) is clickable.
+  r.click 40 220
+  r.s.runDue (← r.clock.get)
+  checkEq "exit: button clickable at baseline" (← btn.get) 1
+  btn.set 0
+  -- Open and let the enter transition finish.
+  expanded.set true
+  r.settle
+  check "exit: menu open" ((← expanded.cell.get) == true)
+  -- Begin closing (caller-driven — an item pick / onDismissRequest), then start
+  -- but do NOT finish the exit animation: the menu is now mounted yet inert.
+  expanded.set false
+  r.render
+  r.s.runDue (← r.clock.get)
+  r.render
+  -- 1) A click on the button below reaches it — the dying menu's (pre-fix
+  --    full-window) dismiss scrim no longer intercepts.
+  r.click 40 220
+  r.s.runDue (← r.clock.get)
+  r.render
+  checkEq "exit: click during exit reaches the button below" (← btn.get) 1
+  -- 2) A key during exit reaches the normal app handler, not the dead menu
+  --    (pre-fix the menu's capture handler consumes Down).
+  r.key .down
+  r.s.runDue (← r.clock.get)
+  checkEq "exit: key during exit reaches normal handlers" (← keyHits.get) 1
+  -- 3) Re-opening mid-exit restores interactivity: the dismiss scrim is back, so
+  --    an off-menu click is swallowed (requesting dismissal) and does not reach
+  --    the button below.
+  btn.set 0
+  expanded.set true
+  r.render
+  r.s.runDue (← r.clock.get)
+  r.render
+  r.click 40 220
+  r.s.runDue (← r.clock.get)
+  r.render
+  checkEq "exit: re-open restores the scrim (button below blocked)" (← btn.get) 0
+  check "exit: re-open scrim dismiss fired" ((← expanded.cell.get) == false)
+  r.settle
+
 /-- The overlay group. -/
 def run : IO Unit := do
   scrollWheel
@@ -651,5 +719,6 @@ def run : IO Unit := do
   alertDialogBasics
   menuMouse
   menuKeyboard
+  menuExitInert
 
 end Tests.Overlay

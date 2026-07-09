@@ -135,6 +135,12 @@ structure LayoutNodeData where
   `Layout`'s update phase); coroutines are cancelled when the node leaves the
   tree (`severParentLinks`, the detach hook). -/
   pointerInputs : Array PointerInputState := #[]
+  /-- Whether this node takes part in pointer hit-testing. `false` makes the
+  node *and its whole subtree* transparent to the pointer — visually present
+  but not hit — so events fall through to whatever is beneath (an inert
+  overlay layer during a dropdown's exit animation; see `overlayLayerContent`).
+  -/
+  hitTestable : Bool := true
   /-- The node's own measurement is invalid. -/
   needsRemeasure : Bool := true
   /-- Some descendant needs remeasuring; the next pass descends through here.
@@ -489,14 +495,14 @@ reads the chain fresh, and the mesh cache keys off the new element values.
 `none` policy inputs are conservatively treated as changed every time
 (Compose's capturing-lambda `set(measurePolicy)` behavior). -/
 def update (n : LayoutNode) (modifier : Modifier) (policy : MeasurePolicy)
-    (policyInputs : Option UInt64 := none) : IO Unit := do
+    (policyInputs : Option UInt64 := none) (hitTestable : Bool := true) : IO Unit := do
   let d ← n.data
   let policyChanged :=
     match d.policyInputs, policyInputs with
     | some a, some b => a != b
     | _, _ => true
   let layoutChanged := !Modifier.layoutEq d.modifier modifier
-  n.modifyData fun x => { x with modifier, policy, policyInputs }
+  n.modifyData fun x => { x with modifier, policy, policyInputs, hitTestable }
   if layoutChanged || policyChanged then
     n.markNeedsRemeasure
 

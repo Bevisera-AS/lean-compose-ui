@@ -36,10 +36,11 @@ see `LayoutNode.reconcilePointerInputs`). Mirrors
 `androidx.compose.ui.layout.Layout`. -/
 def Layout (modifier : Modifier) (policy : MeasurePolicy)
     (content : Composable Unit := pure ())
-    (policyInputs : Option UInt64 := none) : Composable Unit :=
+    (policyInputs : Option UInt64 := none) (hitTestable : Bool := true) :
+    Composable Unit :=
   emitNode (create := return NodeVal.mk (← LayoutNode.create))
     (update := fun nv => do
-      LayoutNode.update nv.get! modifier policy policyInputs
+      LayoutNode.update nv.get! modifier policy policyInputs hitTestable
       LayoutNode.reconcilePointerInputs nv.get! (← LocalScheduler.current))
     content
 

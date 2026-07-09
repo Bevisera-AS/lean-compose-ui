@@ -90,6 +90,9 @@ the hit path root→leaf (see the module docstring for the z-order and clip
 rules). -/
 partial def hitTest (n : LayoutNode) (p : Offset) : IO (Array HitTarget) := do
   let d ← n.data
+  -- A non-hit-testable node is transparent to the pointer, subtree and all
+  -- (an inert overlay layer during a dropdown's exit animation).
+  unless d.hitTestable do return #[]
   let (elems, open') := hitChain d p
   let self : Array HitTarget := if elems.isEmpty then #[] else #[{ node := n, elems }]
   unless open' do return self

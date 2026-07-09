@@ -156,8 +156,13 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
       awaitFramesFor ((dropdownAnimMs + 40) * 1_000_000).toUInt64
       mounted.set false
   if ← mounted.get then
+    -- While exiting (mounted but no longer `expanded`) the popup is inert: it
+    -- is visually fading but must not dismiss-catch clicks or grab keys, so a
+    -- click/key aimed elsewhere is not swallowed by the dying menu. Re-opening
+    -- flips `expanded` back true, restoring interactivity.
     Popup (anchor := anchor) (offset := offset)
       (onDismissRequest := some onDismissRequest) (focusable := true)
+      (interactive := expanded)
       (onKeyEvent := menuKeyHandler menu) (content := do
         let v ← vis.get
         AnimatedVisibility v

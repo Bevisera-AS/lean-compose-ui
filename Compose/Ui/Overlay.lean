@@ -142,16 +142,19 @@ private def layerPolicy (anchor : Option Rect) (alignment : Alignment)
 /-- One overlay entry's full-window subtree: `[scrim/outside-click layer?,
 content wrapper]` under the positioning policy above. `scrimColor`/`modal`
 distinguish `Dialog` (colored, swallows wheel) from `Popup` (transparent
-click-catcher only when dismissable). -/
+click-catcher only when dismissable). An `interactive := false` layer is inert:
+no outside-click scrim and the whole subtree is excluded from hit-testing, so a
+dismissed popup fading out intercepts nothing (Compose semantics). -/
 private def overlayLayerContent (id : Nat) (anchor : Option Rect)
     (alignment : Alignment) (offset : IntOffset)
     (dismiss : IO.Ref (Option (IO Unit))) (dismissable : Bool)
-    (scrimColor : Option Color) (modal : Bool)
+    (scrimColor : Option Color) (modal : Bool) (interactive : Bool)
     (content : Composable Unit) : Composable Unit :=
   Layout {} (layerPolicy anchor alignment offset)
     (policyInputs := some (mixKeys 0x6f766c79 (positionKey anchor alignment offset)))
+    (hitTestable := interactive)
     (content := do
-      if dismissable || modal then
+      if interactive && (dismissable || modal) then
         withGroup 0x736372 do
           let m := Modifier.pointerInput
               (mixKeys (stringKey "Compose.Overlay.scrim") id.toUInt64)
@@ -223,7 +226,7 @@ private def captureLocals : Composable LocalMap := fun c => c.locals.get
 composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     (offset : IntOffset) (onDismissRequest : Option (IO Unit)) (focusable : Bool)
     (onKeyEvent : KeyEvent → IO Bool) (scrimColor : Option Color) (modal : Bool)
-    (content : Composable Unit) : Composable Unit := do
+    (interactive : Bool) (content : Composable Unit) : Composable Unit := do
   let ctx? ← LocalWindowContext.current
   match ctx? with
   | none =>
@@ -236,12 +239,15 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
              locals := ← IO.mkRef .empty }
     let dismissRef ← updatedRef onDismissRequest
     let keyRef ← updatedRef onKeyEvent
+    -- Latest interactivity, read live by the long-lived key handler: an inert
+    -- (exiting) overlay routes no keys, letting them reach normal handlers.
+    let interactiveRef ← updatedRef interactive
     let locals ← captureLocals
     -- Refresh the entry every composition: latest locals + content capture,
     -- then bump the revision so the host layer recomposes with them.
     entry.locals.set locals
     entry.content.set (overlayLayerContent entry.id anchor alignment offset
-      dismissRef onDismissRequest.isSome scrimColor modal content)
+      dismissRef onDismissRequest.isSome scrimColor modal interactive content)
     entry.revision.modify (· + 1)
     DisposableEffect entry.id do
       ctx.registerOverlay entry
@@ -249,6 +255,7 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
         { id := entry.id
           capture := focusable
           handler := fun ke => do
+            unless ← interactiveRef.get do return false
             if ← (← keyRef.get) ke then return true
             if ke.down && !ke.isRepeat && ke.key == .escape then
               match ← dismissRef.get with
@@ -269,15 +276,17 @@ positioned below `anchor` (flipping above it when out of room, always
 clamped to the window) or by window `alignment` when no anchor is given.
 When `onDismissRequest` is set, a click landing outside the content and Esc
 call it (innermost overlay first). `focusable` popups grab key routing while
-open (`onKeyEvent` sees every key before the focused node). The popup itself
-emits no local layout — its content lives in the window's overlay host.
+open (`onKeyEvent` sees every key before the focused node). `interactive :=
+false` makes the popup inert (no dismiss scrim, no key routing, transparent to
+the pointer) while it is only mounted to play an exit animation. The popup
+itself emits no local layout — its content lives in the window's overlay host.
 Mirrors `androidx.compose.ui.window.Popup`. -/
 def Popup (anchor : Option Rect := none) (alignment : Alignment := .topStart)
     (offset : IntOffset := ⟨0, 0⟩) (onDismissRequest : Option (IO Unit) := none)
     (focusable : Bool := false) (onKeyEvent : KeyEvent → IO Bool := fun _ => pure false)
-    (content : Composable Unit := pure ()) : Composable Unit :=
+    (interactive : Bool := true) (content : Composable Unit := pure ()) : Composable Unit :=
   overlayImpl anchor alignment offset onDismissRequest focusable onKeyEvent
-    (scrimColor := none) (modal := false) content
+    (scrimColor := none) (modal := false) interactive content
 
 /-- A modal overlay: a full-window scrim (black at 32 %) swallows every
 pointer event below it, `content` is centered, and Esc or a scrim click
@@ -289,6 +298,6 @@ def Dialog (onDismissRequest : IO Unit) (content : Composable Unit := pure ()) :
   overlayImpl (anchor := none) (alignment := .center) (offset := ⟨0, 0⟩)
     (onDismissRequest := some onDismissRequest) (focusable := true)
     (onKeyEvent := fun _ => pure false) (scrimColor := some dialogScrimColor)
-    (modal := true) content
+    (modal := true) (interactive := true) content
 
 end Compose

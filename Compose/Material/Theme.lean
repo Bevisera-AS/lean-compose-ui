@@ -47,44 +47,46 @@ structure ColorScheme where
 
 namespace ColorScheme
 
-/-- The Material3 baseline light palette. Mirrors
-`androidx.compose.material3.lightColorScheme()` (baseline tokens). -/
+/-- The light palette. Material3 baseline structure, reseeded with a blue
+primary in place of the M3 baseline purple; neutrals retinted from M3's
+purple-leaning greys to cool blue-greys to match. -/
 def light : ColorScheme where
-  primary := .hex 0xFF6750A4
+  primary := .hex 0xFF386EE0
   onPrimary := .hex 0xFFFFFFFF
-  primaryContainer := .hex 0xFFEADDFF
-  onPrimaryContainer := .hex 0xFF21005D
-  secondary := .hex 0xFF625B71
+  primaryContainer := .hex 0xFFD5E1FF
+  onPrimaryContainer := .hex 0xFF001A41
+  secondary := .hex 0xFF56607A
   onSecondary := .hex 0xFFFFFFFF
-  surface := .hex 0xFFFFFBFE
-  onSurface := .hex 0xFF1C1B1F
-  surfaceVariant := .hex 0xFFE7E0EC
-  onSurfaceVariant := .hex 0xFF49454F
-  background := .hex 0xFFFFFBFE
-  onBackground := .hex 0xFF1C1B1F
-  outline := .hex 0xFF79747E
-  outlineVariant := .hex 0xFFCAC4D0
+  surface := .hex 0xFFFCFCFF
+  onSurface := .hex 0xFF1A1C1E
+  surfaceVariant := .hex 0xFFDFE2EB
+  onSurfaceVariant := .hex 0xFF43474E
+  background := .hex 0xFFFCFCFF
+  onBackground := .hex 0xFF1A1C1E
+  outline := .hex 0xFF73777F
+  outlineVariant := .hex 0xFFC3C6CF
   error := .hex 0xFFB3261E
   onError := .hex 0xFFFFFFFF
   scrim := .hex 0xFF000000
 
-/-- The Material3 baseline dark palette. Mirrors
-`androidx.compose.material3.darkColorScheme()` (baseline tokens). -/
+/-- The dark palette. Material3 baseline structure, reseeded with a blue
+primary (an M3 dark-tone of the light scheme's blue) in place of the M3
+baseline purple. -/
 def dark : ColorScheme where
-  primary := .hex 0xFFD0BCFF
-  onPrimary := .hex 0xFF381E72
-  primaryContainer := .hex 0xFF4F378B
-  onPrimaryContainer := .hex 0xFFEADDFF
-  secondary := .hex 0xFFCCC2DC
-  onSecondary := .hex 0xFF332D41
-  surface := .hex 0xFF1C1B1F
-  onSurface := .hex 0xFFE6E1E5
-  surfaceVariant := .hex 0xFF49454F
-  onSurfaceVariant := .hex 0xFFCAC4D0
-  background := .hex 0xFF1C1B1F
-  onBackground := .hex 0xFFE6E1E5
-  outline := .hex 0xFF938F99
-  outlineVariant := .hex 0xFF49454F
+  primary := .hex 0xFFABC7FF
+  onPrimary := .hex 0xFF002E69
+  primaryContainer := .hex 0xFF234787
+  onPrimaryContainer := .hex 0xFFD5E1FF
+  secondary := .hex 0xFFBEC6DC
+  onSecondary := .hex 0xFF283041
+  surface := .hex 0xFF1A1C1E
+  onSurface := .hex 0xFFE2E2E6
+  surfaceVariant := .hex 0xFF43474E
+  onSurfaceVariant := .hex 0xFFC3C6CF
+  background := .hex 0xFF1A1C1E
+  onBackground := .hex 0xFFE2E2E6
+  outline := .hex 0xFF8D9199
+  outlineVariant := .hex 0xFF43474E
   error := .hex 0xFFF2B8B5
   onError := .hex 0xFF601410
   scrim := .hex 0xFF000000

@@ -111,6 +111,15 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
     else ctx.window.stopTextInput)
   return ctx
 
+/-- SDL video init shared by `bootstrap` and `bootstrapApplication`: init the
+subsystem and deliver the click that focuses an unfocused window instead of
+swallowing it (SDL's default) — a button in a background window works on the
+first click, like Compose Desktop. Normal priority, so the
+`SDL_MOUSE_FOCUS_CLICKTHROUGH` env var still wins. -/
+def initVideo : IO Unit := do
+  Sdl.init .video
+  Sdl.setHint Sdl.Hint.mouseFocusClickthrough "1"
+
 /-- Create the SDL window/renderer, scheduler (woken by a registered SDL
 user event), root node, and composition for `content`, wiring both
 invalidation hooks to the window's `needsFrame` flag — everything `step`
@@ -118,7 +127,7 @@ needs, without entering the loop. `width`/`height` are `Dp` (SDL window
 coordinates are density-independent). Main thread only. -/
 def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) : IO WindowContext := do
-  Sdl.init .video
+  initVideo
   let some wakeEvent ← Sdl.registerEvents 1
     | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
   let scheduler ← Scheduler.create

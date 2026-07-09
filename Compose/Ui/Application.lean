@@ -135,7 +135,7 @@ created their windows by the time this returns, so the emptiness-exit rule
 is meaningful immediately. Everything `stepApplication` needs, without
 entering the loop. Main thread only. -/
 def bootstrapApplication (content : Composable Unit) : IO ApplicationScope := do
-  Sdl.init .video
+  initVideo
   let some wakeEvent ← Sdl.registerEvents 1
     | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
   let scheduler ← Scheduler.create

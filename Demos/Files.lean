@@ -12,7 +12,9 @@ modified time.
 
 It only opens directories: clicking a directory row navigates into it, clicking
 a file row selects it and fills the info panel — no file is ever read. The app
-starts at `$HOME` (falling back to `/`).
+starts at `$HOME` (falling back to `/`). Dotfiles are hidden by default; the
+header's **"Show hidden" switch** reveals them (turning it off drops a selected
+dotfile from the info panel too).
 
 ## Pure, testable core
 
@@ -125,6 +127,22 @@ private def sortSample : Array FsEntry :=
 #guard (sortEntries #[{ name := "b", isDir := false }, { name := ".A", isDir := false },
     { name := "a", isDir := false }]).map (·.name) == #[".A", "a", "b"]
 
+/-! ### Hidden-file filtering -/
+
+/-- Dotfile convention: a name starting with `.` is hidden. -/
+def isHidden (name : String) : Bool := name.startsWith "."
+
+/-- The entries to list: everything when `showHidden`, otherwise dotfiles are
+dropped. -/
+def visibleEntries (showHidden : Bool) (es : Array FsEntry) : Array FsEntry :=
+  if showHidden then es else es.filter (fun e => !isHidden e.name)
+
+#guard visibleEntries true (sortSample.push { name := ".git", isDir := true }) ==
+  sortSample.push { name := ".git", isDir := true }
+#guard (visibleEntries false #[{ name := ".git", isDir := true },
+    { name := "a", isDir := false }, { name := ".x", isDir := false }]).map (·.name) == #["a"]
+#guard (visibleEntries false #[]).isEmpty
+
 /-! ### Human-readable sizes -/
 
 /-- A byte count as human-readable text: `"{n} B"` under 1 KB, otherwise one
@@ -218,6 +236,17 @@ structure FilesState where
   listing : MutableState (Except String (Array FsEntry))
   /-- The selected file entry, if any. -/
   selected : MutableState (Option FsEntry)
+  /-- Whether dotfiles are listed (the header switch; off by default). -/
+  showHidden : MutableState Bool
+
+/-- Flip the hidden-files switch. Turning it off also drops a selected dotfile
+(its row just disappeared; the info panel must not describe an invisible
+entry). -/
+def FilesState.setShowHidden (st : FilesState) (b : Bool) : IO Unit := do
+  st.showHidden.set b
+  unless b do
+    if let some e ← st.selected.get then
+      if isHidden e.name then st.selected.set none
 
 /-- Navigate to `path`: re-read it through the injected `FsSource`, update the
 listing (error included), and clear any selection. Synchronous IO, so clicks
@@ -235,7 +264,8 @@ def FilesState.init (fs : FsSource) (home : String) : IO FilesState := do
       -- `Except` has no `BEq`, and every navigation genuinely re-reads, so
       -- always-notify is both required and correct here.
       listing := ← mutableStateOfAlwaysNotify (.ok #[]),
-      selected := ← mutableStateOf none }
+      selected := ← mutableStateOf none,
+      showHidden := ← mutableStateOf false }
   navigate fs st home
   return st
 
@@ -313,6 +343,7 @@ composable def listingArea (fs : FsSource) (st : FilesState) : Composable Unit :
   let colors ← MaterialTheme.colorScheme
   let cwd ← st.cwd.get
   let sel ← st.selected.get
+  let showHidden ← st.showHidden.get
   let scroll ← rememberScrollState
   Box (Modifier.fillMaxWidth |>.fillMaxHeight |>.background colors.surface)
     (content :=
@@ -322,7 +353,7 @@ composable def listingArea (fs : FsSource) (st : FilesState) : Composable Unit :
         (contentAlignment := .topStart)
         (content := Text s!"Cannot open this folder: {msg}" (color := some colors.error))
     | .ok entries =>
-      let sorted := sortEntries entries
+      let sorted := sortEntries (visibleEntries showHidden entries)
       if sorted.isEmpty then
         Box (Modifier.fillMaxSize |>.padding (all := 16)) (content :=
           Text "(empty folder)" (color := some colors.onSurfaceVariant))
@@ -340,11 +371,27 @@ composable def listingArea (fs : FsSource) (st : FilesState) : Composable Unit :
             fileRow fs st cwd e (sel == some e))
         VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight))
 
-/-- The whole browser: breadcrumb, listing, and info panel. Factored on the
-injected `FsSource` + `FilesState` so the MT suite drives it over a fake tree. -/
+/-- The header's hidden-files toggle: a labeled `Switch` (a standalone,
+immediate-effect option — Material's switch case, not a checkbox's). -/
+composable def showHiddenToggle (st : FilesState) : Composable Unit := do
+  let colors ← MaterialTheme.colorScheme
+  Row (Modifier.padding (horizontal := some 12))
+    (verticalAlignment := .centerVertically) (horizontalArrangement := .spacedBy 6)
+    (content := do
+      Text "Show hidden" (style := { fontSize := 13 })
+        (color := some colors.onSurfaceVariant)
+      Switch (← st.showHidden.get) st.setShowHidden
+        (modifier := Modifier.testTag "show-hidden"))
+
+/-- The whole browser: header (breadcrumb + hidden-files switch), listing, and
+info panel. Factored on the injected `FsSource` + `FilesState` so the MT suite
+drives it over a fake tree. -/
 composable def filesBody (fs : FsSource) (st : FilesState) : Composable Unit :=
   Column (Modifier.fillMaxSize) (content := do
-    breadcrumbBar fs st
+    Row (Modifier.fillMaxWidth) (verticalAlignment := .centerVertically)
+      (content := do
+        Box (Modifier.weight 1) (content := breadcrumbBar fs st)
+        showHiddenToggle st)
     Box (Modifier.weight 1 |>.fillMaxWidth) (content := listingArea fs st)
     infoPanel st)
 
@@ -354,7 +401,8 @@ composable def filesUi (fs : FsSource) (home : String) : Composable Unit := do
   let cwd ← remember (mutableStateOf home)
   let listing ← remember (mutableStateOfAlwaysNotify (.ok #[] : Except String (Array FsEntry)))
   let selected ← remember (mutableStateOf (none : Option FsEntry))
-  let st : FilesState := { cwd, listing, selected }
+  let showHidden ← remember (mutableStateOf false)
+  let st : FilesState := { cwd, listing, selected, showHidden }
   -- Load the home directory exactly once (remember runs its init a single time).
   let _ ← remember (do navigate fs st home; pure true)
   MaterialTheme (content := filesBody fs st)

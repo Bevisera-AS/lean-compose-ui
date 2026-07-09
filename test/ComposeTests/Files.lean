@@ -62,6 +62,11 @@ private def pureCore : IO Unit := do
     ((sortEntries #[file "readme.md" 1, dir "Pictures", dir "Documents",
         file ".x" 1, file "apple" 1]).map (·.name))
     #["Documents", "Pictures", ".x", "apple", "readme.md"]
+  -- Hidden-file filtering.
+  checkEq "visibleEntries drops dotfiles when off"
+    ((visibleEntries false #[dir ".git", file "a" 1, file ".x" 1]).map (·.name)) #["a"]
+  checkEq "visibleEntries keeps everything when on"
+    ((visibleEntries true #[dir ".git", file "a" 1]).map (·.name)) #[".git", "a"]
   -- Human-readable sizes across the unit boundaries.
   checkEq "size 0 B" (humanSize 0) "0 B"
   checkEq "size 1023 B" (humanSize 1023) "1023 B"
@@ -84,7 +89,7 @@ private def initialListing : IO Unit := do
     assertExists (.tag "row:secret")
     assertExists (.tag "row:notes.txt")
     assertExists (.tag "row:readme.md")
-    assertExists (.tag "row:.hidden")           -- dotfiles are shown
+    assertMissing (.tag "row:.hidden")          -- dotfiles hidden by default
     assertExists (.text "Documents/")           -- directory glyph text
     -- The breadcrumb starts at the fake home.
     assertExists (.tag "crumb:/")
@@ -167,6 +172,33 @@ private def permissionDenied : IO Unit := do
     assertMissing (.tag "error")
     assertExists (.tag "row:notes.txt")
 
+/-! ## The "Show hidden" switch reveals/hides dotfiles -/
+
+private def hiddenToggle : IO Unit := do
+  let st ← fresh
+  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+    -- Off by default: the dotfile row is absent, visible rows are unaffected.
+    assertMissing (.tag "row:.hidden")
+    assertExists (.tag "row:notes.txt")
+    -- Flip the switch on: the dotfile appears.
+    click (.tag "show-hidden")
+    check "switch turned on" (← st.showHidden.get)
+    assertExists (.tag "row:.hidden")
+    -- Select the dotfile, then hide again: the row leaves AND the selection is
+    -- dropped (the info panel must not describe an invisible entry).
+    click (.tag "row:.hidden")
+    check "dotfile selected" ((← st.selected.get) == some (file ".hidden" 42))
+    click (.tag "show-hidden")
+    assertMissing (.tag "row:.hidden")
+    check "hidden selection dropped" ((← st.selected.get) == none)
+    assertExists (.text "Select a file to see its details.")
+    -- A visible selection survives the toggle.
+    click (.tag "show-hidden")
+    click (.tag "row:notes.txt")
+    click (.tag "show-hidden")
+    check "visible selection survives"
+      ((← st.selected.get) == some (file "notes.txt" 2048 (some 1704067200)))
+
 /-- The Files group. -/
 def run : IO Unit := do
   scenario "pureCore" pureCore
@@ -175,5 +207,6 @@ def run : IO Unit := do
   scenario "breadcrumbUp" breadcrumbUp
   scenario "fileInfo" fileInfo
   scenario "permissionDenied" permissionDenied
+  scenario "hiddenToggle" hiddenToggle
 
 end Tests.Files

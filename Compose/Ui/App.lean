@@ -55,14 +55,15 @@ structure AppConfig where
 wakes). -/
 def idleWaitMs : UInt32 := 1000
 
-/-- Create the SDL window/renderer, scheduler (woken by a registered SDL
-user event), root node, and composition for `content`, wiring both
-invalidation hooks to the window's `needsFrame` flag — everything `step`
-needs, without entering the loop. `width`/`height` are `Dp` (SDL window
-coordinates are density-independent). Main thread only. -/
-def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
+/-- Build the per-window half of `bootstrap` on an *existing* scheduler and
+wake event (`Compose.application` shares one pair across all its windows):
+SDL window/renderer, text stack, root node, composition for `content`, and
+the input pipeline, wiring both invalidation hooks to the window's
+`needsFrame` flag — everything `step`/`renderFrame` need. `width`/`height`
+are `Dp` (SDL window coordinates are density-independent). Main thread only. -/
+def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
+    (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) : IO WindowContext := do
-  Sdl.init .video
   let flags :=
     (if config.resizable then Sdl.WindowFlags.resizable else .none) ||| .highPixelDensity
   let window ← Sdl.createWindow title
@@ -70,11 +71,6 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
   let renderer ← Sdl.createRenderer window config.rendererName
   if config.vsync then
     try renderer.setVSync 1 catch _ => pure ()
-  let some wakeEvent ← Sdl.registerEvents 1
-    | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
-  let scheduler ← Scheduler.create
-    (wake := do let _ ← Sdl.pushUserEvent wakeEvent; pure ())
-    (clock := Sdl.getTicksNS)
   -- Text stack: bundled fonts + renderer text engine (M7), shared per window.
   let textContext : TextContext :=
     { fontStore := ← FontStore.create
@@ -114,6 +110,21 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
     if active then ctx.window.startTextInput
     else ctx.window.stopTextInput)
   return ctx
+
+/-- Create the SDL window/renderer, scheduler (woken by a registered SDL
+user event), root node, and composition for `content`, wiring both
+invalidation hooks to the window's `needsFrame` flag — everything `step`
+needs, without entering the loop. `width`/`height` are `Dp` (SDL window
+coordinates are density-independent). Main thread only. -/
+def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
+    (config : AppConfig := {}) : IO WindowContext := do
+  Sdl.init .video
+  let some wakeEvent ← Sdl.registerEvents 1
+    | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
+  let scheduler ← Scheduler.create
+    (wake := do let _ ← Sdl.pushUserEvent wakeEvent; pure ())
+    (clock := Sdl.getTicksNS)
+  bootstrapWindow scheduler wakeEvent title width height content config
 
 /-- Dispatch one SDL event against the window (step 2 of the loop; exposed
 for tests to inject synthetic events). -/

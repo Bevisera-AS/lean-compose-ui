@@ -29,6 +29,7 @@ import ComposeTests.MultiWindow
 import ComposeTests.MenuBar
 import ComposeTests.Desktop
 import ComposeTests.Menu
+import ComposeTests.Files
 
 /-!
 # Runtime test entry point
@@ -72,4 +73,5 @@ def main : IO UInt32 := do
   Harness.group "MenuBar" MenuBar.run
   Harness.group "Desktop" Desktop.run
   Harness.group "Menu" Menu.run
+  Harness.group "Files" Files.run
   Harness.summary

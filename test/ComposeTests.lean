@@ -21,6 +21,7 @@ import ComposeTests.Timer
 import ComposeTests.Crud
 import ComposeTests.CircleDrawer
 import ComposeTests.DrawCache
+import ComposeTests.Gallery
 
 /-!
 # Runtime test entry point
@@ -56,4 +57,5 @@ def main : IO UInt32 := do
   Harness.group "Crud" Crud.run
   Harness.group "CircleDrawer" CircleDrawer.run
   Harness.group "DrawCache" DrawCache.run
+  Harness.group "Gallery" Gallery.run
   Harness.summary

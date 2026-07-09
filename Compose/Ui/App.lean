@@ -227,14 +227,44 @@ where
     let _ ← step ctx config idleCap
     go (remaining.map (· - 1)) idleCap
 
+/-- Loop passes to run before grabbing a screenshot — enough for effects,
+layout, and the first idle frame to settle (animations get this much progress
+and no more; a fixed count keeps capture deterministic). -/
+def screenshotSettlePasses : Nat := 24
+
+/-- Capture the app's rendered frame to `path` (BMP) instead of entering the
+event loop — the README screenshot pipeline (`COMPOSE_SCREENSHOT=<path>`).
+Boots the same composition on the **software renderer** (stable `readPixels`,
+works under `SDL_VIDEO_DRIVER=dummy` so no window need be shown), settles for
+`screenshotSettlePasses`, renders a final frame, and dumps the render target.
+Convert BMP→PNG afterward (`sips -s format png in.bmp --out out.png`). Main
+thread only. -/
+def captureScreenshot (title : String) (width height : Dp)
+    (content : Composable Unit) (config : AppConfig) (path : String) : IO Unit := do
+  let capCfg := { config with rendererName := some Sdl.softwareRenderer, vsync := false }
+  let ctx ← bootstrap title width height content capCfg
+  for _ in [0:screenshotSettlePasses] do
+    let _ ← step ctx capCfg cappedIdleWaitMs
+  -- Force one last frame so the render target holds the settled content, then
+  -- read it straight back (software target persists after `present`).
+  ctx.requestFrame
+  renderFrame ctx capCfg
+  (← ctx.renderer.readPixels).saveBMP path
+  (← ctx.composition).dispose
+
 /-- Run a Compose application: create the window (`width`/`height` in `Dp`),
 compose `content`, and drive the dirty-driven event loop until quit. Honors
 `COMPOSE_MAX_FRAMES=<n>` (exit 0 after n loop passes — headless CI,
 mirroring lean-sdl3's `SDL_LEAN_MAX_FRAMES`; passes, not presented frames,
-so fully static demos terminate too). Call from `main` (main thread only).
+so fully static demos terminate too) and `COMPOSE_SCREENSHOT=<path>` (dump
+the settled frame to a BMP and exit — see `captureScreenshot`). Call from
+`main` (main thread only).
 Mirrors `androidx.compose.ui.window.singleWindowApplication`. -/
 def runApp (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) : IO UInt32 := do
+  if let some path ← IO.getEnv "COMPOSE_SCREENSHOT" then
+    captureScreenshot title width height content config path
+    return 0
   let ctx ← bootstrap title width height content config
   let maxPasses := (← IO.getEnv "COMPOSE_MAX_FRAMES").bind (·.toNat?)
   runLoop ctx config maxPasses

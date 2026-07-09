@@ -10,7 +10,9 @@ and the new path compared with the previous one by node identity — nodes that
 left receive an `exit` pointer event (leaf→root), nodes that entered an
 `enter` event (root→leaf), so nested hover states behave (hovering a child
 keeps the parent hovered). Mirrors the enter/exit synthesis of Compose's
-`PointerInputEventProcessor`.
+`PointerInputEventProcessor`. The router re-runs the diff after layout/tree
+changes (`InputManager.syncHover`); hovered nodes leaving the tree get their
+`exit` at detach time (`exitDetaching`), while their handlers still exist.
 
 The cursor: after each diff, the leaf-most `Modifier.pointerHoverIcon` on the
 hovered path wins (`topmost hovered wins`); no icon restores the default.
@@ -94,6 +96,22 @@ def update (hs : HoverState) (root : LayoutNode) (base : PointerEvent)
     hs.currentCursor.set want
     hs.cursor.set want
   return newPath
+
+/-- Detach notification: deliver `exit` (leaf→root) to — and drop from the
+hovered path — every node inside the departing `subtree`. Must run before
+`severParentLinks`: afterwards the nodes' `pointerInput` states are gone and
+a diffed exit would deliver to nothing, leaving hover interactions latched.
+`base` supplies position/mods for the synthesized events; the cursor is left
+to the next hover-path diff. -/
+def exitDetaching (hs : HoverState) (subtree : LayoutNode) (base : PointerEvent) : IO Unit := do
+  let path ← hs.path.get
+  let keep ← path.mapM fun t => return !(← t.node.isDescendantOf subtree)
+  if keep.all id then return
+  for i in [0:path.size] do
+    let j := path.size - 1 - i
+    unless keep[j]! do
+      path[j]!.deliver { base with eventType := .exit } base.position
+  hs.path.set <| (path.zip keep).filterMap fun (t, k) => if k then some t else none
 
 end HoverState
 

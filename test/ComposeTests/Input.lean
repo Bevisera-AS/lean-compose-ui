@@ -63,6 +63,7 @@ private def rig (content : Composable Unit) (w : Int32 := 200) (h : Int32 := 200
   let _ ← root.remeasure { maxWidth := w, maxHeight := h }
   let cursors ← IO.mkRef (#[] : Array Sdl.SystemCursor)
   let im ← InputManager.create root { set := fun c => cursors.modify (·.push c) }
+    (sched := some s)
   s.runDue 0
   return { s, clock, root, comp, im, cursors }
 
@@ -749,6 +750,71 @@ private def focusDetachClears : IO Unit := do
   check "focus-detach: text input unhandled after removal" (!(← im.textInput "x"))
   (← ctx.composition).dispose
 
+/-- The cursor icon set by a removed node is restored without mouse motion:
+the post-layout hover sync recomputes the path and the icon. -/
+private def hoverCursorResync : IO Unit := do
+  let show' ← mutableStateOf true
+  let r ← rig <| Tests.restartable 1 do
+    if ← show'.get then
+      withGroup 11 <| leaf (Modifier.size 50 50 |>.pointerHoverIcon .text)
+    else
+      withGroup 12 (pure ())
+  let _ ← r.im.pointerEvent (moveTo 10 10)
+  checkEq "cursor-resync: icon set while hovered" ((← r.cursors.get).map (·.val))
+    #[Sdl.SystemCursor.text.val]
+  show'.set false
+  r.settle
+  checkEq "cursor-resync: default restored without mouse motion"
+    ((← r.cursors.get).map (·.val)) (#[.text, .default].map Sdl.SystemCursor.val)
+
+/-- MT scenario: a hoverable appearing under the stationary cursor (state
+write, no mouse move) receives its `enter` — the post-layout hover sync
+re-runs the path diff at the last known position. -/
+private def hoverAppearUnderCursor : IO Unit := do
+  let srcCell ← IO.mkRef (none : Option InteractionSource)
+  let show' ← mutableStateOf false
+  Compose.Test.runComposeTest
+    (content := Tests.restartable 1 do
+      let src ← rememberInteractionSource
+      SideEffect (srcCell.set (some src))
+      if ← show'.get then
+        withGroup 11 <| Box (Modifier.size 80 80 |>.hoverable src)
+      else
+        withGroup 12 (pure ()))
+    do
+      Compose.Test.mouseMove ⟨40, 40⟩
+      Compose.Test.awaitIdle
+      let some src ← srcCell.get | throw (IO.userError "source not captured")
+      check "hover-sync: nothing hovered before it appears" (!(← src.hovered.get))
+      show'.set true
+      Compose.Test.awaitIdle
+      check "hover-sync: appearing under the stationary cursor enters"
+        (← src.hovered.get)
+
+/-- MT scenario: a node removed while hovered gets its `exit` at detach time
+(before its coroutines are cancelled), so a surviving remembered
+`InteractionSource` does not stay latched hovered. -/
+private def hoverDetachUnlatch : IO Unit := do
+  let srcCell ← IO.mkRef (none : Option InteractionSource)
+  let show' ← mutableStateOf true
+  Compose.Test.runComposeTest
+    (content := Tests.restartable 1 do
+      let src ← rememberInteractionSource
+      SideEffect (srcCell.set (some src))
+      if ← show'.get then
+        withGroup 11 <| Box (Modifier.size 80 80 |>.hoverable src)
+      else
+        withGroup 12 (pure ()))
+    do
+      Compose.Test.mouseMove ⟨40, 40⟩
+      Compose.Test.awaitIdle
+      let some src ← srcCell.get | throw (IO.userError "source not captured")
+      check "hover-unlatch: hovered while over" (← src.hovered.get)
+      show'.set false
+      Compose.Test.awaitIdle
+      check "hover-unlatch: removal without a pointer exit un-latches"
+        (!(← src.hovered.get))
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -777,5 +843,8 @@ def run : IO Unit := do
   sdlTranslation
   modalPopDetached
   focusDetachClears
+  hoverCursorResync
+  hoverAppearUnderCursor
+  hoverDetachUnlatch
 
 end Tests.Input

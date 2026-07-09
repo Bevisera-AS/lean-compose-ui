@@ -24,6 +24,12 @@ cancel). Hover diffing is frozen while captured and re-run on the final
 release. A window-leave `exit` cancels the capture (delivered to the captured
 path first, so drags can cancel).
 
+**Tree changes**: the manager owns the root's detach hook (focus and hover
+state referencing removed nodes is released — see `nodeDetached`) and chains
+its remeasure-request hook to schedule a post-layout hover sync, so content
+appearing or vanishing under a stationary cursor gets its enter/exit and the
+cursor icon stays right (Compose synthesizes a pointer move after layout).
+
 **Key fallbacks** (app level, after `Modifier.onKeyEvent` routing): Tab /
 Shift-Tab traverse the focusables, Esc clears focus.
 -/
@@ -43,6 +49,15 @@ structure InputManager where
   /-- Last pointer position in render px (window-leave synthesizes its `exit`
   here; scroll fallback position). -/
   lastPos : IO.Ref Offset
+  /-- A cursor position is known and inside the window (set by
+  move/press/release, cleared by window-leave `exit`); gates the post-layout
+  hover sync. -/
+  pointerInside : IO.Ref Bool
+  /-- A post-layout hover sync is already scheduled (dedupe). -/
+  hoverSyncPending : IO.Ref Bool
+  /-- Scheduler the post-layout hover sync runs on (`none` disables the sync
+  — minimal router tests). -/
+  sched : Option Scheduler
   /-- M10 overlay key handlers (shared with `WindowContext.keyHandlers` by
   `installInput`): capture handlers run before focused-node routing, the
   rest after it, innermost (last registered) first. -/
@@ -52,29 +67,73 @@ namespace InputManager
 
 /-- Applier detach hook: `subtree` is leaving the tree (fired before its
 parent links are severed). Focus inside it is cleared through the normal
-path, so the IME/text-client lifecycle fires. -/
-def nodeDetached (im : InputManager) (subtree : LayoutNode) : IO Unit :=
+path, so the IME/text-client lifecycle fires; hovered nodes inside it get
+their `exit` now — after `severParentLinks` their handlers are gone, which
+would leave hover interactions latched. -/
+def nodeDetached (im : InputManager) (subtree : LayoutNode) : IO Unit := do
   im.focus.clearIfDetaching subtree
+  im.hover.exitDetaching subtree { eventType := .exit, position := ← im.lastPos.get }
+
+/-- Re-run the hover-path diff at the last known cursor position, as if the
+mouse had moved in place: enters/exits/cursor fire for content that appeared
+or vanished under a stationary cursor (Compose's synthesized move after
+layout changes). Skipped while a press capture holds hover frozen (the final
+release rediffs) or when no in-window position is known. -/
+def syncHover (im : InputManager) : IO Unit := do
+  unless ← im.pointerInside.get do return
+  unless (← im.capture.get).isEmpty do return
+  let pos ← im.lastPos.get
+  let _ ← im.hover.update im.root { eventType := .move, position := pos } (some pos)
+
+/-- The scheduled sync: wait (cooperatively) until the pending layout pass
+has run — the app loop measures dirty trees before its next `runDue` — then
+diff once. -/
+private partial def hoverSyncTask (im : InputManager) : UiTask Unit := do
+  let d ← im.root.data
+  if d.needsRemeasure || d.needsRelayout then
+    UiTask.yield
+    im.hoverSyncTask
+  else
+    im.hoverSyncPending.set false
+    im.syncHover
+
+/-- Schedule one `syncHover` for after the pending layout pass (deduped —
+a dirty frame costs at most one extra hit test). -/
+def scheduleHoverSync (im : InputManager) : IO Unit := do
+  let some s := im.sched | return
+  unless ← im.pointerInside.get do return
+  if ← im.hoverSyncPending.modifyGet fun p => (p, true) then return
+  let _ ← s.launch im.hoverSyncTask
 
 /-- Fresh manager over `root`. `onFocusTarget` runs after every focus change
 (see `FocusManager`); `installInput` uses it for the M11 text-input hook.
 `overlayKeys` shares the window's overlay key-handler registry (a fresh empty
 one when absent — headless router tests). Installs itself as `root`'s detach
-hook (single consumer — re-installing input rebinds it). -/
+hook (single consumer — re-installing input rebinds it) and, given `sched`,
+chains the root's remeasure-request hook to schedule the post-layout hover
+sync. -/
 def create (root : LayoutNode) (cursor : CursorSetter)
     (onFocusTarget : Option LayoutNode → IO Unit := fun _ => pure ())
-    (overlayKeys : Option (IO.Ref (Array OverlayKeyHandler)) := none) : IO InputManager := do
+    (overlayKeys : Option (IO.Ref (Array OverlayKeyHandler)) := none)
+    (sched : Option Scheduler := none) : IO InputManager := do
   let im : InputManager :=
-    { root
+    { root, sched
       focus := ← FocusManager.create root onFocusTarget
       hover := ← HoverState.create cursor
       capture := ← IO.mkRef #[]
       buttonsHeld := ← IO.mkRef .none
       lastPos := ← IO.mkRef .zero
+      pointerInside := ← IO.mkRef false
+      hoverSyncPending := ← IO.mkRef false
       overlayKeys := ← match overlayKeys with
         | some r => pure r
         | none => IO.mkRef #[] }
   root.setOnDetach im.nodeDetached
+  if sched.isSome then
+    let prev := (← root.data).onRequestRemeasure
+    root.setOnRequestRemeasure do
+      if let some notify := prev then notify
+      im.scheduleHoverSync
   return im
 
 /-- Mask of a possibly-absent button. -/
@@ -89,6 +148,7 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
   match ev.eventType with
   | .press =>
     im.lastPos.set ev.position
+    im.pointerInside.set true
     let heldBefore ← im.buttonsHeld.get
     let held ← im.buttonsHeld.modifyGet fun h =>
       let h' := h ||| maskOf ev.button
@@ -104,6 +164,7 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       dispatchToPath (← im.capture.get) { ev with buttons := held }
   | .release =>
     im.lastPos.set ev.position
+    im.pointerInside.set true
     let held ← im.buttonsHeld.modifyGet fun h =>
       let h' := h &&& ~~~(maskOf ev.button)
       (h', h')
@@ -117,6 +178,7 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
     return consumed
   | .move =>
     im.lastPos.set ev.position
+    im.pointerInside.set true
     let ev := { ev with buttons := ← im.buttonsHeld.get }
     let captured ← im.capture.get
     if captured.isEmpty then
@@ -129,6 +191,7 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
   | .exit =>
     -- Pointer left the window: cancel any capture (delivered as `exit` so
     -- gestures like drag can cancel), then clear the hover path.
+    im.pointerInside.set false
     let captured ← im.capture.get
     unless captured.isEmpty do
       let _ ← dispatchToPath captured ev
@@ -235,6 +298,7 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
   let isClient ← IO.mkRef false
   let im ← InputManager.create ctx.root cursor
     (overlayKeys := some ctx.keyHandlers)
+    (sched := some ctx.scheduler)
     (onFocusTarget := fun target => do
     let now ← match target with
       | some n => do pure (← n.data).modifier.isTextInputClient

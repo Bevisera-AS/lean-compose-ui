@@ -43,6 +43,7 @@ import Compose.Ui.Input.Focus
 import Compose.Ui.Input.Hover
 import Compose.Ui.Input.Router
 import Compose.Ui.Overlay
+import Compose.Ui.Tray
 import Compose.Ui.App
 import Compose.Foundation.Layouts
 import Compose.Foundation.Gestures

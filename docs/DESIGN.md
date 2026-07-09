@@ -479,6 +479,19 @@ dependency graph, cycles).
 - Debug overlay (`COMPOSE_DEBUG_OVERLAY=1`): fps + frame-time + recomposition
   counts via `Renderer.debugText`.
 
+**Status (M14 perf audit).** Verified implemented: idle sleeps in
+`waitEventTimeout` until an event/deadline (0% CPU; the 5 ms idle cap applies
+only under `COMPOSE_MAX_FRAMES`); frame clock ticks only with subscribers;
+root remeasure short-circuits O(1) when clean and dirty nodes re-measure in
+place; text layouts diff-update and fonts memoize; scroll offsets re-measure
+only the scrolled node; lazy windows recompose only on window shifts. **Known
+gap**: the shape-tessellation cache above is *not yet implemented* — every
+rounded background/border re-tessellates on each rendered frame (so any
+running animation re-triangulates all static shapes at 60 fps), and the
+per-node `needsRedraw` flag is maintained but unread (full-tree redraw per
+dirty frame, as documented). Fine at current tree sizes; the cache is the
+first lever if profiling ever shows draw-side cost.
+
 ## Testing
 
 - Pure logic: `#guard`/`example` immediately below definitions (geometry,

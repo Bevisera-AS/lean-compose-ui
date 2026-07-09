@@ -39,7 +39,9 @@ open lets layout and draw passes reuse the observation machinery. -/
 structure Invalidatable where
   /-- Unique id, used for two-way (de)registration. -/
   id : Nat
-  /-- Mark the dependent dirty (never runs work synchronously beyond queueing). -/
+  /-- Mark the dependent dirty. Must not throw: recompose scopes and passes
+  only queue work; derived states recompute eagerly but contain any error
+  (it resurfaces at the next `get`). -/
   invalidate : IO Unit
 
 /-- Handle describing a state being read, passed to read observers. Bundles
@@ -188,29 +190,47 @@ structure DerivedState (α : Type) where
   dependents : IO.Ref (Array Invalidatable)
   /-- This derived state's own registration on the states `compute` reads. -/
   registry : ObservationRegistry
+  /-- Holds the upstream-invalidation action run by `registry.dep.invalidate`;
+  `dispose` resets it to a no-op (the action closes over `registry`, and
+  breaking that cycle lets reference counting free the state). -/
+  invalidateCell : IO.Ref (IO Unit)
+  /-- Set by `dispose`: reads stop registering, upstream writes stop
+  recomputing. -/
+  disposed : IO.Ref Bool
 
 instance [Nonempty α] : Nonempty (DerivedState α) :=
   ⟨{ id := ⟨0⟩, compute := pure (Classical.choice inferInstance),
      cache := Classical.choice inferInstance, eq := fun _ _ => true,
      dependents := Classical.choice inferInstance,
-     registry := { dep := ⟨0, pure ()⟩, reads := Classical.choice inferInstance } }⟩
+     registry := { dep := ⟨0, pure ()⟩, reads := Classical.choice inferInstance },
+     invalidateCell := Classical.choice inferInstance,
+     disposed := Classical.choice inferInstance }⟩
 
 /-- Create a derived state. When an upstream state changes, the value is
 recomputed eagerly (re-registering its reads); dependents are invalidated
-only if the recomputed value differs per `BEq`. Mirrors `derivedStateOf`. -/
+only if the recomputed value differs per `BEq`. A throwing `compute` never
+escapes the upstream write (`Invalidatable.invalidate` contract): the state
+falls back to dirty, wakes every dependent, and rethrows at the next `get`.
+Prefer `rememberDerived`/`rememberDerivedKeyed` in composition — they
+`dispose` the state when it leaves. Mirrors `derivedStateOf`. -/
 def derivedStateOf [BEq α] (compute : IO α) : IO (DerivedState α) := do
   let cache ← IO.mkRef (none : Option α)
   let dependents ← IO.mkRef (#[] : Array Invalidatable)
-  let invalidateRef ← IO.mkRef (pure () : IO Unit)
+  let invalidateCell ← IO.mkRef (pure () : IO Unit)
   let registry ← ObservationRegistry.create
-    { id := ← freshId, invalidate := do (← invalidateRef.get) }
+    { id := ← freshId, invalidate := do (← invalidateCell.get) }
   let s : DerivedState α :=
-    { id := ⟨← freshId⟩, compute, cache, eq := (· == ·), dependents, registry }
-  invalidateRef.set do
-    let newV ← registry.observe compute
-    let old ← cache.get
-    cache.set (some newV)
-    unless old.any (· == newV) do
+    { id := ⟨← freshId⟩, compute, cache, eq := (· == ·), dependents, registry,
+      invalidateCell, disposed := ← IO.mkRef false }
+  invalidateCell.set do
+    try
+      let newV ← registry.observe compute
+      let old ← cache.get
+      cache.set (some newV)
+      unless old.any (· == newV) do
+        (← dependents.get).forM (·.invalidate)
+    catch _ =>
+      cache.set none
       (← dependents.get).forM (·.invalidate)
   return s
 
@@ -224,15 +244,30 @@ def handle (s : DerivedState α) : ObservedHandle where
   removeDependent i := s.dependents.modify (·.filter (·.id != i))
 
 /-- Read the derived value, registering the read with the ambient observer;
-recomputes (and registers upstream reads) if dirty. -/
+recomputes (and registers upstream reads) if dirty. After `dispose`, reads
+still answer (cached, or a plain recompute) but register nothing. -/
 def get (s : DerivedState α) : IO α := do
-  notifyRead s.handle
-  match ← s.cache.get with
-  | some v => return v
-  | none =>
-    let v ← s.registry.observe s.compute
-    s.cache.set (some v)
-    return v
+  if ← s.disposed.get then
+    match ← s.cache.get with
+    | some v => return v
+    | none => s.compute
+  else
+    notifyRead s.handle
+    match ← s.cache.get with
+    | some v => return v
+    | none =>
+      let v ← s.registry.observe s.compute
+      s.cache.set (some v)
+      return v
+
+/-- Detach from upstream: unregister `compute`'s reads from every upstream
+state and disable the invalidation action (whose closure cycles back through
+`registry`). The remember lifecycle calls this when the remembering group
+leaves the composition (`rememberDerived`/`rememberDerivedKeyed`). -/
+def dispose (s : DerivedState α) : IO Unit := do
+  s.disposed.set true
+  s.invalidateCell.set (pure ())
+  s.registry.clear
 
 end DerivedState
 

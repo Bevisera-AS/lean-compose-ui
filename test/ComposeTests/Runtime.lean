@@ -518,6 +518,54 @@ def slotUnderflowReported : IO Unit := do
   s.set true
   checkThrows "slots: underflow reported" comp.drain
 
+/-- A forgotten remembered derived state detaches from its upstream states:
+writes after removal no longer run `compute`. -/
+def derivedStateUnsubscribes : IO Unit := do
+  let t ← TestTree.create
+  let s ← mutableStateOf (0 : Nat)
+  let alive ← mutableStateOf true
+  let computes ← IO.mkRef (0 : Nat)
+  let comp ← Composition.create t.applier <| restartable 1 do
+    if ← alive.get then
+      withGroup 11 do
+        let d ← rememberDerived (α := Nat) do
+          computes.modify (· + 1)
+          return (← s.get) * 2
+        let _ ← d.get
+    else
+      withGroup 12 (pure ())
+  checkEq "derivedDispose: initial compute" (← computes.get) 1
+  s.set 1
+  comp.drain
+  checkEq "derivedDispose: live upstream write recomputes" (← computes.get) 2
+  alive.set false
+  comp.drain
+  let base ← computes.get
+  s.set 2
+  comp.drain
+  checkEq "derivedDispose: forgotten derived stops recomputing" (← computes.get) base
+
+/-- A key change replaces the remembered derived state; the old one is
+disposed and stops tracking its upstreams. -/
+def derivedKeyChangeDisposes : IO Unit := do
+  let t ← TestTree.create
+  let s ← mutableStateOf (0 : Nat)
+  let key ← mutableStateOf "a"
+  let computes ← IO.mkRef (0 : Nat)
+  let comp ← Composition.create t.applier <| restartable 1 do
+    let k ← key.get
+    let d ← rememberDerivedKeyed (α := Nat) k do
+      computes.modify (· + 1)
+      return (← s.get) * 2
+    let _ ← d.get
+  checkEq "derivedKey: initial compute" (← computes.get) 1
+  key.set "b"
+  comp.drain
+  checkEq "derivedKey: new state computed once" (← computes.get) 2
+  s.set 1
+  comp.drain
+  checkEq "derivedKey: only the live state recomputes" (← computes.get) 3
+
 /-- Removing a subtree severs its internal reference cycles (Lean's runtime
 is pure RC, no cycle collector): parent/scope/children/slots of every removed
 group are cleared, so the subtree is actually freeable. -/
@@ -592,6 +640,8 @@ def run : IO Unit := do
   derivedState
   setContentAndDispose
   slotUnderflowReported
+  derivedStateUnsubscribes
+  derivedKeyChangeDisposes
   removalSeversSubtree
 
 end Tests.Runtime

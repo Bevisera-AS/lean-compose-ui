@@ -98,9 +98,9 @@ composable def LazyColumn (state : ScrollState) (itemHeight : Dp) (count : Nat)
   let itemPx := density.dpRoundToPx itemHeight
   -- The window derives from scroll value + viewport; readers (this scope)
   -- are invalidated only when the (first, lastEx) pair actually changes.
-  let windowState ← rememberKeyed (mixKeys itemPx.toFloat32.toBits.toUInt64 count.toUInt64)
-    (derivedStateOf (α := Nat × Nat) do
-      return lazyWindow (← state.value) (← state.viewportSize) itemPx count)
+  let windowState ← rememberDerivedKeyed (α := Nat × Nat)
+    (mixKeys itemPx.toFloat32.toBits.toUInt64 count.toUInt64) do
+      return lazyWindow (← state.value) (← state.viewportSize) itemPx count
   let (first, lastEx) ← windowState.get
   Layout (modifier.verticalScroll state) (lazyPolicy first count itemPx)
     (policyInputs := some (mixKeys 0x6c617a79 <| mixKeys first.toUInt64 <|
@@ -157,14 +157,13 @@ composable def LazyGrid (columns rows : Nat) (cellWidth cellHeight : Dp)
   let sizeKey := mixKeys cw.toFloat32.toBits.toUInt64 ch.toFloat32.toBits.toUInt64
   -- Per-axis window: lazily derived on a scrolling axis, the full range on a
   -- pinned one. Readers wake only when a window pair actually changes.
-  let win ← rememberKeyed sizeKey
-    (derivedStateOf (α := (Nat × Nat) × Nat × Nat) do
-      let axis (state? : Option ScrollState) (itemPx : Int32) (count : Nat) :
-          IO (Nat × Nat) := do
-        match state? with
-        | some s => return lazyWindow (← s.value) (← s.viewportSize) itemPx count
-        | none => return (0, count)
-      return (← axis hState cw columns, ← axis vState ch rows))
+  let win ← rememberDerivedKeyed (α := (Nat × Nat) × Nat × Nat) sizeKey do
+    let axis (state? : Option ScrollState) (itemPx : Int32) (count : Nat) :
+        IO (Nat × Nat) := do
+      match state? with
+      | some s => return lazyWindow (← s.value) (← s.viewportSize) itemPx count
+      | none => return (0, count)
+    return (← axis hState cw columns, ← axis vState ch rows)
   let ((c0, c1), r0, r1) ← win.get
   let m := match hState with | some s => modifier.horizontalScroll s | none => modifier
   let m := match vState with | some s => m.verticalScroll s | none => m

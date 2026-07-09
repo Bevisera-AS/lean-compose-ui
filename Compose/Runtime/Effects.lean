@@ -46,4 +46,19 @@ composition this call is part of. Mirrors
 def SideEffect (block : IO Unit) : Composable Unit := fun c =>
   c.pendingSideEffects.modify (·.push block)
 
+/-- `derivedStateOf` remembered with lifecycle: the state is `dispose`d —
+detached from its upstream states — when this call leaves the composition or
+`k` changes. Plain `remember (derivedStateOf …)` would keep recomputing on
+every upstream write forever. -/
+def rememberDerivedKeyed [BEq κ] [BEq α] [Nonempty α] (k : κ) (compute : IO α) :
+    Composable (DerivedState α) := fun c =>
+  c.rememberObservedKeyed k do
+    let d ← derivedStateOf compute
+    pure (d, { onRemembered := pure (), onForgotten := d.dispose })
+
+/-- Keyless `rememberDerivedKeyed`: one derived state per composition
+position, disposed on leaving. Mirrors `remember { derivedStateOf { … } }`. -/
+def rememberDerived [BEq α] [Nonempty α] (compute : IO α) : Composable (DerivedState α) :=
+  rememberDerivedKeyed () compute
+
 end Compose

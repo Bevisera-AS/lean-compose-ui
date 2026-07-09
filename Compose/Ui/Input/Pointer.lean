@@ -51,8 +51,9 @@ structure PointerEvent where
   /-- SDL's consecutive-click counter on `press`/`release` (double-click = 2). -/
   clicks : UInt8 := 0
   /-- Wheel delta in SDL wheel ticks (`scroll` only), in *content* terms with
-  the OS scroll-direction preference already applied: positive `y` scrolls
-  toward the content start (up). -/
+  the OS scroll-direction preference already applied. SDL's axes point
+  opposite ways: positive `y` scrolls toward the content start (up), positive
+  `x` toward the content end (right). -/
   scrollDelta : Offset := .zero
   /-- Keyboard modifiers held at event time. -/
   mods : Sdl.Keymod := .none

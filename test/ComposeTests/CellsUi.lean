@@ -155,8 +155,8 @@ private def virtualizationFlow : IO Unit := cellsTest do
   assertMissing (.tag "rowh-1")               -- row headers scrolled along
   assertExists (.tag "rowh-40")
   assertExists (.tag "corner")                -- corner pinned both ways
-  -- 13 notches right ≈ 650 px ≈ 8 columns.
-  scrollBy (.tag "grid") ⟨-13, 0⟩
+  -- 13 notches right ≈ 650 px ≈ 8 columns (positive wheel x = right).
+  scrollBy (.tag "grid") ⟨13, 0⟩
   assertExists (.tag "cell-M40")              -- both axes virtualized
   assertMissing (.tag "cell-A40")
   assertExists (.tag "colh-M")                -- column headers followed
@@ -165,7 +165,7 @@ private def virtualizationFlow : IO Unit := cellsTest do
   assertExists (.tag "corner")
   -- Scrolling back restores the origin window.
   scrollBy (.tag "grid") ⟨0, 22⟩
-  scrollBy (.tag "grid") ⟨13, 0⟩
+  scrollBy (.tag "grid") ⟨-13, 0⟩
   assertExists (.tag "cell-A1")
   assertMissing (.tag "cell-M40")
 
@@ -174,13 +174,13 @@ private def virtualizationFlow : IO Unit := cellsTest do
 private def diagonalWheel : IO Unit := cellsTest do
   -- One diagonal wheel event: 13 notches right and 22 down at once. The
   -- horizontal container consumes x, the vertical one y — both axes move.
-  scrollBy (.tag "grid") ⟨-13, -22⟩
+  scrollBy (.tag "grid") ⟨13, -22⟩
   assertExists (.tag "cell-M40")
   assertMissing (.tag "cell-A1")
   assertExists (.tag "colh-M")                -- headers followed both axes
   assertExists (.tag "rowh-40")
   -- And diagonally back to the origin.
-  scrollBy (.tag "grid") ⟨13, 22⟩
+  scrollBy (.tag "grid") ⟨-13, 22⟩
   assertExists (.tag "cell-A1")
   assertMissing (.tag "cell-M40")
 

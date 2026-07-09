@@ -183,12 +183,14 @@ axis bubble to an outer one (partial movement at the boundary still consumes
 the axis in full, the documented pre-M14b behavior). -/
 private def scrollWheelHandler (state : ScrollState) (vertical : Bool) :
     Offset → IO Offset := fun delta => do
-  -- Positive wheel y = away from the user = toward the content start.
+  -- SDL's axes point opposite ways: positive wheel y = away from the user =
+  -- toward the content START (value decreases), but positive wheel x = to
+  -- the right = toward the content END (value increases) — so only y flips.
   let notches := if vertical then delta.y else delta.x
   if notches == 0 then return .zero
   -- A user wheel is a mutation too: cancel any running scroll animation.
   let _ ← state.interrupt
-  let moved ← state.scrollBy (-notches * wheelScrollStep)
+  let moved ← state.scrollBy ((if vertical then -notches else notches) * wheelScrollStep)
   if moved == 0 then return .zero
   return if vertical then ⟨0, notches⟩ else ⟨notches, 0⟩
 

@@ -62,8 +62,9 @@ def drag (m : Matcher) (delta : Offset) (steps : Nat := 4) : TestM Unit := do
   mouseUp (start + delta)
   awaitIdle
 
-/-- Wheel-scroll over the node's center; `delta` is in wheel ticks
-(positive `y` = away from the user = content scrolls up). Mirrors
+/-- Wheel-scroll over the node's center; `delta` is in wheel ticks (SDL
+conventions: positive `y` = away from the user = content scrolls up,
+positive `x` = content scrolls right). Mirrors
 `performMouseInput { scroll }`. -/
 def scrollBy (m : Matcher) (delta : Offset) : TestM Unit := do
   mouseWheel (← boundsOf m).center delta

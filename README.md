@@ -42,6 +42,8 @@ as demos.
   and actions synthesized through the *real* input router, with a fake clock.
 - **7GUIs demos** — Counter, Temperature Converter, Flight Booker, Timer,
   CRUD, Circle Drawer, and Cells (a virtualized formula spreadsheet).
+- **File manager** — breadcrumb navigation, a dirs-first sorted listing
+  (`LazyColumn` + scrollbar), and a file info panel over an injected `FsSource`.
 
 ## Quick start
 
@@ -57,7 +59,7 @@ Run a demo directly with `lake exe <name>`:
 ```
 demo-widgets   demo-overlays  demo-counter  demo-tempconv  demo-flight
 demo-timer     demo-crud      demo-circles  demo-cells     demo-desktop
-demo-smoke
+demo-files     demo-smoke
 ```
 
 ## Your first app

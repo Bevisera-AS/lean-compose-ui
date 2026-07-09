@@ -39,7 +39,9 @@ structure AppConfig where
   /-- Whether the user may resize the window. -/
   resizable : Bool := true
   /-- Request vsync-paced presentation (best effort; ignored where
-  unsupported, e.g. dummy drivers). -/
+  unsupported, e.g. dummy drivers). Under `Compose.application`, only one
+  vsync-requesting window paces the shared loop (`electVSyncPacer`); the others
+  present immediately to avoid serializing vblank waits. -/
   vsync : Bool := true
   /-- Every frame starts from this color. -/
   clearColor : Color := Color.white

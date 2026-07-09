@@ -101,6 +101,48 @@ def done (app : ApplicationScope) : IO Bool := do
 
 end ApplicationScope
 
+/-- The vsync interval each **vsync-requesting** window's renderer should carry
+under the single-pacer policy, in registry order (`none` = a window that opted
+out of vsync, left untouched).
+
+One vsynced `present` blocks to the next vblank; with every window vsynced, the
+loop's sequential present pass serializes those waits and N animating windows
+each run at ~fps/N. Instead the *first* vsync-requesting window paces (`1`) and
+the rest present immediately (`0`): the single vsynced present paces the whole
+loop at the display refresh, at the cost of possible tearing on the non-pacer
+windows. Single-window apps are unaffected — their one window is the pacer. -/
+def vsyncTargets (wantsVSync : Array Bool) : Array (Option Int32) := Id.run do
+  let mut chosen := false
+  let mut out := #[]
+  for w in wantsVSync do
+    if w then
+      out := out.push (some (if chosen then 0 else 1))
+      chosen := true
+    else
+      out := out.push none
+  return out
+
+-- One pacer among the vsync windows; opt-out windows (false) are never touched.
+#guard vsyncTargets #[true, true, true] == #[some 1, some 0, some 0]
+#guard vsyncTargets #[false, true, true] == #[none, some 1, some 0]
+#guard vsyncTargets #[false, false] == #[none, none]
+-- Single vsync window is itself the pacer (no behavior change for one window).
+#guard vsyncTargets #[true] == #[some 1]
+-- Re-election after the pacer (index 0) closes: a survivor takes over.
+#guard vsyncTargets #[true, false] == #[some 1, none]
+#guard vsyncTargets (#[true, true].eraseIdx! 0) == #[some 1]
+
+/-- Re-elect the single vsync pacer across the live windows (`vsyncTargets`):
+apply each vsync-requesting window's target to its renderer, leaving opt-out
+windows alone. Idempotent — run on every window open/close so the pacer role
+moves to a survivor when the current pacer leaves. `setVSync` is best-effort
+(drivers may reject it; the loop still functions, just without pacing). -/
+def electVSyncPacer (app : ApplicationScope) : IO Unit := do
+  let ws ← app.windows.get
+  for (e, t) in ws.zip (vsyncTargets (ws.map (·.config.vsync))) do
+    if let some target := t then
+      try e.ctx.renderer.setVSync target catch _ => pure ()
+
 /-- The action that exits the enclosing `Compose.application` (safe to call
 from handlers/effects). Throws when composed outside one. Mirrors
 `ApplicationScope.exitApplication`. -/
@@ -348,6 +390,7 @@ composable def windowImpl (dialog : Bool) (title : String) (width height : Dp)
           { id := ← ctx.window.id, ctx, config
             onClose := node.onClose
             close := node.closed.set true })
+        electVSyncPacer app -- a new window may join or displace the pacer
         return do
           node.ctxCell.set none
           if dialog then -- unset modal before teardown
@@ -357,6 +400,7 @@ composable def windowImpl (dialog : Bool) (title : String) (width height : Dp)
             catch _ => pure ()
           let wid ← ctx.window.id
           app.windows.modify (·.filter (·.id != wid))
+          electVSyncPacer app -- closing the pacer re-elects a survivor
           (← ctx.composition).dispose
           ctx.window.hide -- SDL windows are finalizer-destroyed; vanish now
       DisposableEffect title do -- retitle on change (first run is a no-op)

@@ -235,6 +235,51 @@ private def appLevelWidgetsThrow : IO Unit := do
     let ctx ← bootstrap "no-app" 100 80 (Window "w" 50 50) cfg
     (← ctx.composition).dispose
 
+/-- Per-window vsync config for the pacer test (real vsync requested). -/
+private def vcfg : AppConfig :=
+  { vsync := true, rendererName := some Sdl.softwareRenderer, clearColor := .white }
+
+/-- Number of live windows whose renderer currently reports vsync enabled, or
+`none` if the driver doesn't support querying vsync at all (then the assertions
+are skipped). -/
+private def vsyncEnabledCount (app : ApplicationScope) : IO (Option Nat) := do
+  let mut supported := false
+  let mut n := 0
+  for e in ← app.windows.get do
+    try
+      let v ← e.ctx.renderer.getVSync
+      supported := true
+      if v != 0 then n := n + 1
+    catch _ => pure ()
+  return if supported then some n else none
+
+/-- Exactly one vsync-requesting window paces the shared loop
+(`electVSyncPacer`), and closing the pacer re-elects a survivor — so N animating
+windows never serialize on N vblank waits. The pure election is `#guard`ed at
+`vsyncTargets`; this drives it through the real registry. -/
+private def singlePacerElection : IO Unit := do
+  let keepA ← mutableStateOf true
+  let app ← bootstrapApplication do
+    if ← keepA.get then Window "vs-a" 120 100 (config := vcfg)
+    Window "vs-b" 120 100 (config := vcfg)
+    Window "vs-c" 120 100 (config := vcfg)
+  let _ ← stepApplication app (idleCapMs := 5)
+  checkEq "three vsync windows registered" (← app.windows.get).size 3
+  match ← vsyncEnabledCount app with
+  | none => IO.println "note: driver does not report vsync; skipping pacer asserts"
+  | some n =>
+    checkEq "exactly one window paces vsync" n 1
+    let a ← entryTitled! app "vs-a"
+    checkEq "the first vsync window is the pacer" (← a.ctx.renderer.getVSync) 1
+    -- Close the pacer; a survivor must take over pacing.
+    keepA.set false
+    let _ ← stepApplication app (idleCapMs := 5)
+    checkEq "pacer window closed" (← app.windows.get).size 2
+    match ← vsyncEnabledCount app with
+    | some m => checkEq "re-election keeps exactly one pacer" m 1
+    | none => pure ()
+  (← app.composition).dispose
+
 /-- An idle application blocks on the event wait (no busy-spin): a workless
 pass sleeps out its cap. -/
 private def idlePassBlocks : IO Unit := do
@@ -262,6 +307,7 @@ def run : IO Unit := do
   titleAndSizeFollowParams
   appLocalsFlowIntoWindows
   appLevelWidgetsThrow
+  singlePacerElection
   idlePassBlocks
 
 end Tests.MultiWindow

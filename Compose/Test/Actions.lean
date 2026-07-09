@@ -29,6 +29,12 @@ def clickAt (pos : Offset) (button : Sdl.MouseButton := .left) : TestM Unit := d
 def click (m : Matcher) (button : Sdl.MouseButton := .left) : TestM Unit := do
   clickAt (← boundsOf m).center button
 
+/-- Secondary (right button) click the unique matching node at its center —
+the desktop context-menu gesture (`onSecondaryTap` / right-click). Mirrors
+`performMouseInput { rightClick() }`. -/
+def rightClick (m : Matcher) : TestM Unit :=
+  click m (button := .right)
+
 /-- Double-click the node's center: two press/release pairs with SDL's
 consecutive-click counter at 1 then 2, exactly what a real double-click
 delivers. -/

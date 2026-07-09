@@ -23,8 +23,7 @@ Byte offsets in the caret/hit helpers are **UTF-8 byte offsets** into the
 string (SDL_ttf's native unit), matching the model M11's `TextField` edits.
 -/
 
-/-- A mutation counter observable by tests: how many times the underlying
-`Ttf.Text` has actually been touched. -/
+/-- Convert a `Compose.Color` to SDL's byte-channel `Sdl.Color`. -/
 private def colorToSdl (c : Color) : Sdl.Color :=
   let (r, g, b, a) := c.toBytes
   ⟨r, g, b, a⟩

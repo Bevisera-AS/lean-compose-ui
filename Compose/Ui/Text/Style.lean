@@ -78,25 +78,25 @@ structure TextStyle where
 
 namespace TextStyle
 
-/-- Default one style onto `base`: fields of `self` left at the struct default
-inherit from `base`; everything else wins. Mirrors `TextStyle.merge` (with the
-struct default standing in for Compose's `Unspecified` — see the module
-docstring). -/
-def merge (base : TextStyle) (self : TextStyle) : TextStyle :=
+/-- Overlay `override` onto `base`: fields of `override` left at the struct
+default inherit from `base`; everything else wins. Mirrors `TextStyle.merge`
+(with the struct default standing in for Compose's `Unspecified` — see the
+module docstring). -/
+def merge (base : TextStyle) (override : TextStyle) : TextStyle :=
   let d : TextStyle := {}
-  { fontSize := if self.fontSize == d.fontSize then base.fontSize else self.fontSize
-    color := if self.color == d.color then base.color else self.color
-    weight := if self.weight == d.weight then base.weight else self.weight
-    lineHeight := self.lineHeight <|> base.lineHeight
-    align := if self.align == d.align then base.align else self.align }
+  { fontSize := if override.fontSize == d.fontSize then base.fontSize else override.fontSize
+    color := if override.color == d.color then base.color else override.color
+    weight := if override.weight == d.weight then base.weight else override.weight
+    lineHeight := override.lineHeight <|> base.lineHeight
+    align := if override.align == d.align then base.align else override.align }
 
 -- merging the default onto a base is the base (identity of the default)
 #guard TextStyle.merge { fontSize := 20, color := .red } {} == { fontSize := 20, color := .red }
--- a set field on `self` wins over `base`
+-- a set field on `override` wins over `base`
 #guard (TextStyle.merge { fontSize := 20 } { fontSize := 30 }).fontSize == (30 : Sp)
--- an unset field on `self` inherits from `base`
+-- an unset field on `override` inherits from `base`
 #guard (TextStyle.merge { color := .red } { fontSize := 30 }).color == Color.red
--- lineHeight inherits when `self` leaves it none, else wins
+-- lineHeight inherits when `override` leaves it none, else wins
 #guard (TextStyle.merge { lineHeight := some 24 } {}).lineHeight == some (24 : Sp)
 #guard (TextStyle.merge { lineHeight := some 24 } { lineHeight := some 30 }).lineHeight == some (30 : Sp)
 -- align inherits/overrides like a scalar field

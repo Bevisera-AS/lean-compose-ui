@@ -30,8 +30,10 @@ inductive Brush where
 
 namespace Brush
 
-/-- Convenience constructor for an evenly-spaced two-color gradient. -/
-def horizontalGradient (c0 c1 : Color) (start stop : Offset) : Brush :=
+/-- Convenience constructor for an evenly-spaced two-color gradient along the
+`start → stop` axis (any direction). Mirrors `Brush.linearGradient` with two
+stops. -/
+def gradient (c0 c1 : Color) (start stop : Offset) : Brush :=
   .linearGradient #[(0, c0), (1, c1)] start stop
 
 /-- Evaluate a sorted stop list at fraction `t ∈ [0, 1]`, linearly interpolating
@@ -80,17 +82,17 @@ def isSolid (b : Brush) : Bool :=
 
 #guard (Brush.solid .red).colorAt ⟨5, 5⟩ == .red
 #guard (Brush.solid .red).isSolid
-#guard !(Brush.horizontalGradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).isSolid
+#guard !(Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).isSolid
 -- Gradient endpoints reproduce the stop colors.
-#guard (Brush.horizontalGradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨0, 0⟩ == .black
-#guard (Brush.horizontalGradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨10, 0⟩ == .white
+#guard (Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨0, 0⟩ == .black
+#guard (Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨10, 0⟩ == .white
 -- Midpoint is the average.
-#guard (Brush.horizontalGradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨5, 0⟩ == Color.lerp .black .white 0.5
+#guard (Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨5, 0⟩ == Color.lerp .black .white 0.5
 -- Clamps beyond the endpoints.
-#guard (Brush.horizontalGradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨-5, 0⟩ == .black
-#guard (Brush.horizontalGradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨20, 0⟩ == .white
+#guard (Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨-5, 0⟩ == .black
+#guard (Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨20, 0⟩ == .white
 -- Off-axis point projects onto the axis (only the along-axis component counts).
-#guard (Brush.horizontalGradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨5, 99⟩ == Color.lerp .black .white 0.5
+#guard (Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨5, 99⟩ == Color.lerp .black .white 0.5
 -- Three-stop gradient samples the middle stop.
 #guard (Brush.linearGradient #[(0, .red), (0.5, .green), (1, .blue)] ⟨0, 0⟩ ⟨10, 0⟩).colorAt ⟨5, 0⟩ == .green
 -- Degenerate axis is constant (first stop).

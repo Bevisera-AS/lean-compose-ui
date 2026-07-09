@@ -71,15 +71,18 @@ composable def demoRow (launch : String → IO Unit) (entry : DemoEntry) :
         Button (launch entry.exe) (modifier := Modifier.testTag s!"launch-{entry.exe}")
           (content := Text "Launch")))
 
-/-- The gallery screen: a scrollable, titled list of `demoRow`s. `launch` is
-the per-row spawn action (production: fork the demo exe; tests: record it). -/
+/-- The gallery screen: a scrollable, titled list of `demoRow`s with a
+desktop scrollbar (auto-hides when idle). `launch` is the per-row spawn
+action (production: fork the demo exe; tests: record it). -/
 composable def galleryUi (launch : String → IO Unit) : Composable Unit := do
   let scroll ← rememberScrollState
   MaterialTheme (content :=
-    Column ((Modifier.fillMaxSize).padding (all := 16) |>.verticalScroll scroll)
-      (verticalArrangement := .spacedBy 10) (content := do
-        Text "compose-ui demos" (style := { fontSize := 24, weight := .bold })
-        Text "Pick a demo to launch." (style := { fontSize := 14 })
-        demos.forM (demoRow launch)))
+    Box (Modifier.fillMaxSize) (content := do
+      Column ((Modifier.fillMaxSize).padding (all := 16) |>.verticalScroll scroll)
+        (verticalArrangement := .spacedBy 10) (content := do
+          Text "compose-ui demos" (style := { fontSize := 24, weight := .bold })
+          Text "Pick a demo to launch." (style := { fontSize := 14 })
+          demos.forM (demoRow launch))
+      VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)))
 
 end Demos.Gallery

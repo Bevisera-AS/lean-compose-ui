@@ -475,6 +475,26 @@ private def textRouting : IO Unit := do
   check "text: focused node handles" (← r.im.textInput "hi")
   checkEq "text: delivered to the focused node only" (← log.get) #["a:hi"]
 
+/-- A modal scope popping back to a node that was removed while the modal was
+open clears focus instead of restoring the detached node. -/
+private def modalPopDetached : IO Unit := do
+  let show' ← mutableStateOf true
+  let r ← rig <| Tests.restartable 1 do
+    if ← show'.get then
+      withGroup 11 <| Column {} (content := do
+        leaf (Modifier.size 20 20 |>.focusable))
+    else
+      withGroup 12 (pure ())
+  let _ ← r.im.keyEvent { key := .tab }   -- focus the leaf
+  check "modal-pop: leaf focused" ((← r.im.focus.focused).isSome)
+  r.im.focus.pushModalScope 7
+  check "modal-pop: push saved and cleared" ((← r.im.focus.focused).isNone)
+  show'.set false
+  r.settle
+  r.im.focus.popModalScope 7
+  check "modal-pop: pop to a removed node clears instead of restoring"
+    ((← r.im.focus.focused).isNone)
+
 /-! ## clickable -/
 
 /-- `Modifier.clickable`: mouse click fires, Enter/Space fire when focused,
@@ -686,6 +706,49 @@ private def sdlTranslation : IO Unit := do
   let _ ← im.pointerEvent (moveTo 0 0)   -- keep `im` alive for the whole test
   (← ctx.composition).dispose
 
+/-! ## Input state across tree changes -/
+
+/-- Removing the focused node by a state write (no click, no Esc) clears
+focus through the normal path: `onFocusChanged false` fires, the M11
+text-client hook reports `false` (the IME session ends), and later key/text
+events reach nothing instead of the dead node. -/
+private def focusDetachClears : IO Unit := do
+  let hook ← IO.mkRef (#[] : Array Bool)
+  let focusLog ← IO.mkRef (#[] : Array Bool)
+  let keys ← IO.mkRef (0 : Nat)
+  let show' ← mutableStateOf true
+  let ctx ← bootstrap "compose-focus-detach" 200 150
+    (Tests.restartable 1 do
+      if ← show'.get then
+        withGroup 11 <| Box {} (content := do
+          leaf (Modifier.size 40 40 |>.focusable
+            |>.onFocusChanged (fun b => focusLog.modify (·.push b))
+            |>.onKeyEvent (fun _ => do keys.modify (· + 1); pure false)
+            |>.onTextInput (fun _ => pure true)))
+      else
+        withGroup 12 (pure ()))
+    cfg
+  let im ← installInput ctx (onTextClientFocused := fun b => hook.modify (·.push b))
+  let _ ← step ctx cfg
+  let _ ← im.keyEvent { key := .tab }   -- keyboard focus, no click involved
+  checkEq "focus-detach: tab focused a text client" (← hook.get) #[true]
+  checkEq "focus-detach: focus gained" (← focusLog.get) #[true]
+  let _ ← im.keyEvent { key := .a }
+  checkEq "focus-detach: keys route to the focused node" (← keys.get) 1
+  -- Remove the focused node by a state write.
+  show'.set false
+  let _ ← step ctx cfg
+  check "focus-detach: focus cleared on removal" ((← im.focus.focused).isNone)
+  checkEq "focus-detach: onFocusChanged fired false" (← focusLog.get) #[true, false]
+  checkEq "focus-detach: text-client hook fired false (IME stops)"
+    (← hook.get) #[true, false]
+  -- Later events go nowhere — not to the dead node's handlers.
+  check "focus-detach: key events unhandled after removal"
+    (!(← im.keyEvent { key := .a }))
+  checkEq "focus-detach: dead handler never ran" (← keys.get) 1
+  check "focus-detach: text input unhandled after removal" (!(← im.textInput "x"))
+  (← ctx.composition).dispose
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -712,5 +775,7 @@ def run : IO Unit := do
   missingScheduler
   raceSemantics
   sdlTranslation
+  modalPopDetached
+  focusDetachClears
 
 end Tests.Input

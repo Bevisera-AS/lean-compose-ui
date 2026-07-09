@@ -50,22 +50,32 @@ structure InputManager where
 
 namespace InputManager
 
+/-- Applier detach hook: `subtree` is leaving the tree (fired before its
+parent links are severed). Focus inside it is cleared through the normal
+path, so the IME/text-client lifecycle fires. -/
+def nodeDetached (im : InputManager) (subtree : LayoutNode) : IO Unit :=
+  im.focus.clearIfDetaching subtree
+
 /-- Fresh manager over `root`. `onFocusTarget` runs after every focus change
 (see `FocusManager`); `installInput` uses it for the M11 text-input hook.
 `overlayKeys` shares the window's overlay key-handler registry (a fresh empty
-one when absent — headless router tests). -/
+one when absent — headless router tests). Installs itself as `root`'s detach
+hook (single consumer — re-installing input rebinds it). -/
 def create (root : LayoutNode) (cursor : CursorSetter)
     (onFocusTarget : Option LayoutNode → IO Unit := fun _ => pure ())
-    (overlayKeys : Option (IO.Ref (Array OverlayKeyHandler)) := none) : IO InputManager :=
-  return { root
-           focus := ← FocusManager.create root onFocusTarget
-           hover := ← HoverState.create cursor
-           capture := ← IO.mkRef #[]
-           buttonsHeld := ← IO.mkRef .none
-           lastPos := ← IO.mkRef .zero
-           overlayKeys := ← match overlayKeys with
-             | some r => pure r
-             | none => IO.mkRef #[] }
+    (overlayKeys : Option (IO.Ref (Array OverlayKeyHandler)) := none) : IO InputManager := do
+  let im : InputManager :=
+    { root
+      focus := ← FocusManager.create root onFocusTarget
+      hover := ← HoverState.create cursor
+      capture := ← IO.mkRef #[]
+      buttonsHeld := ← IO.mkRef .none
+      lastPos := ← IO.mkRef .zero
+      overlayKeys := ← match overlayKeys with
+        | some r => pure r
+        | none => IO.mkRef #[] }
+  root.setOnDetach im.nodeDetached
+  return im
 
 /-- Mask of a possibly-absent button. -/
 private def maskOf : Option Sdl.MouseButton → Sdl.MouseButtonFlags

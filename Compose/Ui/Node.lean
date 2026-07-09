@@ -145,6 +145,12 @@ structure LayoutNodeData where
   newly needs remeasuring. Mirrors `LayoutNode.owner?.onRequestMeasure`
   scheduling a frame. -/
   onRequestRemeasure : Option (IO Unit) := none
+  /-- Owner hook, set on the *root* node by the input pipeline: called with
+  each subtree root the applier is about to detach (`remove`/composition
+  clear), *before* `severParentLinks` cuts its parent links and cancels its
+  pointer coroutines — so focus/hover state referencing removed nodes can be
+  released through the normal notification paths. -/
+  onDetach : Option (LayoutNode → IO Unit) := none
   /-- Two-way registration on the states read by measure/placement. -/
   registry : ObservationRegistry
 
@@ -220,6 +226,11 @@ walk reaches this node from anywhere in its tree (see
 def setOnRequestRemeasure (n : LayoutNode) (notify : IO Unit) : IO Unit :=
   n.modifyData fun d => { d with onRequestRemeasure := some notify }
 
+/-- Install the owner detach hook on a root node (single consumer — the input
+pipeline; see `LayoutNodeData.onDetach`). -/
+def setOnDetach (n : LayoutNode) (notify : LayoutNode → IO Unit) : IO Unit :=
+  n.modifyData fun d => { d with onDetach := some notify }
+
 /-- Set the node's position (from a parent placement block). -/
 def setPosition (n : LayoutNode) (pos : IntOffset) : IO Unit :=
   n.modifyData fun d => { d with position := pos }
@@ -251,7 +262,9 @@ def applier (root : LayoutNode) : Applier LayoutNode where
     p.markNeedsRemeasure
   remove p i count := do
     let d ← p.data
+    let onDetach := (← root.data).onDetach
     for j in [i : i + count] do
+      if let some notify := onDetach then notify d.children[j]!
       d.children[j]!.severParentLinks
     p.modifyData fun dd => { dd with children := removeRange dd.children i count }
     p.markNeedsRemeasure
@@ -259,7 +272,9 @@ def applier (root : LayoutNode) : Applier LayoutNode where
     p.modifyData fun d => { d with children := moveRange d.children src dst count }
     p.markNeedsRemeasure
   -- Composition disposal detaches the whole tree (cancels input coroutines).
-  onClear := root.severParentLinks
+  onClear := do
+    if let some notify := (← root.data).onDetach then notify root
+    root.severParentLinks
 
 /-! ## Measurement -/
 

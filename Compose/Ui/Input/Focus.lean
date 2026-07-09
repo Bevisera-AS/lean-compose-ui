@@ -81,6 +81,20 @@ def requestFocus (fm : FocusManager) (target : Option LayoutNode) : IO Unit := d
 /-- Clear focus. Mirrors `FocusManager.clearFocus`. -/
 def clearFocus (fm : FocusManager) : IO Unit := fm.requestFocus none
 
+/-- Whether `n` is still in the manager's tree (its parent chain reaches the
+root — false once `severParentLinks` detached it). -/
+def isAttached (fm : FocusManager) (n : LayoutNode) : IO Bool :=
+  n.isDescendantOf fm.root
+
+/-- A subtree is about to be detached (the applier's detach hook, parent
+links still intact): when the focused node is inside it, clear focus through
+the normal path, so `onFocusChanged false` and `onFocusTarget` (the IME stop)
+fire — removal behaves like a click-away, and key/text routing never reaches
+a dead node. -/
+def clearIfDetaching (fm : FocusManager) (subtree : LayoutNode) : IO Unit := do
+  if let some f ← fm.focusedRef.get then
+    if ← f.isDescendantOf subtree then fm.clearFocus
+
 /-- The subtree root of the topmost open modal scope (`Modifier.focusScope` —
 the last such node in preorder, since overlay layers compose after the main
 content), or `none` when no modal is open. -/
@@ -139,12 +153,14 @@ def pushModalScope (fm : FocusManager) (id : Nat) : IO Unit := do
   fm.clearFocus
 
 /-- The modal overlay `id` closed: restore the focus saved when it opened (if
-that node was focused before). -/
+that node was focused before) — unless that node has since left the tree, in
+which case focus is cleared instead of resurrecting it. -/
 def popModalScope (fm : FocusManager) (id : Nat) : IO Unit := do
   let st ← fm.savedFocus.get
   let saved := (st.find? (·.1 == id)).bind (·.2)
   fm.savedFocus.set (st.filter (·.1 != id))
-  if saved.isSome then fm.requestFocus saved
+  if let some n := saved then
+    if ← fm.isAttached n then fm.requestFocus (some n) else fm.clearFocus
 
 /-- Route a key event: the focused node's `onKeyEvent` handlers first
 (innermost first), then its ancestors' bottom-up; `true` = consumed. `false`

@@ -58,6 +58,15 @@ partial def originInRoot (n : LayoutNode) : IO Offset := do
   | some p =>
     return (← p.originInRoot) + (← p.data).contentOffset.toOffset + d.position.toOffset
 
+/-- Whether `n` is `anc` itself or below it, by walking `n`'s parent chain
+(node identity is `nodeId`). With `anc` a tree root this is an *attachment*
+test: a node past `severParentLinks` reaches no root. -/
+partial def isDescendantOf (n anc : LayoutNode) : IO Bool := do
+  if (← n.nodeId) == (← anc.nodeId) then return true
+  match (← n.data).parent with
+  | some p => p.isDescendantOf anc
+  | none => return false
+
 /-- Hit-test one node's own chain at `p` (node-outer coordinates): the hit
 pointer/focus element indices, and whether the point survives every `clip`
 so children may be hit. Elements *outer* to a failed clip keep their hits;

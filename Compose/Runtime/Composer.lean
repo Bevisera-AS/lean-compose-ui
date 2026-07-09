@@ -25,6 +25,12 @@ node group, the sum over children otherwise. During composition each open
 group's `Frame.nodeIndex` tracks how many nodes precede the cursor inside the
 current node parent, which is exactly the applier index for the next
 insert/remove/move.
+
+A throw escaping composable content unwinds the open groups (`abortTo`):
+freshly inserted groups are undone and severed, surviving open scopes are
+invalidated for retry, so the applier and the group tree always agree.
+Pass-level rollback (pending effects, `composed`) lives in
+`Compose.Runtime.Recomposer` — see its module docstring for the contract.
 -/
 
 /-- Mix two group keys (splitmix-style multiply-add); used to derive child
@@ -194,6 +200,17 @@ partial def severSubtree (g : Group) : IO Unit := do
   g.modifyData fun d =>
     { d with parent := none, scope := none, children := #[], slots := #[],
              node := none, nodes := 0 }
+
+/-- Number of nodes a subtree has actually inserted into its node parent.
+`nodes` counts are only finalized at `endGroup`, so removal after an aborted
+pass counts what is really in the applier: a node group's `node` is recorded
+at insert time (`emitNode`) and cleared by `severSubtree` on removal. -/
+partial def liveNodeCount (g : Group) : IO Nat := do
+  let gd ← g.data
+  if gd.isNode then
+    return if gd.node.isSome then 1 else 0
+  else
+    gd.children.foldlM (fun acc ch => return acc + (← liveNodeCount ch)) 0
 
 /-- One open group during composition: the group plus its child/slot cursors.
 
@@ -412,7 +429,9 @@ def endGroup (c : Composer) : IO Unit := do
     for j in [f.childCursor : gd.children.size] do
       let ch := gd.children[j]!
       c.collectDisposals ch
-      let n := (← ch.data).nodes
+      -- Count what is actually in the applier (`nodes` can be stale for a
+      -- subtree an aborted pass touched).
+      let n ← liveNodeCount ch
       if n > 0 then
         c.applier.remove np f.nodeIndex n
       severSubtree ch
@@ -434,6 +453,40 @@ def endGroup (c : Composer) : IO Unit := do
   else
     c.modifyTopFrame fun pf =>
       { pf with childCursor := pf.childCursor + 1, nodeIndex := pf.nodeIndex + newNodes }
+
+/-- Index of the child with identity `gid` in `p`'s children, if present. -/
+private def childIndexOf (p : Group) (gid : Nat) : IO (Option Nat) := do
+  let pd ← p.data
+  for j in [0 : pd.children.size] do
+    if (← pd.children[j]!.data).gid == gid then
+      return some j
+  return none
+
+/-- Unwind open groups after an exception escaped composable content, popping
+frames down to `depth`: groups freshly inserted by the failed pass are undone
+(applier nodes removed, group erased from its parent, subtree severed), and
+restart scopes of surviving open groups are invalidated so a retry re-runs
+them instead of skipping over half-updated content. Leaves the applier and
+the group tree agreeing (no ghost nodes); the caller rethrows. -/
+def abortTo (c : Composer) (depth : Nat) : IO Unit := do
+  while (← c.frames.get).size > depth do
+    let fs ← c.frames.get
+    let f := fs.back!
+    c.frames.set fs.pop
+    let gd ← f.group.data
+    if f.inserting then
+      let n ← liveNodeCount f.group
+      if n > 0 then
+        -- The parent's cursor still points at this group's first node (it
+        -- only advances at child `endGroup`).
+        let base := ((← c.frames.get).back?.map (·.nodeIndex)).getD 0
+        c.applier.remove (← c.currentNodeParent) base n
+      if let some p := gd.parent then
+        if let some j ← childIndexOf p gd.gid then
+          p.modifyData fun d => { d with children := d.children.eraseIdx! j }
+      severSubtree f.group
+    else if let some s := gd.scope then
+      s.valid.set false
 
 private def advanceSlot (c : Composer) : IO Unit :=
   c.modifyTopFrame fun fr => { fr with slotCursor := fr.slotCursor + 1 }
@@ -578,13 +631,19 @@ def readRouter (c : Composer) : ObservedHandle → IO Unit := fun h => do
 end Composer
 
 /-- Run `body` in a group keyed by `key` — the explicit form of what the
-`composable` macro injects around control-flow branches. Mirrors
+`composable` macro injects around control-flow branches. A throw in `body`
+unwinds the group (`Composer.abortTo`) and propagates. Mirrors
 `Composer.startReplaceGroup`/`endReplaceGroup`. -/
 def withGroup (key : UInt64) (body : Composable α) : Composable α := fun c => do
+  let depth := (← c.frames.get).size
   let _ ← c.startGroup key (isNode := false)
-  let a ← body.run c
-  c.endGroup
-  return a
+  try
+    let a ← body.run c
+    c.endGroup
+    return a
+  catch e =>
+    c.abortTo depth
+    throw e
 
 /-- Run `body` in a group keyed by (a hash of) the data key `k`: gives items
 identity across reorder, so moved content keeps its state and nodes move
@@ -609,23 +668,32 @@ inserted at the exact index among its siblings), `update` runs every pass
 Mirrors `androidx.compose.runtime.ComposeNode`. -/
 def emitNode (create : IO NodeVal) (update : NodeVal → Composable Unit)
     (content : Composable Unit) : Composable Unit := fun c => do
+  let depth := (← c.frames.get).size
   -- The insertion index is the parent frame's cursor position, read before
   -- the node group's own frame is pushed.
   let parentIdx := (← c.topFrame).nodeIndex
   let g ← c.startGroup nodeGroupKey (isNode := true)
-  let gd ← g.data
-  let node ← match gd.node with
-    | some n => pure n
-    | none => do
-      let n ← create
-      g.modifyData fun d => { d with node := some n }
-      c.applier.insert (← c.currentNodeParent) parentIdx n
-      pure n
-  c.nodeParents.modify (·.push node)
-  update node |>.run c
-  content.run c
-  c.endGroup
-  c.nodeParents.modify (·.pop)
+  try
+    let gd ← g.data
+    let node ← match gd.node with
+      | some n => pure n
+      | none => do
+        let n ← create
+        c.applier.insert (← c.currentNodeParent) parentIdx n
+        -- Record node and count at insert time (not `endGroup`) so a throw
+        -- in `content` cannot leave a node the group tree does not count.
+        g.modifyData fun d => { d with node := some n, nodes := 1 }
+        pure n
+    c.nodeParents.modify (·.push node)
+    try
+      update node |>.run c
+      content.run c
+      c.endGroup
+    finally
+      c.nodeParents.modify (·.pop)
+  catch e =>
+    c.abortTo depth
+    throw e
 
 /-- Composable-level `Composer.startRestartGroup`; with `shouldSkip`,
 `skipToGroupEnd` and `endRestartGroup` this is the exact surface the

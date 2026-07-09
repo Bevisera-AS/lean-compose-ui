@@ -13,6 +13,18 @@ callbacks dispatch only after the whole drain applies successfully.
 
 `Composition` is the public entry point: create over an applier, set content,
 dispose. Mirrors `androidx.compose.runtime.Recomposer`/`Composition`.
+
+**Exception safety.** A throw inside composable content propagates to the
+caller (`Composition.create`/`setContent`/`drain`) and never corrupts the
+runtime: open groups unwind (`Composer.abortTo`), so the applier and the
+group tree agree; remembers/side effects queued by the failed pass are
+abandoned, while already-collected forgets (whose removals did apply) stay
+queued for the next successful apply; a failed *initial* composition rolls
+back to a clean slate (`composed` stays false, retry composes from scratch);
+a failed re-run leaves its scope invalid and queued, so a later drain
+retries once the offending state changes. (Compose's `onAbandoned` protocol
+is not modeled: a `DisposableEffect` whose pass never applied simply never
+runs either end.)
 -/
 
 /-- Drives recomposition for one composition. Mirrors
@@ -80,7 +92,21 @@ def rerunScope (r : Recomposer) (s : RecomposeScope) : IO Unit := do
   c.locals.set (← s.locals.get)
   c.pendingEnter.set (some (s.group, base))
   c.standaloneRerun.set true
+  let remembersMark ← c.pendingRemembers.get
+  let effectsMark ← c.pendingSideEffects.get
   try (← s.rerun.get)
+  catch e =>
+    -- Failed re-run: unwind to a consistent tree, abandon this pass's
+    -- remembers/side effects (their slots never applied; collected forgets
+    -- stay — those removals did apply), and leave the scope invalid and
+    -- queued so a later drain retries once the offending state changes.
+    c.abortTo 0
+    c.pendingEnter.set none
+    c.pendingRemembers.set remembersMark
+    c.pendingSideEffects.set effectsMark
+    s.valid.set false
+    c.invalidations.modify fun q => if q.any (·.id == s.id) then q else q.push s
+    throw e
   finally c.standaloneRerun.set false
 
 private partial def drainLoop (r : Recomposer) (fuel : Nat) : IO Unit := do
@@ -126,20 +152,38 @@ structure Composition where
 namespace Composition
 
 /-- (Re)compose from the root group, matching against the existing tree, then
-drain any invalidations raised while composing. -/
+drain any invalidations raised while composing. `composed` flips only after a
+successful initial pass; a throw rolls that pass fully back (see the module
+docstring for the exception contract). -/
 private def composeRoot (comp : Composition) : IO Unit := do
   let c := comp.composer
   let inserting := !(← comp.composed.get)
-  comp.composed.set true
   c.frames.set #[{ group := c.rootGroup, inserting }]
   c.nodeParents.set #[c.applier.root]
   c.scopeStack.set #[]
   c.locals.set .empty
   c.pendingEnter.set none
   c.standaloneRerun.set false
-  withReadObserver c.readRouter do
-    (← comp.content.get).run c
-    c.endGroup
+  let remembersMark ← c.pendingRemembers.get
+  let effectsMark ← c.pendingSideEffects.get
+  try
+    withReadObserver c.readRouter do
+      (← comp.content.get).run c
+      c.endGroup
+    comp.composed.set true
+  catch e =>
+    c.abortTo 0
+    if inserting then
+      -- Failed initial pass: nothing was applied — drop everything it
+      -- queued so the retry composes from a clean slate.
+      c.pendingForgets.set #[]
+      c.pendingRemembers.set #[]
+      c.pendingSideEffects.set #[]
+      c.invalidations.set #[]
+    else
+      c.pendingRemembers.set remembersMark
+      c.pendingSideEffects.set effectsMark
+    throw e
   comp.recomposer.drainRecompositions
 
 /-- Create a composition over `applier` and compose `content` into it

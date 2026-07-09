@@ -615,6 +615,63 @@ def removalSeversSubtree : IO Unit := do
     check "sever: disposed tree parent cleared" gd.parent.isNone
   | none => check "sever: recaptured group" false
 
+/-- A throw during initial composition propagates and rolls the runtime back
+to a clean slate: no ghost nodes in the applier, no lifecycle callbacks from
+the failed pass, and a fresh composition over the same applier works. -/
+def throwOnInitialComposition : IO Unit := do
+  let t ← TestTree.create
+  let events ← IO.mkRef (#[] : Array String)
+  checkThrows "throw-init: error propagates" <|
+    Composition.create t.applier do
+      let _ ← rememberObserved (logObserver events "x")
+      emitLabeled t "a"
+      throw (IO.userError "boom")
+  checkEq "throw-init: applier rolled back" (← t.render) "root"
+  checkEq "throw-init: no lifecycle callbacks ran" (← events.get) (#[] : Array String)
+  let comp ← Composition.create t.applier do
+    let _ ← rememberObserved (logObserver events "x")
+    emitLabeled t "a"
+  checkEq "throw-init: retry composes cleanly" (← t.render) "(root a)"
+  checkEq "throw-init: effects ran once" (← events.get) #["+x"]
+  comp.dispose
+  checkEq "throw-init: dispose balanced" (← events.get) #["+x", "-x"]
+
+/-- A throw during recomposition propagates and unwinds the failed pass: the
+applier and group tree stay consistent, the pass's pending effects are
+abandoned (nothing launched, nothing double-run), and the scope recovers once
+the offending state changes. -/
+def throwDuringRecomposition : IO Unit := do
+  let t ← TestTree.create
+  let boom ← mutableStateOf false
+  let events ← IO.mkRef (#[] : Array String)
+  let comp ← Composition.create t.applier <| restartable 1 do
+    DisposableEffect "outer" do
+      events.modify (·.push "start outer")
+      pure (events.modify (·.push "stop outer"))
+    emitLabeled t "a"
+    if ← boom.get then
+      withGroup 11 do
+        DisposableEffect "inner" do
+          events.modify (·.push "start inner")
+          pure (events.modify (·.push "stop inner"))
+        emitLabeled t "x"
+        throw (IO.userError "boom")
+    else
+      withGroup 12 (pure ())
+    emitLabeled t "b"
+  checkEq "throw-rec: initial tree" (← t.render) "(root a b)"
+  checkEq "throw-rec: initial effects" (← events.get) #["start outer"]
+  boom.set true
+  checkThrows "throw-rec: error propagates from drain" comp.drain
+  checkEq "throw-rec: applier consistent after abort" (← t.render) "(root a b)"
+  checkEq "throw-rec: failed pass launched nothing" (← events.get) #["start outer"]
+  boom.set false
+  comp.drain
+  checkEq "throw-rec: recovers once the state changes" (← t.render) "(root a b)"
+  checkEq "throw-rec: no double-started effects" (← events.get) #["start outer"]
+  comp.dispose
+  checkEq "throw-rec: dispose balanced" (← events.get) #["start outer", "stop outer"]
+
 /-- All Runtime suites. -/
 def run : IO Unit := do
   rememberSame
@@ -643,5 +700,7 @@ def run : IO Unit := do
   derivedStateUnsubscribes
   derivedKeyChangeDisposes
   removalSeversSubtree
+  throwOnInitialComposition
+  throwDuringRecomposition
 
 end Tests.Runtime

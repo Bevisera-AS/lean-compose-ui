@@ -61,26 +61,33 @@ private partial def invalidateSubtreeScopes (g : Group) : IO Unit := do
 def CompositionLocalProvider (l : CompositionLocal α) (value : α)
     (content : Composable Unit) : Composable Unit := fun c => do
   have : Nonempty α := ⟨value⟩
+  let depth := (← c.frames.get).size
   let g ← c.startGroup (mixKeys providerGroupSalt l.id.toUInt64) (isNode := false)
   let saved ← c.locals.get
-  let entry ←
-    if l.isStatic then do
-      -- Track the previously provided value; on change, recompose the subtree.
-      let prev ← c.remember (IO.mkRef value)
-      unless l.eq (← prev.get) value do
-        prev.set value
-        invalidateSubtreeScopes g
-      pure (SlotVal.mk value)
-    else do
-      -- The cell's identity is stable across recompositions; only its value
-      -- changes, invalidating exactly the registered readers.
-      let cell ← c.remember (mutableStateOfPolicy l.eq value)
-      cell.set value
-      pure (SlotVal.mk cell)
-  c.locals.set (saved.insert l.id entry)
-  content.run c
-  c.locals.set saved
-  c.endGroup
+  try
+    let entry ←
+      if l.isStatic then do
+        -- Track the previously provided value; on change, recompose the subtree.
+        let prev ← c.remember (IO.mkRef value)
+        unless l.eq (← prev.get) value do
+          prev.set value
+          invalidateSubtreeScopes g
+        pure (SlotVal.mk value)
+      else do
+        -- The cell's identity is stable across recompositions; only its value
+        -- changes, invalidating exactly the registered readers.
+        let cell ← c.remember (mutableStateOfPolicy l.eq value)
+        cell.set value
+        pure (SlotVal.mk cell)
+    c.locals.set (saved.insert l.id entry)
+    content.run c
+    c.locals.set saved
+    c.endGroup
+  catch e =>
+    -- A failed pass must not leave the outer scope shadowed.
+    c.locals.set saved
+    c.abortTo depth
+    throw e
 
 /-- Read the current value for this local: the innermost provided value, or
 the default. Dynamic locals register the read with the ambient observer.

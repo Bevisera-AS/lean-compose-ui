@@ -19,6 +19,7 @@ import ComposeTests.FlightBooker
 import ComposeTests.CellsUi
 import ComposeTests.Timer
 import ComposeTests.Crud
+import ComposeTests.CircleDrawer
 
 /-!
 # Runtime test entry point
@@ -52,4 +53,5 @@ def main : IO UInt32 := do
   Harness.group "CellsUi" CellsUi.run
   Harness.group "Timer" Timer.run
   Harness.group "Crud" Crud.run
+  Harness.group "CircleDrawer" CircleDrawer.run
   Harness.summary

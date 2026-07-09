@@ -64,6 +64,13 @@ structure DrawContext where
 Compose's `DrawScope`. -/
 abbrev DrawM (α : Type) := ReaderT DrawContext IO α
 
+/-- Debug counter: total shape tessellations since process start, bumped by
+every immediate-mode shape draw in `DrawScope` and by every miss of the draw
+walk's per-node mesh cache (`LayoutNode.cachedMesh`). Test-visible so perf
+tests can assert a static shape tessellates once, not once per rendered frame.
+No Compose analog (Skia tessellates internally). -/
+initialize tessellationCount : IO.Ref Nat ← IO.mkRef 0
+
 namespace DrawScope
 
 /-! ## Coordinate / mesh conversion helpers -/
@@ -79,15 +86,15 @@ private def toSdlRect (r : Rect) : Sdl.Rect :=
   ⟨l, t, max 0 (rt - l), max 0 (bt - t)⟩
 
 /-- Convert a `Mesh` (local coordinates) to SDL geometry, folding in the ambient
-`translation` and `alpha`. Feather vertices keep alpha `0` after scaling. -/
+`translation` and `alpha`. Feather vertices keep alpha `0` after scaling; the
+index buffer is already `Int32`-encoded and passes through untouched. -/
 private def meshToGeometry (m : Mesh) (translation : Offset) (alpha : Float32) :
     Array Sdl.Vertex × Array Int32 :=
   let verts := m.vertices.map fun v =>
     ({ position := ⟨v.pos.x + translation.x, v.pos.y + translation.y⟩
        color := ⟨v.color.r, v.color.g, v.color.b, v.color.a * alpha⟩
        texCoord := ⟨0, 0⟩ } : Sdl.Vertex)
-  let idx := m.indices.map (Int32.ofNat ·)
-  (verts, idx)
+  (verts, m.indices)
 
 /-- Recolor a mesh's vertices from `brush`, evaluated at each vertex's local
 position; solid brushes are returned unchanged. Feather vertices (alpha `0`)
@@ -108,14 +115,22 @@ private def shapeMesh (brush : Brush) (mk : Color → Mesh) : Mesh :=
   | .solid c => mk c
   | .linearGradient .. => paintMesh (mk Color.white) brush
 
-/-- Emit a mesh through `Renderer.geometry` with alpha blending. No-op for an
-empty mesh. -/
-private def drawMesh (m : Mesh) : DrawM Unit := do
+/-- Emit a pre-tessellated `Mesh` (local coordinates) through
+`Renderer.geometry` with alpha blending, folding in the ambient translation and
+alpha. No-op for an empty mesh. The draw walk emits cached background/border
+meshes through here (see `LayoutNode.cachedMesh`); the immediate-mode shape
+draws below tessellate fresh and pass through it too. -/
+def drawMesh (m : Mesh) : DrawM Unit := do
   let ctx ← read
   if m.isEmpty then return
   let (verts, idx) := meshToGeometry m ctx.translation ctx.alpha
   ctx.renderer.setDrawBlendMode .blend
   ctx.renderer.geometry none verts idx
+
+/-- Bump the debug `tessellationCount` (immediate-mode shape draws tessellate
+on every call). -/
+private def countTessellation : DrawM Unit :=
+  tessellationCount.modify (· + 1)
 
 /-! ## Public draw API (mirrors `DrawScope`) -/
 
@@ -134,13 +149,16 @@ def drawRect (brush : Brush) (topLeft : Offset) (size : Size)
     ctx.renderer.setDrawColor r g b a
     ctx.renderer.fillRect (some ⟨tl.x, tl.y, size.width, size.height⟩)
   | .fill, _ =>
+    countTessellation
     drawMesh (shapeMesh brush (fun c => roundRectFill (RoundRect.ofRect (Rect.ofOffsetSize topLeft size)) c))
   | .stroke w, _ =>
+    countTessellation
     drawMesh (shapeMesh brush (fun c => roundRectStroke (RoundRect.ofRect (Rect.ofOffsetSize topLeft size)) w c))
 
 /-- Draw a rounded rectangle (fill or stroke) via the feathered tessellator.
 Mirrors `DrawScope.drawRoundRect`. -/
-def drawRoundRect (brush : Brush) (rr : RoundRect) (style : DrawStyle := .fill) : DrawM Unit :=
+def drawRoundRect (brush : Brush) (rr : RoundRect) (style : DrawStyle := .fill) : DrawM Unit := do
+  countTessellation
   match style with
   | .fill => drawMesh (shapeMesh brush (fun c => roundRectFill rr c))
   | .stroke w => drawMesh (shapeMesh brush (fun c => roundRectStroke rr w c))
@@ -151,6 +169,7 @@ geometrically clips to that shape (the bounded Material ripple). Mirrors
 def drawCircle (brush : Brush) (center : Offset) (radius : Float32)
     (style : DrawStyle := .fill) : DrawM Unit := do
   let ctx ← read
+  countTessellation
   match style with
   | .fill =>
     match ctx.clipShape with
@@ -162,11 +181,13 @@ def drawCircle (brush : Brush) (center : Offset) (radius : Float32)
 `startRad`/`sweepRad` are in radians. Mirrors `DrawScope.drawArc`
 (stroke style). -/
 def drawArc (brush : Brush) (center : Offset) (radius startRad sweepRad width : Float32) :
-    DrawM Unit :=
+    DrawM Unit := do
+  countTessellation
   drawMesh (shapeMesh brush (fun c => arcStroke center radius startRad sweepRad width c))
 
 /-- Draw a straight line of the given `width`. Mirrors `DrawScope.drawLine`. -/
-def drawLine (brush : Brush) (p0 p1 : Offset) (width : Float32) : DrawM Unit :=
+def drawLine (brush : Brush) (p0 p1 : Offset) (width : Float32) : DrawM Unit := do
+  countTessellation
   drawMesh (shapeMesh brush (fun c => line p0 p1 width c))
 
 /-! ## Scoping combinators -/

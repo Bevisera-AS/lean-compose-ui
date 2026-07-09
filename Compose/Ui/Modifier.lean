@@ -605,8 +605,8 @@ def parentData (m : Modifier) : ParentData :=
 /-- Whether two chains are interchangeable *for measurement*: same length
 and, position by position, equal layout elements (draw/pointer/focus/
 semantics elements may differ — they never affect geometry, so cached
-measurements and resolved element regions stay valid). Drives
-`needsRemeasure` vs `needsRedraw` on node update. -/
+measurements and resolved element regions stay valid). Decides whether a
+node update must invalidate measurement. -/
 def layoutEq (a b : Modifier) : Bool :=
   a.elems.size == b.elems.size &&
   (a.elems.zip b.elems).all fun (x, y) =>

@@ -63,14 +63,35 @@ private def rrInset (rr : RoundRect) (d : Float32) : RoundRect :=
 #guard rrInset (RoundRect.circular ⟨0, 0, 10, 10⟩ 3) 1 == RoundRect.circular ⟨1, 1, 9, 9⟩ 2
 #guard rrInset (RoundRect.circular ⟨0, 0, 10, 10⟩ 1) 2 == RoundRect.circular ⟨2, 2, 8, 8⟩ 0
 
+/-- The tessellated mesh for draw element `elemIdx` of `n`, reused from the
+node's `meshCache` while `key` is unchanged; a miss tessellates, bumps
+`Draw.tessellationCount`, and stores the entry. Because the key holds the
+tessellation's *fully resolved* inputs (shape × size px × density fold into
+the `RoundRect`, the paint into the color, a border's `Dp` width × density
+into the pixel width), any size, shape, brush, or density change misses and
+re-tessellates — and nothing else does. Compose analog:
+`Modifier.background`/`Modifier.border` caching their `Outline`/`Path` in
+`drawWithCache` until size or shape changes. -/
+def cachedMesh (n : LayoutNode) (elemIdx : Nat) (key : Draw.MeshKey) : IO Draw.Mesh := do
+  let d ← n.data
+  if let some e := d.meshCache.find? (·.elemIdx == elemIdx) then
+    if e.key == key then
+      return e.mesh
+  let mesh := key.tessellate
+  Draw.tessellationCount.modify (· + 1)
+  n.modifyData fun x =>
+    { x with meshCache :=
+        match x.meshCache.findIdx? (·.elemIdx == elemIdx) with
+        | some i => x.meshCache.set! i ⟨elemIdx, key, mesh⟩
+        | none => x.meshCache.push ⟨elemIdx, key, mesh⟩ }
+  return mesh
+
 mutual
 
 /-- Draw the subtree rooted at `n` into the ambient `DrawM` context (the
-caller is positioned at the node's outer top-left). Clears `needsRedraw`. -/
+caller is positioned at the node's outer top-left). -/
 partial def drawTree (n : LayoutNode) : DrawM Unit := do
-  let d ← n.data
-  n.modifyData fun x => { x with needsRedraw := false }
-  drawResolved n d 0
+  drawResolved n (← n.data) 0
 
 /-- Execute the resolved draw elements from index `k` inward, then the
 children. `clip`/`alpha` elements scope everything inner by wrapping the
@@ -93,7 +114,7 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
             -- The `clip(shape).background(color)` idiom: fill the enclosing
             -- clip shape itself so the fill is geometrically clipped
             -- (`rr` is already in this node's coordinates).
-            DrawScope.drawRoundRect (.solid color) rr
+            DrawScope.drawMesh (← n.cachedMesh rd.elemIdx (.rrFill rr color))
           else
             -- Partial overlap degrades to the rectangular bounds clip
             -- (DESIGN.md's documented rounded-clip limitation).
@@ -103,14 +124,14 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
           DrawScope.drawRect (.solid color) off sz
         cont
       | .background color shape =>
-        DrawScope.translate off <|
-          DrawScope.drawRoundRect (.solid color) (shape.toRoundRect sz ctx.density)
+        let mesh ← n.cachedMesh rd.elemIdx (.rrFill (shape.toRoundRect sz ctx.density) color)
+        DrawScope.translate off (DrawScope.drawMesh mesh)
         cont
       | .border w color shape =>
         let wpx := ctx.density.dpToPx w
-        DrawScope.translate off <|
-          DrawScope.drawRoundRect (.solid color)
-            (rrInset (shape.toRoundRect sz ctx.density) (wpx / 2)) (.stroke wpx)
+        let mesh ← n.cachedMesh rd.elemIdx
+          (.rrStroke (rrInset (shape.toRoundRect sz ctx.density) (wpx / 2)) wpx color)
+        DrawScope.translate off (DrawScope.drawMesh mesh)
         cont
       | .clip .rectangle =>
         DrawScope.clipRect (Rect.ofOffsetSize off sz) cont

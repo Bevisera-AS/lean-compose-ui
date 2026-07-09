@@ -27,13 +27,16 @@ structure DVertex where
   deriving Repr, BEq, Inhabited
 
 /-- A triangle mesh: a vertex buffer plus a flat triangle-index buffer (every
-three entries name one triangle). Indices are `Nat` and always point inside
+three entries name one triangle). Indices are stored as `Int32` — the exact
+representation `Renderer.geometry` consumes — so cached meshes reach SDL with
+no per-emit index conversion; they are always non-negative and point inside
 `vertices`. Analogous to Skia's `SkVertices`. -/
 structure Mesh where
   /-- Vertex buffer. -/
   vertices : Array DVertex := #[]
-  /-- Flat triangle index buffer (`indices.size` is a multiple of three). -/
-  indices : Array Nat := #[]
+  /-- Flat triangle index buffer (`indices.size` is a multiple of three),
+  `Int32`-encoded for `Renderer.geometry`. -/
+  indices : Array Int32 := #[]
   deriving Repr, BEq, Inhabited
 
 namespace Mesh
@@ -50,16 +53,16 @@ def vertexCount (m : Mesh) : Nat := m.vertices.size
 /-- Number of triangles (`indices.size / 3`). -/
 def triangleCount (m : Mesh) : Nat := m.indices.size / 3
 
-/-- Whether every index refers to an existing vertex — the mesh well-formedness
-invariant the backend relies on. -/
+/-- Whether every index is non-negative and refers to an existing vertex — the
+mesh well-formedness invariant the backend relies on. -/
 def indicesInRange (m : Mesh) : Bool :=
-  m.indices.all (· < m.vertices.size)
+  m.indices.all fun i => 0 ≤ i.toInt && i.toInt < (m.vertices.size : Int)
 
 /-- Append `b` after `a`, renumbering `b`'s indices by `a`'s vertex count so the
 combined index buffer stays valid. Builds output arrays linearly (FBIP). -/
 def append (a b : Mesh) : Mesh := Id.run do
   if b.vertices.isEmpty then return a
-  let base := a.vertices.size
+  let base := Int32.ofNat a.vertices.size
   let mut vs := a.vertices
   for v in b.vertices do
     vs := vs.push v

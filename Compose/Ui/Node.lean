@@ -81,6 +81,23 @@ structure ResolvedDraw where
   size : IntSize
   deriving Repr, BEq, Inhabited
 
+/-- One entry of a node's tessellation cache: the mesh a `background`/`border`
+draw element last tessellated, with the `Draw.MeshKey` it was built from. The
+draw walk (`LayoutNode.cachedMesh`) reuses the mesh while the key — the fully
+resolved tessellation inputs — is unchanged, so static shapes are not
+re-triangulated on every rendered frame. Compose analog: `Modifier.background`
+and `Modifier.border` caching their `Outline`/`Path` in `drawWithCache` until
+size or shape changes. -/
+structure MeshCacheEntry where
+  /-- Index into the node's `modifier.elems` (same convention as
+  `ResolvedDraw.elemIdx`). -/
+  elemIdx : Nat
+  /-- The tessellation inputs `mesh` was built from (validity check). -/
+  key : Draw.MeshKey
+  /-- The cached mesh, in the wrapper's local coordinates. -/
+  mesh : Draw.Mesh
+  deriving Inhabited
+
 /-- The mutable payload of one `LayoutNode`. -/
 structure LayoutNodeData where
   parent : Option LayoutNode := none
@@ -105,6 +122,10 @@ structure LayoutNodeData where
   contentOffset : IntOffset := .zero
   /-- Non-layout modifiers resolved by the last measure (see `ResolvedDraw`). -/
   resolvedDraws : Array ResolvedDraw := #[]
+  /-- Cached tessellated meshes of the chain's `background`/`border` elements,
+  keyed by chain index (see `MeshCacheEntry`; maintained by
+  `LayoutNode.cachedMesh`). -/
+  meshCache : Array MeshCacheEntry := #[]
   /-- Runtime state of the chain's `pointerInput` elements, ordinally aligned
   with them. Reconciled by `LayoutNode.reconcilePointerInputs` (called from
   `Layout`'s update phase); coroutines are cancelled when the node leaves the
@@ -115,8 +136,6 @@ structure LayoutNodeData where
   /-- Some descendant needs remeasuring; the next pass descends through here.
   -/
   needsRelayout : Bool := false
-  /-- The node's drawing is stale (consumed by the M5 app loop). -/
-  needsRedraw : Bool := true
   /-- Owner hook, set on the *root* node by the app shell: called whenever a
   dirty walk reaches this parentless node, i.e. whenever any node in the tree
   newly needs remeasuring. Mirrors `LayoutNode.owner?.onRequestMeasure`
@@ -169,14 +188,14 @@ partial def markAncestorsNeedRelayout (n : LayoutNode) : IO Unit := do
   | some p =>
     let pd ← p.data
     if pd.needsRelayout || pd.needsRemeasure then return
-    p.modifyData fun dd => { dd with needsRelayout := true, needsRedraw := true }
+    p.modifyData fun dd => { dd with needsRelayout := true }
     p.markAncestorsNeedRelayout
 
 /-- Invalidate the node's measurement (state write in a measure lambda,
 modifier/policy change, child list change) and make it reachable by the next
 root pass. Mirrors `LayoutNode.requestRemeasure`. -/
 def markNeedsRemeasure (n : LayoutNode) : IO Unit := do
-  n.modifyData fun d => { d with needsRemeasure := true, needsRedraw := true }
+  n.modifyData fun d => { d with needsRemeasure := true }
   n.markAncestorsNeedRelayout
 
 /-- Allocate a detached node with default (root-like) policy; its measure
@@ -198,8 +217,7 @@ def setOnRequestRemeasure (n : LayoutNode) (notify : IO Unit) : IO Unit :=
 
 /-- Set the node's position (from a parent placement block). -/
 def setPosition (n : LayoutNode) (pos : IntOffset) : IO Unit :=
-  n.modifyData fun d =>
-    if d.position == pos then d else { d with position := pos, needsRedraw := true }
+  n.modifyData fun d => { d with position := pos }
 
 /-- Process-unique identity of the node (hover-path diffing and focus
 tracking compare by it; `LayoutNode` has no useful `BEq`). -/
@@ -391,8 +409,7 @@ private partial def fullMeasure (n : LayoutNode) (c : Constraints) : IO IntSize 
   let d ← n.data
   let r ← d.registry.observe (measureChain n d.density d.modifier.elems 0 c)
   n.modifyData fun x =>
-    { x with size := r.size, contentOffset := r.contentOffset
-             resolvedDraws := r.draws, needsRedraw := true }
+    { x with size := r.size, contentOffset := r.contentOffset, resolvedDraws := r.draws }
   return r.size
 
 /-- Re-measure dirty children with their cached constraints; `true` iff some
@@ -426,9 +443,11 @@ def remeasure (n : LayoutNode) (constraints : Constraints) (density : Density :=
 
 /-- Reconcile modifier and policy from composition (the `emitNode` update
 phase): a layout-affecting modifier change or a policy-input change
-invalidates measurement; a draw-only change just flags a redraw. `none`
-policy inputs are conservatively treated as changed every time (Compose's
-capturing-lambda `set(measurePolicy)` behavior). -/
+invalidates measurement. A draw-only change needs no dirty flag: the
+recomposition that delivered it already scheduled a frame, the draw walk
+reads the chain fresh, and the mesh cache keys off the new element values.
+`none` policy inputs are conservatively treated as changed every time
+(Compose's capturing-lambda `set(measurePolicy)` behavior). -/
 def update (n : LayoutNode) (modifier : Modifier) (policy : MeasurePolicy)
     (policyInputs : Option UInt64 := none) : IO Unit := do
   let d ← n.data
@@ -437,12 +456,9 @@ def update (n : LayoutNode) (modifier : Modifier) (policy : MeasurePolicy)
     | some a, some b => a != b
     | _, _ => true
   let layoutChanged := !Modifier.layoutEq d.modifier modifier
-  let drawChanged := d.modifier != modifier
   n.modifyData fun x => { x with modifier, policy, policyInputs }
   if layoutChanged || policyChanged then
     n.markNeedsRemeasure
-  else if drawChanged then
-    n.modifyData fun x => { x with needsRedraw := true }
 
 end LayoutNode
 

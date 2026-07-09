@@ -35,6 +35,10 @@ private def norm (v : Offset) : Offset :=
 /-- Right-hand perpendicular of a direction (`⟨x, y⟩ ↦ ⟨y, -x⟩`). -/
 private def perp (d : Offset) : Offset := ⟨d.y, -d.x⟩
 
+/-- Push one triangle's vertex indices (as `Int32`, the mesh's storage form). -/
+private def pushTri (is : Array Int32) (a b c : Nat) : Array Int32 :=
+  is.push (Int32.ofNat a) |>.push (Int32.ofNat b) |>.push (Int32.ofNat c)
+
 /-- Point on an axis-aligned ellipse centered at `c` with radii `rx`/`ry` at
 angle `a` (radians). `cos`/`sin` are evaluated in `Float` then narrowed. -/
 private def ellipsePt (c : Offset) (rx ry a : Float32) : Offset :=
@@ -88,18 +92,18 @@ def fillPolygon (pts : Array Offset) (color : Color) : Mesh := Id.run do
       if s == (⟨0, 0⟩ : Offset) then norm (cur - centroid) else s
     vs := vs.push ⟨cur + nrm * feather, featherColor⟩
   -- indices
-  let mut is : Array Nat := Array.emptyWithCapacity (9 * n)
+  let mut is : Array Int32 := Array.emptyWithCapacity (9 * n)
   for i in [0:n] do
     let j := (i + 1) % n
     -- interior fan triangle
-    is := is.push 0 |>.push (1 + i) |>.push (1 + j)
+    is := pushTri is 0 (1 + i) (1 + j)
     -- feather quad (inner i, inner j, outer j, outer i)
     let ii := 1 + i
     let ij := 1 + j
     let oi := 1 + n + i
     let oj := 1 + n + j
-    is := is.push ii |>.push ij |>.push oj
-    is := is.push ii |>.push oj |>.push oi
+    is := pushTri is ii ij oj
+    is := pushTri is ii oj oi
   return { vertices := vs, indices := is }
 
 /-! ## Stroke of a silhouette with feathered edges -/
@@ -129,9 +133,9 @@ def strokeSilhouette (samples : Array (Offset × Offset)) (width : Float32)
   for (p, nrm) in samples do
     vs := vs.push ⟨p + nrm * (w2 + feather), fc⟩
   let edges := if closed then n else n - 1
-  let mut is : Array Nat := Array.emptyWithCapacity (18 * edges)
-  let quad (a b c d : Nat) (acc : Array Nat) : Array Nat :=
-    acc.push a |>.push b |>.push c |>.push a |>.push c |>.push d
+  let mut is : Array Int32 := Array.emptyWithCapacity (18 * edges)
+  let quad (a b c d : Nat) (acc : Array Int32) : Array Int32 :=
+    pushTri (pushTri acc a b c) a c d
   for i in [0:edges] do
     let j := (i + 1) % n
     let inI := i;         let inJ := j
@@ -295,6 +299,42 @@ def circleFillClippedToRoundRect (center : Offset) (radius : Float32)
 future work in DESIGN.md); the ripple path uses `circleFillClippedToRoundRect`
 and `DrawScope.clipRoundRect`'s geometric clip instead. Returns `m` unchanged. -/
 def clipMeshToRoundRect (m : Mesh) (_rr : RoundRect) : Mesh := m
+
+/-! ## Mesh cache keys -/
+
+/-- The complete inputs of one cacheable shape tessellation, in local (wrapper)
+coordinates. Everything the mesh depends on folds into the key: shape × size ×
+density resolve into the `RoundRect`, the brush into the `color`, and a border's
+`Dp` width × density into the pixel `width` — so key equality is exactly "the
+cached mesh is still valid". Used by the draw walk's per-node mesh cache
+(`LayoutNode.cachedMesh`); Compose analog: the `Outline`/`Path` that
+`Modifier.background`/`Modifier.border` cache in `drawWithCache` until size or
+shape changes. -/
+inductive MeshKey where
+  /-- A filled rounded rect (`roundRectFill rr color`). -/
+  | rrFill (rr : RoundRect) (color : Color)
+  /-- A stroked rounded rect of pixel `width` (`roundRectStroke rr width color`). -/
+  | rrStroke (rr : RoundRect) (width : Float32) (color : Color)
+  deriving Repr, BEq, Inhabited
+
+/-- Tessellate the mesh a `MeshKey` describes (a pure function — the key *is*
+the tessellation's full input). -/
+def MeshKey.tessellate : MeshKey → Mesh
+  | .rrFill rr color => roundRectFill rr color
+  | .rrStroke rr width color => roundRectStroke rr width color
+
+#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
+        == MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
+#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
+        != MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 41⟩ 8) .red   -- size change
+#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
+        != MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .blue  -- brush change
+#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
+        != MeshKey.rrStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 2 .red
+#guard (MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red).tessellate
+        == roundRectFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
+#guard (MeshKey.rrStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 3 .blue).tessellate
+        == roundRectStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 3 .blue
 
 /-! ## `#guard` tests -/
 

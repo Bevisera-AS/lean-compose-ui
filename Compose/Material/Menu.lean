@@ -19,8 +19,10 @@ their `androidx.compose.material3` namesakes on the M10 diet:
   `AnimatedVisibility` (fade + expand vertically) around a bordered `Surface`
   (`shapes.medium`, `outline` border — no shadows in this renderer). The
   enter transition plays because visibility flips one frame after the popup
-  registers; closing unregisters immediately (documented simplification: no
-  exit animation).
+  registers. On close the popup **stays mounted while the mirror-image exit
+  transition (fade + shrink vertically) plays**, then unregisters — a short
+  `UiTask.delay` past the animation keeps the overlay alive until it finishes;
+  re-opening mid-exit cancels the unmount and animates back in.
 * Keyboard: Down/Up move a highlighted item (wrapping), Enter activates it —
   intercepted before the focused anchor's own key handling. Hovering an item
   highlights it too.
@@ -74,6 +76,21 @@ def activateHighlighted (m : MenuState) : IO Unit := do
 
 end MenuState
 
+/-- Duration (ms) of the dropdown's enter/exit transitions; the overlay is
+kept mounted a little past this while the exit plays. -/
+private def dropdownAnimMs : Nat := 120
+
+/-- Suspend on the frame clock until `durNs` has elapsed. Unlike
+`UiTask.delay` this stays a frame-clock subscriber, so it drives the exit
+window and headless `settle` advances through it. -/
+private partial def awaitFramesFor (durNs : UInt64) : UiTask Unit := do
+  let t0 ← UiTask.awaitFrame
+  go t0
+where
+  go (t0 : UInt64) : UiTask Unit := do
+    let ns ← UiTask.awaitFrame
+    if ns < t0 + durNs then go t0
+
 /-- The ambient state of the enclosing open `DropdownMenu` (`none` outside
 one); `DropdownMenuItem` registers itself here. Internal plumbing analog of
 material3's menu position/state internals. -/
@@ -106,19 +123,30 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
   let menu ← remember MenuState.create
-  -- The enter animation: the popup composes hidden, then the effect flips
-  -- visibility on the next drain so AnimatedVisibility animates in.
+  -- Enter: the popup composes hidden, then the effect flips visibility on the
+  -- next drain so AnimatedVisibility animates in. Exit: the popup stays
+  -- mounted (`mounted`) while the exit plays, then a `UiTask.delay` past the
+  -- animation unmounts it — re-opening mid-exit relaunches this effect,
+  -- cancelling the unmount.
+  let animSpec : AnimationSpec Float32 := .tween dropdownAnimMs 0 .fastOutSlowIn
   let vis ← remember (mutableStateOf false)
+  let mounted ← remember (mutableStateOf expanded)
+  liftM (m := IO) do if expanded then mounted.set true
   LaunchedEffect expanded do
     vis.set expanded
-    unless expanded do menu.highlighted.set none
-  if expanded then
+    unless expanded do
+      menu.highlighted.set none
+      awaitFramesFor ((dropdownAnimMs + 40) * 1_000_000).toUInt64
+      mounted.set false
+  if ← mounted.get then
     Popup (anchor := anchor) (offset := offset)
       (onDismissRequest := some onDismissRequest) (focusable := true)
       (onKeyEvent := menuKeyHandler menu) (content := do
         let v ← vis.get
-        AnimatedVisibility v (enter := fadeIn ++ expandVertically)
-          (exit := fadeOut ++ shrinkVertically) (content :=
+        AnimatedVisibility v
+          (enter := fadeIn (spec := some animSpec) ++ expandVertically (spec := some animSpec))
+          (exit := fadeOut (spec := some animSpec) ++ shrinkVertically (spec := some animSpec))
+          (content :=
             Surface (modifier.sizeIn (minWidth := some 112))
               (shape := shapes.medium) (color := some colors.surface)
               (border := some { width := 1, color := colors.outline })

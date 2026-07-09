@@ -333,17 +333,25 @@ inductive FocusElem where
   attach via `Modifier.focusRequester`). Mirrors the node side of
   `Modifier.focusRequester(fr)`. -/
   | requester (id : UInt64)
+  /-- Marks this node as the root of a focus-traversal *scope* (a modal
+  overlay). While such a node is present, Tab traversal is restricted to the
+  topmost scope's subtree — focusables underneath a modal scrim are skipped.
+  Mirrors Compose's `focusProperties`/focus-scoping behavior for `Dialog`. -/
+  | scope (id : Nat)
 
-/-- `focusable` compares by its flag and `requester` by its id; handler
-elements never compare equal (capturing-lambda behavior). -/
+/-- `focusable`/`requester`/`scope` carry comparable data; handler elements
+never compare equal (capturing-lambda behavior). -/
 instance : BEq FocusElem where
   beq
     | .focusable a, .focusable b => a == b
     | .requester a, .requester b => a == b
+    | .scope a, .scope b => a == b
     | _, _ => false
 
 #guard (FocusElem.focusable true) == (FocusElem.focusable true)
 #guard (FocusElem.focusable true) != (FocusElem.focusable false)
+#guard (FocusElem.scope 3) == (FocusElem.scope 3)
+#guard (FocusElem.scope 3) != (FocusElem.scope 4)
 #guard (FocusElem.onFocusChanged fun _ => pure ()) != (FocusElem.onFocusChanged fun _ => pure ())
 #guard (FocusElem.requester 3) == (FocusElem.requester 3)
 #guard (FocusElem.requester 3) != (FocusElem.requester 4)
@@ -526,6 +534,12 @@ click-to-focus. Mirrors `Modifier.focusable(enabled)`. -/
 def focusable (enabled : Bool := true) (m : Modifier := {}) : Modifier :=
   m.append (.focus (.focusable enabled))
 
+/-- Mark this node as a focus-traversal scope root (a modal overlay). While
+present, Tab traversal is confined to the topmost such scope's subtree.
+Framework plumbing for `Dialog`; not general app API. -/
+def focusScope (id : Nat) (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.scope id))
+
 /-- Observe this node gaining (`true`) / losing (`false`) focus. Mirrors
 `Modifier.onFocusChanged`. -/
 def onFocusChanged (handler : Bool → IO Unit) (m : Modifier := {}) : Modifier :=
@@ -626,6 +640,13 @@ def focusEnabled (m : Modifier) : Bool :=
 see the M11 IME hook in `Compose.Ui.Input.Keyboard`). -/
 def isTextInputClient (m : Modifier) : Bool :=
   m.elems.any (fun e => e matches .focus (.onTextInput _))
+
+/-- The focus-scope id this chain declares (`Modifier.focusScope`), if any —
+consulted by the `FocusManager` to scope Tab traversal to a modal overlay. -/
+def focusScopeId (m : Modifier) : Option Nat := Id.run do
+  for e in m.elems do
+    if let .focus (.scope id) := e then return some id
+  return none
 
 /-- The chain's combined semantics: its `semantics` elements folded outer to
 inner (outer wins each stated field); `none` when the chain has no semantics

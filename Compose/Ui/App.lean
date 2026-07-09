@@ -91,7 +91,8 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
       inputSink := ← IO.mkRef fun _ => pure false
       overlays := ← mutableStateOfPolicy (fun _ _ => false) #[]
       keyHandlers := ← IO.mkRef #[]
-      focusManager := ← IO.mkRef none }
+      focusManager := ← IO.mkRef none
+      modalFocusHook := ← IO.mkRef fun _ _ => pure () }
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame

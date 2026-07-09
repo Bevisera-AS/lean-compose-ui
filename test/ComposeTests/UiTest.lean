@@ -316,6 +316,62 @@ private def dialogFlow : IO Unit := do
       assertMissing (.role .dialog)
       check "dialog confirm callback ran" (← confirmed.get)
 
+/-! ## Modal focus is scoped to the dialog, restored on close -/
+
+private def dialogFocusScope : IO Unit := do
+  let open' ← mutableStateOf false
+  runComposeTest
+    (content := Tests.restartable 1 do
+      Column {} (content := fun _ => do
+        Button (open'.set true) (modifier := Modifier.testTag "bg") (content := Text "open")
+        if ← open'.get then
+          AlertDialog (onDismissRequest := open'.set false) (title := "T") (text := "B")
+            (confirmButton := TextButton (open'.set false)
+              (modifier := Modifier.testTag "ok") (content := Text "OK"))))
+    do
+      -- The opener is clicked (and focused) — then it opens the dialog.
+      click (.tag "bg")
+      settle
+      assertExists (.role .dialog)
+      -- Tab lands *inside* the dialog and stays there (scoped past the scrim),
+      -- never reaching the background button.
+      pressKey .tab
+      assertFocused (.tag "ok")
+      pressKey .tab
+      assertFocused (.tag "ok")
+      -- Closing restores the focus that was held when the dialog opened.
+      click (.tag "ok")
+      settle
+      assertMissing (.role .dialog)
+      assertFocused (.tag "bg")
+
+/-! ## animateScrollTo is a MutatorMutex: the last caller wins -/
+
+private def scrollAnimateInterrupt : IO Unit := do
+  let st ← ScrollState.create
+  runComposeTest
+    (content :=
+      Box (Modifier.testTag "sc" |>.width 60 |>.height 100 |>.verticalScroll st)
+        (content := fun _ => Column {} (content := fun _ =>
+          Spacer (Modifier.size 60 500))))
+    do
+      awaitIdle  -- measure runs: content 500, viewport 100 ⇒ maxValue 400
+      let t ← uiTest
+      -- A long scroll toward the end; let it get partway.
+      let _ ← t.sched.launch (st.animateScrollTo 400)
+      advanceTimeBy 100
+      let mid ← st.valueState.cell.get
+      check s!"scroll anim: progressed partway toward 400 ({mid})" (mid > 5 && mid < 395)
+      -- A shorter interrupting animation to 200: it takes the mutation lock.
+      let _ ← t.sched.launch (st.animateScrollTo 200 (.tween 40 0 .linear))
+      advanceTimeBy 60
+      check s!"scroll anim: interrupt reached its target ({← st.valueState.cell.get})"
+        ((← st.valueState.cell.get) == 200)
+      -- The cancelled first animation does NOT resume and drag on toward 400.
+      advanceTimeBy 300
+      check s!"scroll anim: cancelled first stays put ({← st.valueState.cell.get})"
+        ((← st.valueState.cell.get) == 200)
+
 /-! ## Overlays: dropdown menu items are real, clickable nodes -/
 
 private def menuFlow : IO Unit := do
@@ -336,6 +392,10 @@ private def menuFlow : IO Unit := do
       assertCountEquals (.role .menuItem) 2
       click ((Matcher.text "Two").and (.role .menuItem))
       assertExists (.text "picked: Two")
+      -- The exit transition keeps the menu mounted until it finishes…
+      assertExists (.role .menuItem)
+      settle
+      -- …then it leaves the composition.
       assertMissing (.role .menuItem)
 
 /-- The UiTest group. -/
@@ -351,6 +411,8 @@ def run : IO Unit := do
   scenario "focusRequesterFlow" focusRequesterFlow
   scenario "animationClock" animationClock
   scenario "dialogFlow" dialogFlow
+  scenario "dialogFocusScope" dialogFocusScope
+  scenario "scrollAnimateInterrupt" scrollAnimateInterrupt
   scenario "menuFlow" menuFlow
 
 end Tests.UiTest

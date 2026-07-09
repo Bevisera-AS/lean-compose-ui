@@ -242,6 +242,12 @@ inductive EditCommand where
   | deleteWordForward
   /-- Delete the selection (no-op when collapsed). -/
   | deleteSelection
+  /-- Delete from the caret back to the start of the (single-line) text, or
+  the selection when there is one (macOS ⌘-Backspace). -/
+  | deleteToLineStart
+  /-- Delete from the caret forward to the end of the (single-line) text, or
+  the selection when there is one (macOS ⌘-Delete). -/
+  | deleteToLineEnd
   /-- Caret left one codepoint; a non-extended motion over a selection
   collapses to its start without moving. `extend` moves `active` only. -/
   | left (extend : Bool := false)
@@ -358,6 +364,12 @@ def apply (v : TextFieldValue) (cmd : EditCommand) : TextFieldValue :=
       else v.deleteRange sel.active (Utf8.wordRight v.text sel.active)
     | .deleteSelection =>
       if sel.collapsed then v else v.deleteRange sel.start sel.«end»
+    | .deleteToLineStart =>
+      if !sel.collapsed then v.deleteRange sel.start sel.«end»
+      else v.deleteRange 0 sel.active
+    | .deleteToLineEnd =>
+      if !sel.collapsed then v.deleteRange sel.start sel.«end»
+      else v.deleteRange sel.active size
     | .left extend =>
       if extend then v.moveTo (Utf8.prev v.text sel.active) true
       else if !sel.collapsed then v.moveTo sel.start false
@@ -424,6 +436,15 @@ private def tc (t : String) (caret : Nat) : TextFieldValue := tv t caret caret
 -- deleteSelection
 #guard (tv "abcd" 1 3).apply .deleteSelection == tc "ad" 1
 #guard (tc "abcd" 2).apply .deleteSelection == tc "abcd" 2
+-- deleteToLineStart / deleteToLineEnd (⌘-Backspace / ⌘-Delete, single line)
+#guard (tc "abcdef" 3).apply .deleteToLineStart == tc "def" 0
+#guard (tc "abcdef" 0).apply .deleteToLineStart == tc "abcdef" 0
+#guard (tc "abcdef" 3).apply .deleteToLineEnd == tc "abc" 3
+#guard (tc "abcdef" 6).apply .deleteToLineEnd == tc "abcdef" 6
+#guard (tv "abcdef" 1 4).apply .deleteToLineStart == tc "aef" 1   -- selection wins
+#guard (tv "abcdef" 1 4).apply .deleteToLineEnd == tc "aef" 1
+#guard (tc "héllo" 3).apply .deleteToLineStart == tc "llo" 0     -- multi-byte boundary
+#guard (tc "" 0).apply .deleteToLineStart == tc "" 0
 -- left/right: steps, edges, selection collapse to the motion side
 #guard (tc "abc" 1).apply (.left) == tc "abc" 0
 #guard (tc "abc" 0).apply (.left) == tc "abc" 0

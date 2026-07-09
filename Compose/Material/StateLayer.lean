@@ -20,9 +20,13 @@ The shared visual-feedback machinery of every M9 widget, per DESIGN.md's
 - **Bounded press ripple**: on press, an expanding circle at the press
   position, geometrically clipped to the widget shape
   (`circleFillClippedToRoundRect` via `DrawScope.clipRoundRect`), radius
-  animating 0 → farthest-corner over 300 ms `fastOutSlowIn`; on release the
-  circle fades out over 150 ms (radius freezes during the fade — a documented
-  simplification of Material's expand-while-fading).
+  animating 0 → farthest-corner over 300 ms `fastOutSlowIn`. On a genuine
+  **release** the radius *finishes expanding* to the full cover radius while
+  the circle fades out over 150 ms (Material's expand-while-fading — the
+  ripple is never cut off mid-growth). On a **press-cancel** (released outside
+  the widget, or the pointer left the window) it fades quickly (100 ms) with
+  the radius left where it froze. Release vs. cancel is told apart by the
+  state-layer's own pointer coroutine (`scope.containsLocal`).
 
 Widgets with a rectangular-ish hit box call `rememberStateLayer` and append
 the returned modifier innermost; `Switch`/`Slider` draw a positioned halo
@@ -80,6 +84,12 @@ structure StateLayerValues where
   rippleProgress : Float32
   /-- Latest press position, local to the widget's pointer region (px). -/
   pressCenter : IO.Ref Offset
+  /-- Whether the last press ended as a *cancel* (released out of bounds or
+  the pointer left the window) rather than a clean release — read on the
+  falling `pressed` edge to pick the fast fade over the expand-while-fade.
+  Widgets that draw their own halo without the press recorder (`Switch`,
+  `Slider`) leave it `false` (always a clean release). -/
+  cancelled : IO.Ref Bool
 
 /-- Remembered ripple animation state (radius fraction + opacity). -/
 private structure RippleAnim where
@@ -93,14 +103,28 @@ private def RippleAnim.create : IO RippleAnim :=
   return { progress := ← Animatable.create 0 .float32
            alpha := ← Animatable.create 0 .float32 }
 
-/-- Record press positions into `center` without consuming anything: appended
-*innermost*, it sees each press before `clickable`'s detector consumes it
-(dispatch is innermost-element-first within a node). -/
-private partial def recordPresses (center : IO.Ref Offset)
+/-- Record the press position into `center` and, when the press ends, whether
+it ended as a *cancel* into `cancelled` — without consuming anything (appended
+*innermost*, it sees each event before `clickable`'s detector, dispatch being
+innermost-element-first within a node). A release inside the widget bounds is a
+clean release (`cancelled := false`); a release outside, or a window-leave
+`exit`, is a cancel. -/
+private partial def recordPresses (center : IO.Ref Offset) (cancelled : IO.Ref Bool)
     (scope : PointerInputScope) : UiTask Unit := do
   let ev ← scope.awaitEvent
-  if ev.eventType == .press then center.set ev.position
-  recordPresses center scope
+  if ev.eventType == .press then
+    center.set ev.position
+    cancelled.set false
+    awaitEnd
+  recordPresses center cancelled scope
+where
+  /-- Await this press's end (not consuming), flagging a cancel. -/
+  awaitEnd : UiTask Unit := do
+    let ev ← scope.awaitEvent
+    match ev.eventType with
+    | .release => unless (← scope.containsLocal ev.position) do cancelled.set true
+    | .exit => cancelled.set true
+    | _ => awaitEnd
 
 /-- Track `source`'s flags and animate the shared feedback values: overlay
 alpha tweens (150 ms) to the state-token sum; a rising press launches the
@@ -116,6 +140,7 @@ def rememberStateLayerValues (source : InteractionSource) :
     (.tween 150 0 .fastOutSlowIn)
   let ripple ← remember RippleAnim.create
   let pressCenter ← remember (IO.mkRef Offset.zero)
+  let cancelled ← remember (IO.mkRef false)
   LaunchedEffect pressed do
     if pressed then
       ripple.progress.snapTo 0
@@ -123,11 +148,20 @@ def rememberStateLayerValues (source : InteractionSource) :
       ripple.progress.animateTo 1 (.tween 300 0 .fastOutSlowIn)
     else
       unless (← ripple.alpha.peek) == 0 do
-        ripple.alpha.animateTo 0 (.tween 150 0 .linear)
+        if ← cancelled.get then
+          -- Cancelled: fade fast, radius left frozen.
+          ripple.alpha.animateTo 0 (.tween 100 0 .linear)
+        else
+          -- Released: finish expanding to the full cover radius *while* fading
+          -- out, so the ripple never cuts off mid-growth (Material's
+          -- expand-while-fade). The 150 ms fade caps the concurrent finish.
+          UiTask.race
+            (ripple.progress.animateTo 1 (.tween 150 0 .fastOutSlowIn))
+            (ripple.alpha.animateTo 0 (.tween 150 0 .linear))
   return { layerAlpha := ← layerAlpha.get
            rippleAlpha := ← ripple.alpha.value.get
            rippleProgress := ← ripple.progress.value.get
-           pressCenter }
+           pressCenter, cancelled }
 
 /-- Draw the overlay + bounded ripple over the widget's `shape` in `tint`
 (sampled `values`). Runs in the widget's `drawBehind` coordinates. -/
@@ -161,7 +195,7 @@ def rememberStateLayer (source : InteractionSource) (shape : Shape)
   if enabled then
     return Modifier.pointerInput
         (mixKeys (stringKey "Compose.Material.stateLayer") source.id)
-        (recordPresses values.pressCenter)
+        (recordPresses values.pressCenter values.cancelled)
       |>.drawBehind (drawStateLayer values shape tint)
   else
     return {}

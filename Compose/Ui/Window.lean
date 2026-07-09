@@ -134,6 +134,12 @@ structure WindowContext where
   /-- The window's `FocusManager`, installed by `installInput` (M14b): the
   bridge `FocusRequester`s use to reach focus from composition. -/
   focusManager : IO.Ref (Option FocusManager)
+  /-- Modal-overlay focus lifecycle hook `(scope id) (opening)`: called by a
+  modal `Dialog` when it registers (`true`) / unregisters (`false`).
+  `installInput` points it at the `FocusManager` (scope Tab traversal, restore
+  prior focus); the default is a no-op (headless compositions with no input
+  pipeline). -/
+  modalFocusHook : IO.Ref (Nat → Bool → IO Unit)
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app

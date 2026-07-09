@@ -36,6 +36,9 @@ structure FocusManager where
   root : LayoutNode
   /-- The currently focused node. -/
   focusedRef : IO.Ref (Option LayoutNode)
+  /-- Focus saved when each modal scope opened, `(scope id, prior focus)`, to
+  restore when that scope closes (`pushModalScope`/`popModalScope`). -/
+  savedFocus : IO.Ref (Array (Nat × Option LayoutNode))
   /-- Runs after every focus change with the new target (`none` = cleared).
   The router hooks the M11 text-input lifecycle here. -/
   onFocusTarget : Option LayoutNode → IO Unit
@@ -45,7 +48,7 @@ namespace FocusManager
 /-- Fresh manager focused on nothing. -/
 def create (root : LayoutNode) (onFocusTarget : Option LayoutNode → IO Unit := fun _ => pure ()) :
     IO FocusManager :=
-  return { root, focusedRef := ← IO.mkRef none, onFocusTarget }
+  return { root, focusedRef := ← IO.mkRef none, savedFocus := ← IO.mkRef #[], onFocusTarget }
 
 /-- The focused node, if any. -/
 def focused (fm : FocusManager) : IO (Option LayoutNode) := fm.focusedRef.get
@@ -78,10 +81,25 @@ def requestFocus (fm : FocusManager) (target : Option LayoutNode) : IO Unit := d
 /-- Clear focus. Mirrors `FocusManager.clearFocus`. -/
 def clearFocus (fm : FocusManager) : IO Unit := fm.requestFocus none
 
-/-- The tree's focus targets in preorder (layout order) — the Tab traversal
-sequence. -/
+/-- The subtree root of the topmost open modal scope (`Modifier.focusScope` —
+the last such node in preorder, since overlay layers compose after the main
+content), or `none` when no modal is open. -/
+partial def topModalScope (fm : FocusManager) : IO (Option LayoutNode) := do
+  go fm.root none
+where
+  go (n : LayoutNode) (acc : Option LayoutNode) : IO (Option LayoutNode) := do
+    let d ← n.data
+    let acc := if d.modifier.focusScopeId.isSome then some n else acc
+    d.children.foldlM (fun acc ch => go ch acc) acc
+
+/-- The focus targets in preorder (layout order) — the Tab traversal sequence.
+When a modal scope is open, traversal is confined to its subtree, so
+focusables underneath the scrim are skipped. -/
 partial def focusables (fm : FocusManager) : IO (Array LayoutNode) := do
-  go fm.root #[]
+  let start ← match ← fm.topModalScope with
+    | some scope => pure scope
+    | none => pure fm.root
+  go start #[]
 where
   go (n : LayoutNode) (acc : Array LayoutNode) : IO (Array LayoutNode) := do
     let d ← n.data
@@ -112,6 +130,21 @@ def focusOnPress (fm : FocusManager) (path : Array HitTarget) : IO Unit := do
       fm.requestFocus (some t.node)
       return
   fm.clearFocus
+
+/-- A modal overlay opened: save the current focus (to restore on close) and
+clear it, so nothing under the scrim stays focused and Tab starts fresh inside
+the modal (traversal is scoped by `focusables`). -/
+def pushModalScope (fm : FocusManager) (id : Nat) : IO Unit := do
+  fm.savedFocus.modify (·.push (id, ← fm.focusedRef.get))
+  fm.clearFocus
+
+/-- The modal overlay `id` closed: restore the focus saved when it opened (if
+that node was focused before). -/
+def popModalScope (fm : FocusManager) (id : Nat) : IO Unit := do
+  let st ← fm.savedFocus.get
+  let saved := (st.find? (·.1 == id)).bind (·.2)
+  fm.savedFocus.set (st.filter (·.1 != id))
+  if saved.isSome then fm.requestFocus saved
 
 /-- Route a key event: the focused node's `onKeyEvent` handlers first
 (innermost first), then its ancestors' bottom-up; `true` = consumed. `false`

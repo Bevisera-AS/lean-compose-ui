@@ -211,8 +211,8 @@ private def editingScripts : IO Unit := do
     pressKey .right                                  -- collapse to the end
     checkEq "script: plain Right collapses to the selection end" (← value.get)
       (⟨"hello there", .caret 2, none⟩)
-    pressKey .right (mods := .lGui)                  -- gui word-right (macOS)
-    checkEq "script: gui-Right word-jumps" (← value.get)
+    pressKey .right (mods := .lCtrl)                 -- ctrl word-right
+    checkEq "script: ctrl-Right word-jumps" (← value.get)
       (⟨"hello there", .caret 5, none⟩)
     pressKey .backspace (mods := .lCtrl)             -- delete word back
     checkEq "script: ctrl-Backspace deletes back to the word start" (← value.get)
@@ -231,6 +231,59 @@ private def editingScripts : IO Unit := do
     pressKey .tab
     check "script: Tab falls through to traversal (field refocused, wrap-around)"
       (← (← uiTest).ctx.window.textInputActive)
+
+/-! ## Min-width knob + overflow safety (MT framework) -/
+
+private def minWidthOverflow : IO Unit := do
+  -- A field in a Row narrower than the 280 dp default min: it clamps to fit
+  -- rather than forcing the Row to overflow (which once collapsed it to zero
+  -- height). The Row keeps a real, non-zero height.
+  let v1 ← mutableStateOf ({} : TextFieldValue)
+  runComposeTest (width := 400)
+    (content := Row (Modifier.width 120 |>.testTag "row") (content := fun _ =>
+      Tests.restartable 1 do TextField (← v1.get) v1.set (modifier := Modifier.testTag "tf")))
+    do
+      let tf ← boundsOf (.tag "tf")
+      let row ← boundsOf (.tag "row")
+      check s!"minWidth: field clamped into the 120 dp Row (w={tf.right - tf.left})"
+        (tf.right - tf.left ≤ 120)
+      check s!"minWidth: Row keeps a non-zero height (h={row.bottom - row.top})"
+        (row.bottom - row.top ≥ 40)
+  -- The `minWidth` knob shrinks the field's floor so it fits a small parent
+  -- even when width is unbounded (a horizontally scrolling Row) — the default
+  -- 280 would report 280 there.
+  let v2 ← mutableStateOf ({} : TextFieldValue)
+  runComposeTest (width := 400)
+    (content := do
+      let sc ← rememberScrollState
+      Row (Modifier.horizontalScroll sc) (content := fun _ =>
+        Tests.restartable 1 do
+          TextField (← v2.get) v2.set (minWidth := 60) (modifier := Modifier.testTag "tf2")))
+    do
+      let tf ← boundsOf (.tag "tf2")
+      check s!"minWidth knob: unbounded field honors the 60 dp floor (w={tf.right - tf.left})"
+        (tf.right - tf.left ≤ 80)
+
+/-! ## macOS line-motion keys (⌘, MT framework) -/
+
+private def macKeys : IO Unit := do
+  let value ← mutableStateOf ({} : TextFieldValue)
+  let calls ← IO.mkRef (#[] : Array TextFieldValue)
+  runComposeTest (fieldContent value calls) do
+    typeText (.tag "field") "hello world"            -- caret at 11
+    pressKey .left (mods := .lGui)                    -- ⌘-Left = Home
+    checkEq "mac: ⌘-Left goes to the line start" (← value.get)
+      (⟨"hello world", .caret 0, none⟩)
+    pressKey .right (mods := .lGui)                   -- ⌘-Right = End
+    checkEq "mac: ⌘-Right goes to the line end" (← value.get)
+      (⟨"hello world", .caret 11, none⟩)
+    pressKey .left (mods := .lGui ||| .lShift)        -- ⌘-Shift-Left selects to start
+    checkEq "mac: ⌘-Shift-Left selects to the line start" (← value.get)
+      (⟨"hello world", ⟨11, 0⟩, none⟩)
+    pressKey .«end»                                   -- collapse to the end
+    pressKey .backspace (mods := .lGui)               -- ⌘-Backspace deletes to line start
+    checkEq "mac: ⌘-Backspace clears to the line start" (← value.get)
+      (⟨"", .caret 0, none⟩)
 
 /-! ## Multi-byte safety (MT framework) -/
 
@@ -567,6 +620,8 @@ private def stringOverload : IO Unit := do
 def run : IO Unit := do
   typingEndToEnd
   editingScripts
+  minWidthOverflow
+  macKeys
   multiByteEditing
   mouseSelection
   clipboardOps

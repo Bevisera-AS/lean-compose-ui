@@ -48,13 +48,18 @@ structure ScrollState where
   /-- Content extent on the scroll axis, px (observable; written by
   measurement). -/
   contentSizeState : MutableState Float32
+  /-- Mutation generation: bumped by each `animateScrollTo` (and a wheel
+  scroll), so a running scroll animation stands down when a newer mutation
+  starts — the single-threaded analog of Compose's `MutatorMutex`. -/
+  mutationGen : IO.Ref Nat
 
 instance : Nonempty ScrollState :=
   ⟨{ id := 0
      valueState := Classical.choice inferInstance
      maxValueState := Classical.choice inferInstance
      viewportSizeState := Classical.choice inferInstance
-     contentSizeState := Classical.choice inferInstance }⟩
+     contentSizeState := Classical.choice inferInstance
+     mutationGen := Classical.choice inferInstance }⟩
 
 namespace ScrollState
 
@@ -64,7 +69,14 @@ def create (initial : Float32 := 0) : IO ScrollState :=
            valueState := ← mutableStateOf (max 0 initial)
            maxValueState := ← mutableStateOf 0
            viewportSizeState := ← mutableStateOf 0
-           contentSizeState := ← mutableStateOf 0 }
+           contentSizeState := ← mutableStateOf 0
+           mutationGen := ← IO.mkRef 0 }
+
+/-- Cancel any in-flight scroll animation and claim the mutation lock; returns
+the new generation the caller must keep matching to stay live (Compose's
+`MutatorMutex.mutate` taking the lock). -/
+def interrupt (s : ScrollState) : IO Nat :=
+  s.mutationGen.modifyGet fun g => (g + 1, g + 1)
 
 /-- The current offset (observed read). Mirrors `ScrollState.value`. -/
 def value (s : ScrollState) : IO Float32 := s.valueState.get
@@ -102,28 +114,33 @@ def canScrollBackward (s : ScrollState) : IO Bool :=
   return (← s.valueState.cell.get) > 0
 
 /-- Animate the offset to `target` (clamped at every write), driven by the
-frame clock. A concurrent user scroll is not cancelled — both write and the
-last one wins (documented simplification of Compose's `MutatorMutex`).
+frame clock. Starting a new `animateScrollTo` (or a wheel scroll) **interrupts**
+any in-flight one via the mutation generation: the superseded loop notices the
+stale generation at its next frame and stops without another write, so the last
+caller wins cleanly (the single-threaded analog of Compose's `MutatorMutex`).
 Mirrors `ScrollState.animateScrollTo`. -/
 partial def animateScrollTo (s : ScrollState) (target : Float32)
     (spec : AnimationSpec Float32 := .tween 300 0 .fastOutSlowIn) : UiTask Unit := do
+  let myGen ← s.interrupt
   let conv := VectorConverter.float32
   let startVec := conv.toVector (← s.valueState.cell.get)
   let targetVec := conv.toVector target
   let v0 := AnimationVector.zero startVec.dim
   let dur? := spec.durationNs conv startVec targetVec v0
   let t0 ← UiTask.awaitFrame
-  loop conv startVec targetVec v0 dur? t0
+  loop myGen conv startVec targetVec v0 dur? t0
 where
-  loop (conv : VectorConverter Float32) (startVec targetVec v0 : AnimationVector)
+  loop (myGen : Nat) (conv : VectorConverter Float32) (startVec targetVec v0 : AnimationVector)
       (dur? : Option UInt64) (t0 : UInt64) : UiTask Unit := do
     let ns ← UiTask.awaitFrame
+    -- A newer mutation took the lock: stand down without touching state.
+    if (← s.mutationGen.get) != myGen then return
     let play := if ns ≤ t0 then 0 else ns - t0
     if dur?.any (play ≥ ·) then
       s.scrollTo target
     else
       s.scrollTo (conv.fromVector (spec.valueAt conv play startVec targetVec v0))
-      loop conv startVec targetVec v0 dur? t0
+      loop myGen conv startVec targetVec v0 dur? t0
 
 end ScrollState
 
@@ -169,6 +186,8 @@ private def scrollWheelHandler (state : ScrollState) (vertical : Bool) :
   -- Positive wheel y = away from the user = toward the content start.
   let notches := if vertical then delta.y else delta.x
   if notches == 0 then return .zero
+  -- A user wheel is a mutation too: cancel any running scroll animation.
+  let _ ← state.interrupt
   let moved ← state.scrollBy (-notches * wheelScrollStep)
   if moved == 0 then return .zero
   return if vertical then ⟨0, notches⟩ else ⟨notches, 0⟩

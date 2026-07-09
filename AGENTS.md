@@ -88,6 +88,23 @@ All SDL video/render/event calls happen on the main thread only — never in
   `MRig`/`TRig` pattern in the Material/TextField groups) only where pixel
   output is itself the property under test.
 
+## Demos: the main-shim convention
+
+Lean forbids two `_root_.main`s in one import closure, and the test runner
+imports every demo's UI for its MT suite — so each demo is split in two:
+
+- a **main-free library module** holding the model + UI
+  (e.g. `Demos/Crud.lean`), imported by both the exe and the tests;
+- a **thin exe shim** defining only `main` (e.g. `Demos/CrudApp.lean`,
+  the `lean_exe` root in `lakefile.lean`).
+
+Every demo *library* module must belong to a `lean_lib` (`Demos`,
+`CellsEngine`, `CircleDrawerModel` in `lakefile.lean`): a module reachable
+only through an exe root gets no native code built, so the interpreted test
+runner cannot load it. To add a demo: lib module (+ `lean_lib` membership),
+`<X>Main` shim, `lean_exe`, and register the exe name in `Main.lean`'s
+`demos` list — `scripts/smoke-demos.sh` discovers demos via `gallery --list`.
+
 ## Version control
 - Make small, self-contained commits
 - Keep commit messages concise

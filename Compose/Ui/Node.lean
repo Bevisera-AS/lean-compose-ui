@@ -29,7 +29,11 @@ measure policy — i.e. propagation stops at the first node whose cached size
 survives. Measurement short-circuits entirely when the constraints are
 unchanged and no dirty flag is set. State reads inside measure policies and
 placement blocks are observed (M1 observer stack) and invalidate exactly the
-reading node.
+reading node. A mark raised *during* a pass (a state write inside a measure
+block) is never lost: `measureIn` clears `needsRelayout` only when no child
+is left dirty — the mark's path stays connected to the root — and `remeasure`
+reports residual dirt through the owner hook, scheduling the follow-up frame
+that settles it.
 
 **Reference cycles**: parent and child hold strong references to each other,
 which Lean's RC does not collect. Nodes live for the composition's lifetime;
@@ -177,8 +181,9 @@ def child (n : LayoutNode) (i : Nat) : IO LayoutNode := do
     throw <| IO.userError s!"LayoutNode.child: index {i} out of bounds ({d.children.size})"
 
 /-- Flag every ancestor with `needsRelayout` so the next root pass descends
-to this node; stops at an ancestor already on a dirty path (that ancestor's
-own dirtying already notified the owner). At the parentless top, fires the
+to this node; stops at an ancestor already on a dirty path — that ancestor's
+own dirtying already notified the owner, or (mid-pass) the pass keeps the
+flag and `remeasure` notifies at the end. At the parentless top, fires the
 `onRequestRemeasure` owner hook. The upward half of Compose's
 `requestRemeasure` propagation. -/
 partial def markAncestorsNeedRelayout (n : LayoutNode) : IO Unit := do
@@ -257,6 +262,14 @@ def applier (root : LayoutNode) : Applier LayoutNode where
   onClear := root.severParentLinks
 
 /-! ## Measurement -/
+
+/-- Whether some child carries a dirty flag — `measureIn`'s guard against
+clearing `needsRelayout` while a mark raised during the pass still points
+through this node (see the module docstring's dirty-tracking invariant). -/
+private def anyChildDirty (n : LayoutNode) : IO Bool := do
+  (← n.data).children.anyM fun ch => do
+    let cd ← ch.data
+    return cd.needsRemeasure || cd.needsRelayout
 
 /-- Result of measuring a suffix of the wrapper chain: the wrapper's size,
 the accumulated offset to the content coordinate space, and the resolved
@@ -387,7 +400,10 @@ private partial def measureInner (n : LayoutNode) (c : Constraints) : IO ChainMe
 /-- Measure the node with `c`, honoring the caches: short-circuits when the
 constraints are unchanged and nothing is dirty; descends through
 `needsRelayout` re-measuring dirty descendants in place, re-running this
-node's own measure only if a descendant's size changed. -/
+node's own measure only if a descendant's size changed. `needsRelayout` is
+cleared only when the descent left no child dirty — a measure block's state
+write can re-dirty an already-visited sibling, and clearing then would
+disconnect it from every future pass. -/
 partial def measureIn (n : LayoutNode) (c : Constraints) : IO IntSize := do
   let d ← n.data
   if !d.needsRemeasure && d.lastConstraints == some c then
@@ -395,7 +411,8 @@ partial def measureIn (n : LayoutNode) (c : Constraints) : IO IntSize := do
       if ← n.remeasureDirtyChildren then
         n.fullMeasure c
       else
-        n.modifyData fun x => { x with needsRelayout := false }
+        unless ← n.anyChildDirty do
+          n.modifyData fun x => { x with needsRelayout := false }
         return d.size
     else
       return d.size
@@ -435,13 +452,19 @@ end
 /-- Root measure pass: measure the whole tree under `constraints` at
 `density` (a density change invalidates cached measurements as it
 propagates). The M5 app loop calls this once per dirty frame; tests call it
-directly. -/
+directly. Dirty marks raised during the pass keep their path connected to
+this root (`measureIn`); reporting them through the owner hook schedules the
+follow-up frame that processes them. -/
 def remeasure (n : LayoutNode) (constraints : Constraints) (density : Density := {}) :
     IO IntSize := do
   if (← n.data).density != density then
     n.modifyData fun d => { d with density }
     n.markNeedsRemeasure
-  n.measureIn constraints
+  let size ← n.measureIn constraints
+  let d ← n.data
+  if d.needsRemeasure || d.needsRelayout then
+    if let some notify := d.onRequestRemeasure then notify
+  return size
 
 /-- Reconcile modifier and policy from composition (the `emitNode` update
 phase): a layout-affecting modifier change or a policy-input change

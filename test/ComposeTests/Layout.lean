@@ -405,6 +405,75 @@ private def survivingSizeStopsPropagation : IO Unit := do
   checkEq "surviving-size: only the reading node re-measures"
     ((← cntA.get), (← cntP.get)) (2, 1)
 
+/-- A state write during a LATER sibling's measure that invalidates an
+EARLIER (already-visited) sibling must survive the relayout pass: the mark
+keeps a dirty path connected to the root and the owner hook fires, so the
+follow-up pass re-measures the earlier sibling instead of leaving it stale
+forever. -/
+private def midPassDirtyOfVisitedSibling : IO Unit := do
+  let s ← mutableStateOf (10 : Nat)      -- A's width source
+  let trigger ← mutableStateOf (0 : Nat) -- B's remeasure trigger
+  let cntA ← IO.mkRef (0 : Nat)
+  let policyA : MeasurePolicy := fun _ _ _ => do
+    cntA.modify (· + 1)
+    return { size := ⟨Int32.ofNat (← s.get), 10⟩ }
+  -- B (measured after A) dirties A mid-pass once armed.
+  let policyB : MeasurePolicy := fun _ _ _ => do
+    if (← trigger.get) == 1 then s.set 30
+    return { size := ⟨10, 10⟩ }
+  let (root, _) ← composeTree <| Layout {} .root (content := do
+    Layout {} policyA
+    Layout {} policyB)
+  let hookFires ← IO.mkRef (0 : Nat)
+  root.setOnRequestRemeasure (hookFires.modify (· + 1))
+  let c : Constraints := Constraints.fixed 100 100
+  let _ ← root.remeasure c
+  checkEq "mid-pass dirty: initial A size" (← sizeAt root [0, 0]) (⟨10, 10⟩ : IntSize)
+  trigger.set 1
+  let fires0 ← hookFires.get
+  let _ ← root.remeasure c
+  check "mid-pass dirty: owner hook fired for the in-pass mark"
+    ((← hookFires.get) > fires0)
+  -- The follow-up pass (the frame the hook scheduled) reaches A.
+  let _ ← root.remeasure c
+  checkEq "mid-pass dirty: follow-up pass re-measures A"
+    (← sizeAt root [0, 0]) (⟨30, 10⟩ : IntSize)
+  -- and the tree settles: a clean re-pass measures nothing further.
+  let a ← cntA.get
+  let _ ← root.remeasure c
+  checkEq "mid-pass dirty: settled after the follow-up" (← cntA.get) a
+
+/-- The shared-`ScrollState` sticky-header pattern (`Foundation/Lazy.lean`):
+a header strip sharing the main container's scroll state, composed BEFORE
+it. Scrolled near the end, then the main content shrinks: the main measure
+re-clamps `valueState` (`Foundation/Scroll.lean`), invalidating the header's
+already-visited scroll node mid-pass — the header must still end up at the
+re-clamped offset. -/
+private def sharedScrollStickyHeader : IO Unit := do
+  let s ← Compose.ScrollState.create
+  let wide ← mutableStateOf true -- main content: 1000px wide, then 300px
+  Compose.Test.runComposeTest (theme := false)
+    (content := Column {} (content := Tests.restartable 1 do
+      let w : Dp := if ← wide.get then 1000 else 300
+      Box (Modifier.width 200 |>.height 20 |>.horizontalScroll s) (content :=
+        Box (Modifier.testTag "header" |>.width 1000 |>.height 20))
+      Box (Modifier.width 200 |>.height 100 |>.horizontalScroll s) (content :=
+        Box (Modifier.testTag "main" |>.width w |>.height 100))))
+    do
+      s.scrollTo 10000 -- clamps to maxValue = 1000 - 200 = 800
+      Compose.Test.awaitIdle
+      Compose.Test.assertThat (.tag "header") "scrolled to the end (x = -800)"
+        (·.bounds.left == -800)
+      Compose.Test.assertThat (.tag "main") "content at the end (x = -800)"
+        (·.bounds.left == -800)
+      wide.set false -- maxValue drops to 100; main's measure re-clamps value
+      Compose.Test.awaitIdle
+      Compose.Test.assertThat (.tag "main") "re-clamped content (x = -100)"
+        (·.bounds.left == -100)
+      Compose.Test.assertThat (.tag "header") "header follows the re-clamp (x = -100)"
+        (·.bounds.left == -100)
+      checkEq "sticky header: scroll value re-clamped" (← s.value).toString "100.000000"
+
 /-! ## Draw walk (pixel probes) -/
 
 private def drawWalk : IO Unit := do
@@ -458,6 +527,8 @@ def run : IO Unit := do
   constraintsShortCircuit
   measureStateTargeting
   survivingSizeStopsPropagation
+  midPassDirtyOfVisitedSibling
+  scenario "shared-scroll sticky header re-clamp" sharedScrollStickyHeader
   drawWalk
 
 end Tests.Layout

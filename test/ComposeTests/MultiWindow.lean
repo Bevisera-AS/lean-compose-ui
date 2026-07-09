@@ -1,6 +1,5 @@
 import Compose
 import ComposeTests.Harness
-import ComposeTests.TestApplier
 
 /-!
 # Multi-window test group (`test/ComposeTests/MultiWindow.lean`)
@@ -109,10 +108,11 @@ private def closeRequestRouting : IO Unit := do
 
 /-- Windows are state-driven: `if (← isOpen.get) then Window ...` closes on a
 state write, the application is done when none remain, and flipping the state
-back reopens a fresh window. -/
+back reopens a fresh window. Plain do-block content — the reads are tracked
+by `bootstrapApplication`'s restartable root, the documented usage. -/
 private def stateDrivenCloseAndReopen : IO Unit := do
   let openB ← mutableStateOf true
-  let app ← bootstrapApplication <| Tests.restartable 1 do
+  let app ← bootstrapApplication do
     Window "sd-a" 120 100 (config := cfg)
       (content := Box (Modifier.size 40 40 |>.background .green))
     if ← openB.get then
@@ -137,7 +137,7 @@ private def stateDrivenCloseAndReopen : IO Unit := do
 settled), and `runApplicationLoop` returns promptly on `done`. -/
 private def exitsWhenEmpty : IO Unit := do
   let openA ← mutableStateOf true
-  let app ← bootstrapApplication <| Tests.restartable 1 do
+  let app ← bootstrapApplication do
     if ← openA.get then
       Window "ee-a" 100 80 (config := cfg)
   let _ ← stepApplication app (idleCapMs := 5)
@@ -191,7 +191,7 @@ private def dialogParentAndModal : IO Unit := do
 private def titleAndSizeFollowParams : IO Unit := do
   let title ← mutableStateOf "before"
   let wide ← mutableStateOf false
-  let app ← bootstrapApplication <| Tests.restartable 1 do
+  let app ← bootstrapApplication do
     let t ← title.get
     let w : Dp := if ← wide.get then 300 else 200
     Window t w 150 (config := cfg)

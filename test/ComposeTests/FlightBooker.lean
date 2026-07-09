@@ -30,6 +30,7 @@ private def validationAndCombobox : IO Unit := runComposeTest
     click (.tag "mode")
     settle
     click (.text "return flight")
+    settle  -- let the menu's exit transition finish (it grabs key routing while open)
     assertEnabled (.tag "return")
     -- Start == return (both prefilled 27.03.2014): equal counts as valid.
     assertEnabled (.tag "book")

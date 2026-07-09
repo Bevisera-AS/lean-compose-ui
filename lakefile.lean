@@ -166,6 +166,13 @@ module so the UI stays importable by the test lib without a `main` clash). -/
 lean_exe «demo-cells» where
   root := `Demos.CellsMain
 
+/-- M15 desktop-components showcase: multi-window `application`, in-window
+`MenuBar`, `ContextMenuArea`, `Tooltip`s, an About `DialogWindow`, and a
+`Tray`. Model + UI live in `Demos/Desktop.lean` (importable by the MT suite);
+the `_root_.main` entry is in `Demos/DesktopMain.lean`. -/
+lean_exe «demo-desktop» where
+  root := `Demos.DesktopMain
+
 /-- M12 demo *libraries* (model + UI, no `_root_.main`): the reusable modules
 the demo exes wrap and the MT suites import. Declared as their own
 `default_target` lib (like `CellsEngine`) so `lake build` compiles them, runs
@@ -179,4 +186,4 @@ lean_lib Demos where
   srcDir := "."
   globs := #[.one `Demos.Counter, .one `Demos.TempConverter,
     .one `Demos.FlightBooker, .one `Demos.Timer, .one `Demos.Crud,
-    .one `Demos.Gallery]
+    .one `Demos.Desktop, .one `Demos.Gallery]

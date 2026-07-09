@@ -148,7 +148,7 @@ private def fillOffsetSizeIn : IO Unit := do
 
 private def rowArrangements : IO Unit := do
   let case' (arr : Arrangement) (expected : List Int32) (label : String) : IO Unit := do
-    let (root, _) ← composeTree <| Row (horizontalArrangement := arr) (content := fun _ => do
+    let (root, _) ← composeTree <| Row (horizontalArrangement := arr) (content := do
       leaf (Modifier.size 10 10)
       leaf (Modifier.size 10 10)
       leaf (Modifier.size 10 10))
@@ -165,7 +165,7 @@ private def rowArrangements : IO Unit := do
 
 private def rowCrossAlignment : IO Unit := do
   let case' (align : Alignment.Vertical) (expected : List Int32) (label : String) : IO Unit := do
-    let (root, _) ← composeTree <| Row (verticalAlignment := align) (content := fun _ => do
+    let (root, _) ← composeTree <| Row (verticalAlignment := align) (content := do
       leaf (Modifier.size 10 10)
       leaf (Modifier.size 10 20))
     let _ ← root.remeasure (.fixed 100 20)
@@ -177,9 +177,9 @@ private def rowCrossAlignment : IO Unit := do
 private def rowWeights : IO Unit := do
   -- 2:1 weights after a fixed sibling; exact division
   do
-    let (root, _) ← composeTree <| Row (content := fun rs => do
-      leaf (rs.weight 2 |>.height 10)
-      leaf (rs.weight 1 |>.height 10)
+    let (root, _) ← composeTree <| Row (content := do
+      leaf (Modifier.weight 2 |>.height 10)
+      leaf (Modifier.weight 1 |>.height 10)
       leaf (Modifier.size 10 10))
     let _ ← root.remeasure (.fixed 100 20)
     checkEq "weights 2:1: first share" (← sizeAt root [0, 0]) (⟨60, 10⟩ : IntSize)
@@ -188,10 +188,10 @@ private def rowWeights : IO Unit := do
     checkEq "weights 2:1: positions" (← childXs root) [0, 60, 90]
   -- remainder pixels distributed round-robin so totals are exact
   do
-    let (root, _) ← composeTree <| Row (content := fun rs => do
-      leaf (rs.weight 1 |>.height 10)
-      leaf (rs.weight 1 |>.height 10)
-      leaf (rs.weight 1 |>.height 10))
+    let (root, _) ← composeTree <| Row (content := do
+      leaf (Modifier.weight 1 |>.height 10)
+      leaf (Modifier.weight 1 |>.height 10)
+      leaf (Modifier.weight 1 |>.height 10))
     let _ ← root.remeasure (.fixed 100 20)
     checkEq "weights remainder: 100/3 = 34+33+33"
       [(← sizeAt root [0, 0]).width, (← sizeAt root [0, 1]).width, (← sizeAt root [0, 2]).width]
@@ -199,8 +199,8 @@ private def rowWeights : IO Unit := do
     checkEq "weights remainder: positions" (← childXs root) [0, 34, 67]
   -- fill := false leaves the share as an upper bound only
   do
-    let (root, _) ← composeTree <| Row (content := fun rs => do
-      leaf (rs.weight 1 (fill := false) |>.width 10 |>.height 10)
+    let (root, _) ← composeTree <| Row (content := do
+      leaf (Modifier.weight 1 (fill := false) |>.width 10 |>.height 10)
       leaf (Modifier.size 20 10))
     let _ ← root.remeasure (.fixed 100 20)
     checkEq "weight no-fill: child keeps its own width" (← sizeAt root [0, 0]) (⟨10, 10⟩ : IntSize)
@@ -209,7 +209,7 @@ private def rowWeights : IO Unit := do
 
 private def columnBasics : IO Unit := do
   do
-    let (root, _) ← composeTree <| Column (verticalArrangement := .spaceEvenly) (content := fun _ => do
+    let (root, _) ← composeTree <| Column (verticalArrangement := .spaceEvenly) (content := do
       leaf (Modifier.size 10 10)
       leaf (Modifier.size 10 10)
       leaf (Modifier.size 10 10))
@@ -218,7 +218,7 @@ private def columnBasics : IO Unit := do
     checkEq "column spaceEvenly: x stays start" (← childXs root) [0, 0, 0]
   do
     let (root, _) ← composeTree <| Column (verticalArrangement := .spacedBy 4)
-      (horizontalAlignment := .«end») (content := fun _ => do
+      (horizontalAlignment := .«end») (content := do
         leaf (Modifier.size 10 10)
         leaf (Modifier.size 10 10))
     let _ ← root.remeasure (.fixed 20 100)
@@ -226,19 +226,19 @@ private def columnBasics : IO Unit := do
     checkEq "column align end: x positions" (← childXs root) [10, 10]
   -- Column weight
   do
-    let (root, _) ← composeTree <| Column (content := fun cs => do
+    let (root, _) ← composeTree <| Column (content := do
       leaf (Modifier.size 10 10)
-      leaf (cs.weight 1 |>.width 10))
+      leaf (Modifier.weight 1 |>.width 10))
     let _ ← root.remeasure (.fixed 20 100)
     checkEq "column weight: fills the rest" (← sizeAt root [0, 1]) (⟨10, 90⟩ : IntSize)
     checkEq "column weight: position" (← childYs root) [0, 10]
 
 private def boxAndSpacer : IO Unit := do
   do
-    let (root, _) ← composeTree <| Box (contentAlignment := .center) (content := fun bs => do
+    let (root, _) ← composeTree <| Box (contentAlignment := .center) (content := do
       leaf (Modifier.size 20 20)
-      leaf (bs.align .bottomEnd (m := Modifier.size 20 20))
-      leaf (bs.matchParentSize))
+      leaf (Modifier.align .bottomEnd (m := Modifier.size 20 20))
+      leaf (Modifier.matchParentSize))
     let _ ← root.remeasure (.fixed 100 100)
     checkEq "box: content-aligned child centers" (← posAt root [0, 0]) (⟨40, 40⟩ : IntOffset)
     checkEq "box: per-child align overrides" (← posAt root [0, 1]) (⟨80, 80⟩ : IntOffset)
@@ -246,7 +246,7 @@ private def boxAndSpacer : IO Unit := do
     checkEq "box: matchParentSize at origin" (← posAt root [0, 2]) (⟨0, 0⟩ : IntOffset)
   -- Box wraps its largest child under loose constraints
   do
-    let (root, _) ← composeTree <| Box (content := fun _ => do
+    let (root, _) ← composeTree <| Box (content := do
       leaf (Modifier.size 20 30)
       leaf (Modifier.size 30 10))
     let _ ← root.remeasure { maxWidth := 200, maxHeight := 200 }
@@ -346,7 +346,7 @@ private def drawWalk : IO Unit := do
   let ren ← Sdl.createRenderer win (some Sdl.softwareRenderer)
   ren.setDrawColor 0 0 0 255
   ren.clear
-  let (root, _) ← composeTree <| Column (Modifier.fillMaxSize) (content := fun _ => do
+  let (root, _) ← composeTree <| Column (Modifier.fillMaxSize) (content := do
     -- y ∈ [0, 50): plain red background
     leaf (Modifier.size 50 50 |>.background .red)
     -- y ∈ [50, 100): left padding shifts the green fill to x ∈ [10, 60)
@@ -354,7 +354,7 @@ private def drawWalk : IO Unit := do
     -- y ∈ [100, 140): blue fill with a 4px white border just inside
     leaf (Modifier.size 40 40 |>.background .blue |>.border 4 .white)
     -- y ∈ [140, 160): stacking order — yellow drawn over red
-    Box (content := fun _ => do
+    Box (content := do
       leaf (Modifier.size 20 20 |>.background .red)
       leaf (Modifier.size 20 20 |>.background .yellow))
     -- y ∈ [160, 200): circle clip scopes the cyan fill

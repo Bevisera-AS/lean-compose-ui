@@ -18,7 +18,7 @@ open Compose
 composable def buttonsSection (clicks : MutableState Nat) : Composable Unit := do
   let n ← clicks.get
   Row {} (horizontalArrangement := .spacedBy 8) (verticalAlignment := .centerVertically)
-    (content := fun _ => do
+    (content := do
       Button (clicks.modify (· + 1)) (content := Text "Filled")
       OutlinedButton (clicks.modify (· + 1)) (content := Text "Outlined")
       TextButton (clicks.modify (· + 1)) (content := Text "Text")
@@ -32,7 +32,7 @@ composable def togglesSection (checked : MutableState Bool)
   let sel ← choice.get
   let o ← on.get
   Row {} (horizontalArrangement := .spacedBy 4) (verticalAlignment := .centerVertically)
-    (content := fun _ => do
+    (content := do
       Checkbox c checked.set
       Text (if c then "checked" else "unchecked")
       Spacer (Modifier.width 12)
@@ -51,7 +51,7 @@ composable def progressSection (amount : MutableState Float32) : Composable Unit
   Slider v amount.set (steps := 9)
   LinearProgressIndicator (some v)
   Row {} (horizontalArrangement := .spacedBy 16) (verticalAlignment := .centerVertically)
-    (content := fun _ => do
+    (content := do
       CircularProgressIndicator (some v)
       LinearProgressIndicator (modifier := Modifier.sizeIn (maxWidth := some 160))
       CircularProgressIndicator)
@@ -64,7 +64,7 @@ composable def darkSection (checked : MutableState Bool)
   MaterialTheme (colors := .dark) (content :=
     Surface (Modifier.fillMaxWidth) (shape := .rounded 12) (content := do
       Row (Modifier.padding (all := 12)) (horizontalArrangement := .spacedBy 8)
-        (verticalAlignment := .centerVertically) (content := fun _ => do
+        (verticalAlignment := .centerVertically) (content := do
           Text "Dark"
           Button (pure ()) (content := Text "Filled")
           Checkbox c checked.set
@@ -79,7 +79,7 @@ composable def widgetsUi : Composable Unit := do
   let amount ← remember (mutableStateOf (0.5 : Float32))
   MaterialTheme (content :=
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 10)
-      (content := fun _ => do
+      (content := do
         Text "Material widgets" (style := { fontSize := 22 })
         buttonsSection clicks
         HorizontalDivider

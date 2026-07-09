@@ -81,7 +81,7 @@ composable def timerBody (elapsed duration : MutableState Float32) :
       let t0 ← UiTask.awaitFrame
       runTicks elapsed duration t0
   Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-    (content := fun _ => do
+    (content := do
       Text "Timer" (style := { fontSize := 22 })
       Text "Elapsed time"
       LinearProgressIndicator (some (gaugeFraction e d))

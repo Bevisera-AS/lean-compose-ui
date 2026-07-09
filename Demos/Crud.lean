@@ -140,7 +140,7 @@ composable def nameRow (id : Nat) (e : Entry) (selected : Bool)
         |>.fillMaxWidth
         |>.background (if selected then colors.primaryContainer else colors.surface)
         |>.padding (horizontal := some 8) (vertical := some 4))
-    (content := fun _ => Text e.display)
+    (content := Text e.display)
 
 /-- The CRUD screen, factored on injected state so the MT suite can drive and
 inspect it directly. -/
@@ -151,20 +151,20 @@ composable def crudBody (db : MutableState Db)
   let visible := d.filtered f
   let sel := d.selected
   Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-    (content := fun _ => do
+    (content := do
       Text "CRUD" (style := { fontSize := 22 })
       TextFieldS f filter.set (modifier := Modifier.testTag "filter")
         (label := some "Filter prefix")
-      Row {} (horizontalArrangement := .spacedBy 16) (content := fun _ => do
-        Column (Modifier.testTag "list" |>.width 220) (content := fun _ =>
+      Row {} (horizontalArrangement := .spacedBy 16) (content := do
+        Column (Modifier.testTag "list" |>.width 220) (content :=
           for (id, e) in visible do
             keyed (toString id) (nameRow id e (sel == some id) (db.modify (·.select id))))
-        Column {} (verticalArrangement := .spacedBy 8) (content := fun _ => do
+        Column {} (verticalArrangement := .spacedBy 8) (content := do
           TextFieldS (← «name».get) «name».set (modifier := Modifier.testTag "name")
             (label := some "Name")
           TextFieldS (← surname.get) surname.set (modifier := Modifier.testTag "surname")
             (label := some "Surname")))
-      Row {} (horizontalArrangement := .spacedBy 8) (content := fun _ => do
+      Row {} (horizontalArrangement := .spacedBy 8) (content := do
         Button (do db.modify (·.create (← «name».get) (← surname.get)))
           (modifier := Modifier.testTag "create") (content := Text "Create")
         Button (do db.modify (·.update (← «name».get) (← surname.get)))

@@ -20,7 +20,7 @@ composable def counterUi : Composable Unit := do
   let n ← count.get
   MaterialTheme (content :=
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := fun _ => do
+      (content := do
         Text "Counter" (style := { fontSize := 22 })
         TextFieldS (toString n) (fun _ => pure ()) (enabled := false)
           (modifier := Modifier.testTag "count")

@@ -189,9 +189,9 @@ composable def circleDrawerUi : Composable Unit := do
           DrawScope.drawCircle (.solid Color.gray) c.center c.radius (style := .fill)
         DrawScope.drawCircle (.solid colors.onSurface) c.center c.radius (style := .stroke 1.5)
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-        (horizontalAlignment := .centerHorizontally) (content := fun _ => do
+        (horizontalAlignment := .centerHorizontally) (content := do
       Text "CircleDrawer" (style := { fontSize := 22 })
-      Row {} (horizontalArrangement := .spacedBy 8) (content := fun _ => do
+      Row {} (horizontalArrangement := .spacedBy 8) (content := do
         Button (history.modify (·.undo)) (enabled := h.canUndo)
           (modifier := Modifier.testTag "undo") (content := Text "Undo")
         Button (history.modify (·.redo)) (enabled := h.canRedo)
@@ -206,7 +206,7 @@ composable def circleDrawerUi : Composable Unit := do
             |>.pointerInput 1 (detectHover
                 (onEnter := onHover) (onMove := onHover))
             |>.testTag "canvas")
-        (content := fun _ => pure ())
+        (content := pure ())
       -- Right-click context menu, anchored at the click (window coords).
       match (← menuAt.get) with
       | none => pure ()
@@ -228,11 +228,11 @@ composable def circleDrawerUi : Composable Unit := do
         Dialog (onDismissRequest := closeDialog) (content :=
           Surface (Modifier.width 320) (shape := .rounded 16) (content :=
             Column (Modifier.padding (all := 20)) (verticalArrangement := .spacedBy 16)
-                (content := fun _ => do
+                (content := do
               Text s!"Adjust diameter of circle at ({center.x.toUInt32}, {center.y.toUInt32})"
               Slider live liveDiam.set (valueRange := (4, 160))
                 (modifier := Modifier.fillMaxWidth |>.testTag "diameter")
-              Row (Modifier.fillMaxWidth) (horizontalArrangement := Arrangement.«end») (content := fun _ =>
+              Row (Modifier.fillMaxWidth) (horizontalArrangement := Arrangement.«end») (content :=
                 TextButton closeDialog (modifier := Modifier.testTag "done")
                   (content := Text "Done")))))))
 

@@ -45,7 +45,7 @@ def Surface (modifier : Modifier := {}) (shape : Shape := .rectangle)
              | none => {})
     |>.clip shape
   let ambientStyle ← LocalTextStyle.current
-  Box m (content := fun _ =>
+  Box m (content :=
     CompositionLocalProvider LocalContentColor resolvedContent <|
       CompositionLocalProvider LocalTextStyle
         { ambientStyle with color := resolvedContent } content)

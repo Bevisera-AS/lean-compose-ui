@@ -43,7 +43,7 @@ private def buttonImpl (onClick : IO Unit) (modifier : Modifier) (enabled : Bool
     |>.clip shape
     |>.then layer
     |>.padding (horizontal := some horizontalPadding) (vertical := some 8)
-  Box m (contentAlignment := .center) (content := fun _ =>
+  Box m (contentAlignment := .center) (content :=
     CompositionLocalProvider LocalContentColor contentColor <|
       CompositionLocalProvider LocalTextStyle
         { typo.labelLarge with color := contentColor } content)

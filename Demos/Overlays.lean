@@ -18,13 +18,13 @@ composable def listSection (scroll : ScrollState) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   Box (Modifier.fillMaxWidth |>.height 240
         |>.border 1 colors.outlineVariant
-        |>.background colors.surface) (content := fun bs => do
+        |>.background colors.surface) (content := do
     LazyColumn scroll (itemHeight := 28) (count := 100)
       (modifier := Modifier.fillMaxWidth)
       (itemContent := fun i =>
-        Row (Modifier.padding (horizontal := some 12) (vertical := some 4)) (content := fun _ =>
+        Row (Modifier.padding (horizontal := some 12) (vertical := some 4)) (content :=
           Text s!"Item {i}"))
-    VerticalScrollbar scroll (bs.align .topEnd |>.fillMaxHeight))
+    VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight))
 
 /-- The flavor combobox: `ExposedDropdownMenuBox` + `DropdownMenu`. -/
 composable def flavorPicker (choice : MutableState String)
@@ -59,11 +59,11 @@ composable def overlaysUi : Composable Unit := do
   let dialogOpen ← remember (mutableStateOf false)
   MaterialTheme (content :=
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := fun _ => do
+      (content := do
         Text "Scroll, menus, dialogs" (style := { fontSize := 22 })
         listSection scroll
         Row {} (horizontalArrangement := .spacedBy 12)
-          (verticalAlignment := .centerVertically) (content := fun _ => do
+          (verticalAlignment := .centerVertically) (content := do
             flavorPicker choice menuOpen
             dialogSection dialogOpen)))
 

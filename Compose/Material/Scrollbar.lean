@@ -13,7 +13,7 @@ open Draw
 `VerticalScrollbar`/`HorizontalScrollbar` — the desktop companions of a
 scroll container, mirroring Compose-for-Desktop's `VerticalScrollbar` /
 `HorizontalScrollbar` / `rememberScrollbarAdapter` on the M10 diet: place
-one in a `Box` over the scrolling content (e.g. `BoxScope.align .centerEnd`
+one in a `Box` over the scrolling content (e.g. `Modifier.align .centerEnd`
 + `Modifier.fillMaxHeight` for the vertical one, `.bottomCenter` +
 `fillMaxWidth` for the horizontal). Both axes share one implementation
 (`scrollbar`); only the main-axis coordinate differs.

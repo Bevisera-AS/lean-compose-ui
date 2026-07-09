@@ -226,7 +226,7 @@ private def buttonPressRipple : IO Unit := do
   -- Green backdrop behind the button: an *unclipped* white ripple would
   -- visibly whiten the corner pixel outside the rounded shape.
   let r ← mboot <| themed <| Box (Modifier.fillMaxSize |>.background .green)
-    (content := fun _ => Button (pure ()) (content := Text "OK"))
+    (content := Button (pure ()) (content := Text "OK"))
   let before ← r.pixel 40 20
   r.press 12 20
   r.settle    -- ripple expands to cover, alpha held while pressed
@@ -304,7 +304,7 @@ not on the first); Enter when focused also selects. -/
 private def radioSelects : IO Unit := do
   let choice ← mutableStateOf (0 : Nat)
   let calls ← IO.mkRef (#[] : Array Nat)
-  let r ← mboot (h := 200) <| themed <| Column {} (content := fun _ => do
+  let r ← mboot (h := 200) <| themed <| Column {} (content := do
     Tests.restartable 1 do
       let sel ← choice.get
       RadioButton (sel == 0) (do calls.modify (·.push 0); choice.set 0)
@@ -354,7 +354,7 @@ private def disabledControls : IO Unit := do
   let calls ← IO.mkRef (0 : Nat)
   let bump : IO Unit := calls.modify (· + 1)
   runComposeTest (height := 220)
-    (content := Column {} (content := fun _ => do
+    (content := Column {} (content := do
       Checkbox false (fun _ => bump) (enabled := false)
         (modifier := Modifier.testTag "cb")
       Switch false (fun _ => bump) (enabled := false)
@@ -473,7 +473,7 @@ private def sliderStepsAndRange : IO Unit := do
 /-- Determinate indicators: the linear bar fills exactly its fraction; the
 circular arc covers the swept half only. -/
 private def determinateProgress : IO Unit := do
-  let r ← mboot <| themed <| Column {} (content := fun _ => do
+  let r ← mboot <| themed <| Column {} (content := do
     LinearProgressIndicator (some 0.5)
     CircularProgressIndicator (some 0.5))
   -- Linear: 240 wide, 4 tall at y 0..4.
@@ -486,7 +486,7 @@ private def determinateProgress : IO Unit := do
 
 /-- Indeterminate indicators keep changing across ticked frames. -/
 private def indeterminateProgress : IO Unit := do
-  let r ← mboot <| themed <| Column {} (content := fun _ => do
+  let r ← mboot <| themed <| Column {} (content := do
     LinearProgressIndicator
     CircularProgressIndicator)
   check "indeterminate: infinite transitions subscribed" (← r.s.hasFrameWork)

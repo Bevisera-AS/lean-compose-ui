@@ -186,35 +186,27 @@ private def rowColumnPolicy (isRow : Bool) (arr : Arrangement) (crossBias : Floa
             (if isRow then p.height else p.width) crossSize
           p.placeAt (if isRow then ⟨poss[i]!, cross⟩ else ⟨cross, poss[i]!⟩) }
 
-/-- Receiver scope of `Row` content; grants access to `weight`. Mirrors
-`androidx.compose.foundation.layout.RowScope`. -/
-structure RowScope where
-
-/-- Receiver scope of `Column` content; grants access to `weight`. Mirrors
-`androidx.compose.foundation.layout.ColumnScope`. -/
-structure ColumnScope where
+namespace Modifier
 
 /-- Size this child proportionally to `w` within the free main-axis space of
-its `Row` (measured after unweighted siblings). With `fill` the child is
-forced to exactly its share; otherwise the share is only an upper bound.
-Mirrors `RowScope.weight`. -/
-def RowScope.weight (_ : RowScope) (w : Float32) (fill : Bool := true)
-    (m : Modifier := {}) : Modifier :=
+its `Row`/`Column` (measured after unweighted siblings). With `fill` the
+child is forced to exactly its share; otherwise the share is only an upper
+bound. Only meaningful on a direct child of `Row`/`Column` (ignored
+elsewhere). Mirrors `RowScope.weight`/`ColumnScope.weight` (a plain modifier
+here — no receiver scopes). -/
+def weight (w : Float32) (fill : Bool := true) (m : Modifier := {}) : Modifier :=
   m.withParentData { weight := w, fill }
 
-/-- `Column` analog of `RowScope.weight`. Mirrors `ColumnScope.weight`. -/
-def ColumnScope.weight (_ : ColumnScope) (w : Float32) (fill : Bool := true)
-    (m : Modifier := {}) : Modifier :=
-  m.withParentData { weight := w, fill }
+end Modifier
 
 /-- Lay children out horizontally. Mirrors
 `androidx.compose.foundation.layout.Row`. -/
 def Row (modifier : Modifier := {})
     (horizontalArrangement : Arrangement := .start)
     (verticalAlignment : Alignment.Vertical := .top)
-    (content : RowScope → Composable Unit := fun _ => pure ()) : Composable Unit :=
+    (content : Composable Unit := pure ()) : Composable Unit :=
   Layout modifier (rowColumnPolicy true horizontalArrangement verticalAlignment.bias)
-    (content ⟨⟩)
+    content
     (policyInputs := some (mixKeys 0x526f77 (mixKeys (arrangementKey horizontalArrangement)
       verticalAlignment.bias.toBits.toUInt64)))
 
@@ -223,25 +215,27 @@ def Row (modifier : Modifier := {})
 def Column (modifier : Modifier := {})
     (verticalArrangement : Arrangement := .top)
     (horizontalAlignment : Alignment.Horizontal := .start)
-    (content : ColumnScope → Composable Unit := fun _ => pure ()) : Composable Unit :=
+    (content : Composable Unit := pure ()) : Composable Unit :=
   Layout modifier (rowColumnPolicy false verticalArrangement horizontalAlignment.bias)
-    (content ⟨⟩)
+    content
     (policyInputs := some (mixKeys 0x436f6c (mixKeys (arrangementKey verticalArrangement)
       horizontalAlignment.bias.toBits.toUInt64)))
 
-/-- Receiver scope of `Box` content; grants access to `align` and
-`matchParentSize`. Mirrors `androidx.compose.foundation.layout.BoxScope`. -/
-structure BoxScope where
+namespace Modifier
 
-/-- Override the box's `contentAlignment` for this child. Mirrors
-`BoxScope.align`. -/
-def BoxScope.align (_ : BoxScope) (a : Alignment) (m : Modifier := {}) : Modifier :=
+/-- Override the enclosing box's `contentAlignment` for this child. Only
+meaningful on a direct child of `Box` (ignored elsewhere). Mirrors
+`BoxScope.align` (a plain modifier here — no receiver scopes). -/
+def align (a : Alignment) (m : Modifier := {}) : Modifier :=
   m.withParentData { align := some (a.horizontalBias, a.verticalBias) }
 
-/-- Size this child to the box's final size (it does not influence that
-size). Mirrors `BoxScope.matchParentSize`. -/
-def BoxScope.matchParentSize (_ : BoxScope) (m : Modifier := {}) : Modifier :=
+/-- Size this child to the enclosing box's final size (it does not influence
+that size). Only meaningful on a direct child of `Box` (ignored elsewhere).
+Mirrors `BoxScope.matchParentSize`. -/
+def matchParentSize (m : Modifier := {}) : Modifier :=
   m.withParentData { matchParentSize := true }
+
+end Modifier
 
 /-- `Box` measure: regular children measure loose and the box wraps the
 largest (clamped); `matchParentSize` children then measure at exactly the
@@ -279,8 +273,8 @@ private def boxPolicy (contentAlign : Alignment) : MeasurePolicy := fun _ childr
 Mirrors `androidx.compose.foundation.layout.Box`. -/
 def Box (modifier : Modifier := {})
     (contentAlignment : Alignment := .topStart)
-    (content : BoxScope → Composable Unit := fun _ => pure ()) : Composable Unit :=
-  Layout modifier (boxPolicy contentAlignment) (content ⟨⟩)
+    (content : Composable Unit := pure ()) : Composable Unit :=
+  Layout modifier (boxPolicy contentAlignment) content
     (policyInputs := some (mixKeys 0x426f78
       (mixKeys contentAlignment.horizontalBias.toBits.toUInt64
         contentAlignment.verticalBias.toBits.toUInt64)))

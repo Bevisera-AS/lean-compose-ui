@@ -135,7 +135,7 @@ composable def flightBookerUi : Composable Unit := do
   let bookable := canBook isReturn s r
   MaterialTheme (content :=
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := fun _ => do
+      (content := do
         Text "Book Flight" (style := { fontSize := 22 })
         ExposedDropdownMenuBox open' expanded.set (content := fun scope => do
           ExposedDropdownMenuField scope selectedMode (expanded := open')

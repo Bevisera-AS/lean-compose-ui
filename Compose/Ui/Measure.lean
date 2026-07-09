@@ -63,14 +63,14 @@ structure MeasureResult where
 our layouts consume instead of an `Any?`). Box alignment is stored as
 `(horizontalBias, verticalBias)` in `[-1, 1]` (Compose's `BiasAlignment`). -/
 structure ParentData where
-  /-- `RowScope`/`ColumnScope` `weight`; `0` = unweighted. -/
+  /-- `Modifier.weight`; `0` = unweighted. -/
   weight : Float32 := 0
   /-- Whether a weighted child must fill its allotted main-axis space
   (`min = max`). Mirrors the `fill` flag of `Modifier.weight`. -/
   fill : Bool := true
-  /-- `BoxScope.align` override as alignment biases. -/
+  /-- `Modifier.align` override as alignment biases. -/
   align : Option (Float32 × Float32) := none
-  /-- `BoxScope.matchParentSize`: measured with the box's final size. -/
+  /-- `Modifier.matchParentSize`: measured with the box's final size. -/
   matchParentSize : Bool := false
   deriving Repr, BEq, Inhabited
 

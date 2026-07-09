@@ -153,7 +153,7 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
               (content :=
                 CompositionLocalProvider LocalMenuState (some menu) <|
                   Column (Modifier.padding (vertical := some 8))
-                    (content := fun _ => content))))
+                    (content := content))))
 
 /-- One menu entry: `text` + `onClick` (the caller closes the menu in
 `onClick`/`onDismissRequest`). Hover or Down/Up highlight it (onSurface 8 %
@@ -189,7 +189,7 @@ composable def DropdownMenuItem (text : String) (onClick : IO Unit)
     |>.background (if highlighted && enabled then colors.onSurface.withAlpha 0.08
                    else .transparent)
     |>.padding (horizontal := some 12) (vertical := some 8)
-  Box m (contentAlignment := .centerStart) (content := fun _ =>
+  Box m (contentAlignment := .centerStart) (content :=
     Text text (color := some (if enabled then colors.onSurface
                               else colors.onSurface.withAlpha disabledContentAlpha)))
 
@@ -239,7 +239,7 @@ composable def ExposedDropdownMenuBox (expanded : Bool)
   scope.expandedRef.set expanded
   scope.onExpandedChangeRef.set onExpandedChange
   Box (modifier.onGloballyPositioned scope.anchorRect.set)
-    (content := fun _ => content scope)
+    (content := content scope)
 
 /-- The ▾ trailing glyph of `ExposedDropdownMenuField`, drawn with two lines
 (no icon font). Flips ▴ while expanded. -/
@@ -268,9 +268,9 @@ composable def ExposedDropdownMenuField (scope : ExposedDropdownMenuBoxScope)
     |>.border (if focused then 2 else 1)
         (if focused then colors.primary else colors.outline) shapes.extraSmall
     |>.padding (horizontal := some 12) (vertical := some 8)
-  Row m (verticalAlignment := .centerVertically) (content := fun rs => do
+  Row m (verticalAlignment := .centerVertically) (content := do
     Text value (color := some colors.onSurface)
-    Spacer (rs.weight 1 |>.height 1)
+    Spacer (Modifier.weight 1 |>.height 1)
     trailingTriangle colors.onSurfaceVariant expanded)
 
 end Compose

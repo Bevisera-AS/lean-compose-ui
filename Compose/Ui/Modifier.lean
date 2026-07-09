@@ -452,7 +452,7 @@ def offset (x y : Dp) (m : Modifier := {}) : Modifier :=
   m.append (.layout (.offset x y))
 
 /-- Attach parent data (weight/align); the raw element behind
-`RowScope.weight` and `BoxScope.align`. Mirrors `ParentDataModifier`. -/
+`Modifier.weight` and `Modifier.align`. Mirrors `ParentDataModifier`. -/
 def withParentData (pd : ParentData) (m : Modifier := {}) : Modifier :=
   m.append (.layout (.parentData pd))
 

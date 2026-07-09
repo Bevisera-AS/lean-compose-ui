@@ -31,11 +31,11 @@ composable def AlertDialog (onDismissRequest : IO Unit) (title : String)
         |>.sizeIn (minWidth := some 280) (maxWidth := some 560))
       (shape := shapes.large) (color := some colors.surface) (content :=
         Column (Modifier.padding (all := 24)) (verticalArrangement := .spacedBy 16)
-          (content := fun _ => do
+          (content := do
             Text title (style := typo.titleLarge)
             Text text (style := typo.bodyMedium) (color := some colors.onSurfaceVariant)
             Row (Modifier.fillMaxWidth) (horizontalArrangement := .«end»)
-              (verticalAlignment := .centerVertically) (content := fun _ => do
+              (verticalAlignment := .centerVertically) (content := do
                 match dismissButton with
                 | some b => do b; Spacer (Modifier.width 8)
                 | none => pure ()

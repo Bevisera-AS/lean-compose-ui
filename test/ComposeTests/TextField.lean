@@ -240,7 +240,7 @@ private def minWidthOverflow : IO Unit := do
   -- height). The Row keeps a real, non-zero height.
   let v1 ← mutableStateOf ({} : TextFieldValue)
   runComposeTest (width := 400)
-    (content := Row (Modifier.width 120 |>.testTag "row") (content := fun _ =>
+    (content := Row (Modifier.width 120 |>.testTag "row") (content :=
       Tests.restartable 1 do TextField (← v1.get) v1.set (modifier := Modifier.testTag "tf")))
     do
       let tf ← boundsOf (.tag "tf")
@@ -256,7 +256,7 @@ private def minWidthOverflow : IO Unit := do
   runComposeTest (width := 400)
     (content := do
       let sc ← rememberScrollState
-      Row (Modifier.horizontalScroll sc) (content := fun _ =>
+      Row (Modifier.horizontalScroll sc) (content :=
         Tests.restartable 1 do
           TextField (← v2.get) v2.set (minWidth := 60) (modifier := Modifier.testTag "tf2")))
     do

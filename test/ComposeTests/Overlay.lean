@@ -131,7 +131,7 @@ shifts the drawn content. -/
 private def scrollWheel : IO Unit := do
   let st ← ScrollState.create
   let r ← oboot <| Column (Modifier.size 100 100 |>.verticalScroll st)
-    (content := fun _ => do
+    (content := do
       block 100 50 .red
       block 100 50 .green
       block 100 50 .blue
@@ -163,7 +163,7 @@ private def scrollProgrammatic : IO Unit := do
   let st ← ScrollState.create
   let count ← mutableStateOf (4 : Nat)
   let r ← oboot <| Column (Modifier.size 100 100 |>.verticalScroll st)
-    (content := fun _ => Tests.restartable 1 do
+    (content := Tests.restartable 1 do
       let n ← count.get
       for i in [0:n] do
         keyed i (block 100 50 (if i % 2 == 0 then .red else .green)))
@@ -188,8 +188,8 @@ private def scrollNested : IO Unit := do
   let outer ← ScrollState.create
   let inner ← ScrollState.create
   let r ← oboot <| Column (Modifier.size 100 100 |>.verticalScroll outer)
-    (content := fun _ => do
-      Column (Modifier.size 100 60 |>.verticalScroll inner) (content := fun _ => do
+    (content := do
+      Column (Modifier.size 100 60 |>.verticalScroll inner) (content := do
         block 100 60 .red
         block 100 60 .green)
       block 100 140 .blue)
@@ -214,10 +214,10 @@ private def scrollNested : IO Unit := do
 private def scrollbarGeometry : IO Unit := do
   let st ← ScrollState.create
   let r ← oboot <| themed <| Box (Modifier.size 100 100 |>.background .white)
-    (content := fun bs => do
-      Column (Modifier.fillMaxSize |>.verticalScroll st) (content := fun _ =>
+    (content := do
+      Column (Modifier.fillMaxSize |>.verticalScroll st) (content :=
         block 100 400 .white)
-      VerticalScrollbar st (bs.align .topEnd |>.fillMaxHeight))
+      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight))
   r.settle
   let thumb := overWhite (L.onSurface.withAlpha 0.4)
   -- track 100, viewport 100, content 400 ⇒ thumb 25 px at offset 0.
@@ -237,10 +237,10 @@ page by a viewport. -/
 private def scrollbarDrag : IO Unit := do
   let st ← ScrollState.create
   let r ← oboot <| themed <| Box (Modifier.size 100 100 |>.background .white)
-    (content := fun bs => do
-      Column (Modifier.fillMaxSize |>.verticalScroll st) (content := fun _ =>
+    (content := do
+      Column (Modifier.fillMaxSize |>.verticalScroll st) (content :=
         block 100 400 .white)
-      VerticalScrollbar st (bs.align .topEnd |>.fillMaxHeight))
+      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight))
   r.settle
   -- Thumb 25 px at 0; drag from inside it by 30 px: ratio = 300/75 = 4.
   r.press 96 10
@@ -269,10 +269,10 @@ widens the thumb to 8 dp. -/
 private def scrollbarAutoHide : IO Unit := do
   let st ← ScrollState.create
   let r ← oboot <| themed <| Box (Modifier.size 100 100 |>.background .white)
-    (content := fun bs => do
-      Column (Modifier.fillMaxSize |>.verticalScroll st) (content := fun _ =>
+    (content := do
+      Column (Modifier.fillMaxSize |>.verticalScroll st) (content :=
         block 100 400 .white)
-      VerticalScrollbar st (bs.align .topEnd |>.fillMaxHeight))
+      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight))
   r.settle
   let thumb := overWhite (L.onSurface.withAlpha 0.4)
   check "auto-hide: visible after boot activity" (near (← r.pixel 98 10) thumb 20)
@@ -316,7 +316,7 @@ private def lazyVirtualization : IO Unit := do
     DisposableEffect i (do pure (disposed.modify (·.push i)))
     Spacer (Modifier.size 100 20)
   let r ← oboot <| Box (Modifier.size 100 100)
-    (content := fun _ =>
+    (content :=
       LazyColumn st (itemHeight := 20) (count := 100)
         (modifier := Modifier.fillMaxWidth) (itemContent := item))
   r.settle
@@ -354,7 +354,7 @@ private def lazyVirtualization : IO Unit := do
 private def lazyWheelPixels : IO Unit := do
   let st ← ScrollState.create
   let r ← oboot <| Box (Modifier.size 100 100)
-    (content := fun _ =>
+    (content :=
       LazyColumn st (itemHeight := 20) (count := 100)
         (modifier := Modifier.fillMaxWidth)
         (itemContent := fun i =>
@@ -377,7 +377,7 @@ private def lazyWheelPixels : IO Unit := do
 /-- A dismissable popup gated on `open`, anchored at `anchor`. -/
 private def popupContent (open' : MutableState Bool) (anchor : Rect)
     (body : Composable Unit) : Composable Unit :=
-  themed <| Box (Modifier.fillMaxSize |>.background .green) (content := fun _ =>
+  themed <| Box (Modifier.fillMaxSize |>.background .green) (content :=
     Tests.restartable 1 do
       if ← open'.get then
         withGroup 1 <| Popup (anchor := some anchor)
@@ -434,7 +434,7 @@ private def popupStackedEsc : IO Unit := do
   let open1 ← mutableStateOf true
   let open2 ← mutableStateOf true
   let r ← oboot <| themed <| Box (Modifier.fillMaxSize |>.background .green)
-    (content := fun _ => do
+    (content := do
       Tests.restartable 1 do
         if ← open1.get then
           withGroup 1 <| Popup (anchor := some ⟨20, 20, 40, 40⟩)
@@ -470,7 +470,7 @@ private def dialogModal : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
   let open' ← mutableStateOf false
   let r ← oboot <| themed <| Box (Modifier.fillMaxSize |>.background .white)
-    (content := fun _ => do
+    (content := do
       Button (clicks.modify (· + 1)) (content := Text "OK")
       Tests.restartable 1 do
         if ← open'.get then
@@ -518,7 +518,7 @@ private def alertDialogBasics : IO Unit := do
   let open' ← mutableStateOf true
   let confirmed ← IO.mkRef (0 : Nat)
   let r ← oboot <| themed <| Box (Modifier.fillMaxSize |>.background .white)
-    (content := fun _ =>
+    (content :=
       Tests.restartable 1 do
         if ← open'.get then
           withGroup 1 <| AlertDialog (onDismissRequest := open'.set false)
@@ -556,7 +556,7 @@ private structure MenuFixture where
   toggles : IO.Ref (Array Bool)
 
 private def menuUi (f : MenuFixture) : Composable Unit :=
-  themed <| Box (Modifier.fillMaxSize |>.background .green) (content := fun _ =>
+  themed <| Box (Modifier.fillMaxSize |>.background .green) (content :=
     Tests.restartable 1 do
       let isOpen ← f.expanded.get
       ExposedDropdownMenuBox isOpen

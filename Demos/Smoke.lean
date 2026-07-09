@@ -44,7 +44,7 @@ composable def smokeUi : Composable Unit := do
   LaunchedEffect 0 (cyclePalette phase)
   LaunchedEffect 1 (animateWidth width)
   Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-    (content := fun _ => do
+    (content := do
       let p ← phase.get
       for i in [0:3] do
         paletteBox p i

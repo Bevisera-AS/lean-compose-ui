@@ -112,7 +112,7 @@ composable def tempConverterUi : Composable Unit := do
   let f ← fahrenheit.get
   MaterialTheme (content :=
     Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := fun _ => do
+      (content := do
         Text "Temperature Converter" (style := { fontSize := 22 })
         TextFieldS c
           (fun t => do

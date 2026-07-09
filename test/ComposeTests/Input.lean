@@ -113,7 +113,7 @@ private partial def logEvents (log : IO.Ref (Array String)) (tag : String)
 a point missing the top sibling falls through to the one below. -/
 private def hitZOrder : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.size 50 50 |>.pointerInput 1 (logEvents log "under" (only := [.press])))
     leaf (Modifier.size 30 30 |>.pointerInput 2 (logEvents log "over" (only := [.press]))))
   let _ ← r.im.pointerEvent (pressAt 10 10)
@@ -128,9 +128,9 @@ private def hitZOrder : IO Unit := do
 test), for the node's own handlers and for its children. -/
 private def hitClipBounds : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     Box (Modifier.size 40 40 |>.clip .circle |>.pointerInput 1 (logEvents log "self"))
-      (content := fun _ => do
+      (content := do
         leaf (Modifier.fillMaxSize |>.pointerInput 2 (logEvents log "child")))
     pure ())
   let _ ← r.im.pointerEvent (pressAt 2 2)   -- inside the rect, outside the circle
@@ -144,7 +144,7 @@ private def hitClipBounds : IO Unit := do
 positions are delivered element-local. -/
 private def hitWrapperOffsets : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.padding (all := 10)
       |>.pointerInput 1 (logEvents log "pad" (withPos := true))
       |>.size 30 30))
@@ -164,7 +164,7 @@ private def consumptionBubbling : IO Unit := do
   let r ← rig <|
     Box (Modifier.size 50 50 |>.pointerInput 1
           (logEvents log "outer" (only := [.press, .release])))
-      (content := fun _ => do
+      (content := do
         leaf (Modifier.size 50 50 |>.pointerInput 2
           (logEvents log "inner" (only := [.press, .release]) (consume := [.press]))))
   let _ ← r.im.pointerEvent (pressAt 10 10)
@@ -182,7 +182,7 @@ private def scrollConsumption : IO Unit := do
   let eat ← IO.mkRef true
   let r ← rig <|
     Box (Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure .zero))
-      (content := fun _ => do
+      (content := do
         leaf (Modifier.size 50 50 |>.onScroll (fun d => do
           inner.modify (·.push d)
           return (if ← eat.get then d else .zero))))
@@ -201,7 +201,7 @@ private def scrollAxisSplit : IO Unit := do
   let outer ← IO.mkRef (#[] : Array Offset)
   let r ← rig <|
     Box (Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure d))
-      (content := fun _ => do
+      (content := do
         leaf (Modifier.size 50 50 |>.onScroll (fun d => pure ⟨0, d.y⟩)))
   let _ ← r.im.pointerEvent (scrollAt 10 10 ⟨4, 3⟩)
   checkEq "axis split: inner ate y, outer saw the x remainder"
@@ -219,8 +219,8 @@ private def hoverEnterExit : IO Unit := do
   let ee : List PointerEventType := [.enter, .exit]
   let r ← rig <|
     Box (Modifier.size 100 80 |>.pointerInput 9 (logEvents log "p" ee))
-      (content := fun _ => do
-        Row {} (content := fun _ => do
+      (content := do
+        Row {} (content := do
           leaf (Modifier.size 50 50 |>.pointerInput 1 (logEvents log "a" ee))
           leaf (Modifier.size 50 50 |>.pointerInput 2 (logEvents log "b" ee))))
   let _ ← r.im.pointerEvent (moveTo 10 10)
@@ -238,8 +238,8 @@ where none applies. -/
 private def hoverCursor : IO Unit := do
   let r ← rig <|
     Box (Modifier.size 100 80 |>.pointerHoverIcon .crosshair)
-      (content := fun _ => do
-        Row {} (content := fun _ => do
+      (content := do
+        Row {} (content := do
           leaf (Modifier.size 50 50 |>.pointerHoverIcon .text)
           leaf (Modifier.size 50 50)))
   let _ ← r.im.pointerEvent (moveTo 10 10)   -- over the text leaf
@@ -256,7 +256,7 @@ private def hoverCursor : IO Unit := do
 is a click-cancel. -/
 private def tapGesture : IO Unit := do
   let taps ← IO.mkRef (#[] : Array (Int32 × Int32))
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectTapGestures (onTap := some fun p => taps.modify (·.push (p.x.toInt32, p.y.toInt32))))))
   let _ ← r.im.pointerEvent (pressAt 10 10)
@@ -274,7 +274,7 @@ private def tapGesture : IO Unit := do
 private def doubleTapGesture : IO Unit := do
   let taps ← IO.mkRef (0 : Nat)
   let doubles ← IO.mkRef (0 : Nat)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectTapGestures
         (onTap := some fun _ => taps.modify (· + 1))
@@ -292,7 +292,7 @@ still tap. -/
 private def secondaryTapGesture : IO Unit := do
   let taps ← IO.mkRef (0 : Nat)
   let secs ← IO.mkRef (#[] : Array (Int32 × Int32))
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectTapGestures
         (onTap := some fun _ => taps.modify (· + 1))
@@ -321,7 +321,7 @@ private def longPressGesture : IO Unit := do
   let taps ← IO.mkRef (0 : Nat)
   let longs ← IO.mkRef (#[] : Array (Int32 × Int32))
   let pressed ← IO.mkRef (#[] : Array Bool)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectTapGestures
         (onTap := some fun _ => taps.modify (· + 1))
@@ -346,7 +346,7 @@ private def longPressGesture : IO Unit := do
 window leave. -/
 private def dragGesture : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectDragGestures
         (onDrag := fun p d =>
@@ -396,7 +396,7 @@ private def focusTraversal : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
   let fc (tag : String) : Bool → IO Unit := fun b =>
     log.modify (·.push s!"{tag}{if b then "+" else "-"}")
-  let r ← rig <| Column {} (content := fun _ => do
+  let r ← rig <| Column {} (content := do
     leaf (Modifier.size 20 20 |>.focusable |>.onFocusChanged (fc "a"))
     leaf (Modifier.size 20 20 |>.focusable |>.onFocusChanged (fc "b"))
     leaf (Modifier.size 20 20 |>.focusable |>.onFocusChanged (fc "c")))
@@ -440,7 +440,7 @@ private def keyRouting : IO Unit := do
     pure (eats.contains ke.key)
   let r ← rig <|
     Box (Modifier.size 100 100 |>.onKeyEvent (handler "anc" []))
-      (content := fun _ => do
+      (content := do
         leaf (Modifier.size 20 20 |>.focusable |>.onKeyEvent (handler "leaf" [.a, .f]))
         leaf (Modifier.size 20 20 |>.focusable |>.onKeyEvent (handler "leaf2" [.tab])))
   check "route: unfocused key falls through" (!(← r.im.keyEvent { key := .a }))
@@ -465,7 +465,7 @@ private def keyRouting : IO Unit := do
 consuming stops). -/
 private def textRouting : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Column {} (content := fun _ => do
+  let r ← rig <| Column {} (content := do
     leaf (Modifier.size 20 20 |>.focusable
       |>.onTextInput (fun t => do log.modify (·.push s!"a:{t}"); pure true))
     leaf (Modifier.size 20 20 |>.focusable
@@ -483,7 +483,7 @@ hovered. -/
 private def clickableBehavior : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
   let srcCell ← IO.mkRef (none : Option InteractionSource)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     let src ← rememberInteractionSource
     SideEffect (srcCell.set (some src))
     leaf (Modifier.size 40 40 |>.clickable (clicks.modify (· + 1)) (source := some src)))
@@ -514,7 +514,7 @@ private def clickableBehavior : IO Unit := do
 /-- Disabled `clickable`: no clicks, no focus, no keyboard activation. -/
 private def clickableDisabled : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
-  let r ← rig <| Box {} (content := fun _ => do
+  let r ← rig <| Box {} (content := do
     leaf (Modifier.size 40 40 |>.clickable (clicks.modify (· + 1)) (enabled := false)))
   let _ ← r.im.pointerEvent (pressAt 10 10)
   let _ ← r.im.pointerEvent (releaseAt 10 10)
@@ -534,7 +534,7 @@ private def pointerInputLifecycle : IO Unit := do
   let show' ← mutableStateOf true
   let r ← rig <| Tests.restartable 1 do
     if ← show'.get then
-      withGroup 11 <| Box {} (content := fun _ => do
+      withGroup 11 <| Box {} (content := do
         let k ← liftM (m := IO) key.get
         leaf (Modifier.size 40 40 |>.pointerInput k
           (logEvents log s!"h{k}" (only := [.press, .release]))))
@@ -602,7 +602,7 @@ private def sdlTranslation : IO Unit := do
   let texts ← IO.mkRef (#[] : Array String)
   let hook ← IO.mkRef (#[] : Array Bool)
   let ctx ← bootstrap "compose-input-test" 200 150
-    (Box {} (content := fun _ => do
+    (Box {} (content := do
       leaf (Modifier.size 50 50
         |>.clickable (clicks.modify (· + 1))
         |>.onScroll (fun d => do scrolls.modify (·.push d); pure d)

@@ -41,7 +41,7 @@ private def rw (r : Compose.Rect) : Float32 := r.right - r.left
 /-! ## Finders, merging, failure dumps -/
 
 private def findersAndFailures : IO Unit := runComposeTest
-  (content := Column {} (content := fun _ => do
+  (content := Column {} (content := do
     Text "alpha"
     Text "dup"
     Text "dup"
@@ -77,7 +77,7 @@ private def clickThroughRouter : IO Unit := do
   let offCalls ← IO.mkRef (0 : Nat)
   let count ← mutableStateOf (0 : Nat)
   runComposeTest
-    (content := Column {} (content := fun _ => Tests.restartable 1 do
+    (content := Column {} (content := Tests.restartable 1 do
       Checkbox (← checked.get) checked.set (modifier := Modifier.testTag "cb")
       Checkbox false (fun _ => offCalls.modify (· + 1)) (enabled := false)
         (modifier := Modifier.testTag "cb-off")
@@ -109,7 +109,7 @@ private def keyboardFlow : IO Unit := do
   let checked ← mutableStateOf false
   let count ← mutableStateOf (0 : Nat)
   runComposeTest
-    (content := Column {} (content := fun _ => Tests.restartable 1 do
+    (content := Column {} (content := Tests.restartable 1 do
       Checkbox (← checked.get) checked.set (modifier := Modifier.testTag "cb")
       Button (count.modify (· + 1)) (modifier := Modifier.testTag "go")
         (content := Text "go")
@@ -133,7 +133,7 @@ private def keyboardFlow : IO Unit := do
 private def textFieldFlow : IO Unit := do
   let value ← mutableStateOf ""
   runComposeTest
-    (content := Column {} (content := fun _ => Tests.restartable 1 do
+    (content := Column {} (content := Tests.restartable 1 do
       TextFieldS (← value.get) value.set (modifier := Modifier.testTag "name")
       Text s!"len: {(← value.get).length}"))
     do
@@ -159,7 +159,7 @@ private def widgetStates : IO Unit := do
   let on ← mutableStateOf false
   let choice ← mutableStateOf (0 : Nat)
   runComposeTest
-    (content := Column {} (content := fun _ => Tests.restartable 1 do
+    (content := Column {} (content := Tests.restartable 1 do
       Switch (← on.get) on.set (modifier := Modifier.testTag "sw")
       RadioButton ((← choice.get) == 0) (choice.set 0)
         (modifier := Modifier.testTag "r0")
@@ -208,7 +208,7 @@ private def scrollFlow : IO Unit := runComposeTest
     let st ← rememberScrollState
     Box (Modifier.testTag "scroller" |>.width 60 |>.height 100
           |>.verticalScroll st)
-      (content := fun _ => Column {} (content := fun _ => do
+      (content := Column {} (content := do
         Box (Modifier.size 60 80 |>.testTag "top")
         Spacer (Modifier.size 60 400))))
   do
@@ -227,7 +227,7 @@ private def scrollFlow : IO Unit := runComposeTest
 private def animationClock : IO Unit := do
   let big ← mutableStateOf false
   runComposeTest
-    (content := Column {} (content := fun _ => Tests.restartable 1 do
+    (content := Column {} (content := Tests.restartable 1 do
       let w ← animateDpAsState (if (← big.get) then 200 else 40) (.tween 200 0 .linear)
       Box (Modifier.testTag "box" |>.size (← w.get) 20)
       Button (big.set true) (content := Text "grow")))
@@ -256,7 +256,7 @@ private def animationClock : IO Unit := do
 private def replaceAndFocusVerbs : IO Unit := do
   let value ← mutableStateOf "seed"
   runComposeTest
-    (content := Column {} (content := fun _ => Tests.restartable 1 do
+    (content := Column {} (content := Tests.restartable 1 do
       TextFieldS (← value.get) value.set (modifier := Modifier.testTag "tf")
       Box (Modifier.testTag "target" |>.size 60 20 |>.focusable)))
     do
@@ -278,7 +278,7 @@ private def focusRequesterFlow : IO Unit := do
       let frB ← rememberFocusRequester
       -- An effect can grab initial focus before any user input.
       LaunchedEffect 0 frB.requestFocus
-      Column {} (content := fun _ => do
+      Column {} (content := do
         Box (Modifier.testTag "a" |>.size 60 20 |>.focusable |>.focusRequester frA)
         Box (Modifier.testTag "b" |>.size 60 20 |>.focusable |>.focusRequester frB)
         Button frA.requestFocus (modifier := Modifier.testTag "grab")
@@ -322,7 +322,7 @@ private def dialogFocusScope : IO Unit := do
   let open' ← mutableStateOf false
   runComposeTest
     (content := Tests.restartable 1 do
-      Column {} (content := fun _ => do
+      Column {} (content := do
         Button (open'.set true) (modifier := Modifier.testTag "bg") (content := Text "open")
         if ← open'.get then
           AlertDialog (onDismissRequest := open'.set false) (title := "T") (text := "B")
@@ -352,7 +352,7 @@ private def scrollAnimateInterrupt : IO Unit := do
   runComposeTest
     (content :=
       Box (Modifier.testTag "sc" |>.width 60 |>.height 100 |>.verticalScroll st)
-        (content := fun _ => Column {} (content := fun _ =>
+        (content := Column {} (content :=
           Spacer (Modifier.size 60 500))))
     do
       awaitIdle  -- measure runs: content 500, viewport 100 ⇒ maxValue 400
@@ -378,7 +378,7 @@ private def menuFlow : IO Unit := do
   let expanded ← mutableStateOf false
   let picked ← mutableStateOf "-"
   runComposeTest
-    (content := Column {} (content := fun _ => Tests.restartable 1 do
+    (content := Column {} (content := Tests.restartable 1 do
       Button (expanded.set true) (content := Text "menu")
       DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false)
         (content := do

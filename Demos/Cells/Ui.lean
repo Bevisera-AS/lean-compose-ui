@@ -240,7 +240,7 @@ composable def headerCell (tag label : String) (highlight : Bool) :
                        else colors.surfaceVariant)
         |>.drawBehind (gridLineDraw colors.outlineVariant))
     (contentAlignment := .center)
-    (content := fun _ =>
+    (content :=
       Text label (style := { fontSize := 12 })
         (color := some colors.onSurfaceVariant))
 
@@ -290,7 +290,7 @@ composable def cellView (st : CellsState) (ref : CellRef) : Composable Unit := d
       |>.drawBehind (gridLineDraw colors.outlineVariant)
     Box (if isSel then base.border 2 colors.primary else base)
       (contentAlignment := .centerStart)
-      (content := fun _ =>
+      (content :=
         Text value.display (modifier := Modifier.padding (horizontal := some 6))
           (style := { fontSize := 12 })
           (color := some (if isErr then colors.error else colors.onSurface)))
@@ -339,7 +339,7 @@ composable def formulaBar (st : CellsState) : Composable Unit := do
         |>.padding (horizontal := some 8) (vertical := some 5))
     (horizontalArrangement := .spacedBy 8)
     (verticalAlignment := .centerVertically)
-    (content := fun _ => do
+    (content := do
       Text (toString sel) (modifier := Modifier.testTag "formula-ref" |>.width 32)
         (style := { fontSize := 12 }) (color := some colors.primary)
       Text src (modifier := Modifier.testTag "formula-src")
@@ -352,22 +352,22 @@ composable def cellsScreen (st : CellsState) (hs vs : ScrollState) :
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   Column (Modifier.fillMaxSize |>.background colors.background)
-    (content := fun cs => do
+    (content := do
       formulaBar st
-      Row (cs.weight 1 |>.fillMaxWidth) (content := fun rs => do
-        Column (Modifier.width headerW) (content := fun lcs => do
+      Row (Modifier.weight 1 |>.fillMaxWidth) (content := do
+        Column (Modifier.width headerW) (content := do
           Box (Modifier.size headerW headerH |>.testTag "corner"
                 |>.background colors.surfaceVariant
                 |>.drawBehind (gridLineDraw colors.outlineVariant))
-          rowHeaders st vs (lcs.weight 1 |>.fillMaxWidth))
-        Column (rs.weight 1 |>.fillMaxHeight) (content := fun gcs => do
+          rowHeaders st vs (Modifier.weight 1 |>.fillMaxWidth))
+        Column (Modifier.weight 1 |>.fillMaxHeight) (content := do
           columnHeaders st hs
-          Box (gcs.weight 1 |>.fillMaxWidth) (content := fun bs => do
+          Box (Modifier.weight 1 |>.fillMaxWidth) (content := do
             gridCells st hs vs
             VerticalScrollbar vs
-              (bs.align .centerEnd |>.fillMaxHeight |>.testTag "vscrollbar")
+              (Modifier.align .centerEnd |>.fillMaxHeight |>.testTag "vscrollbar")
             HorizontalScrollbar hs
-              (bs.align .bottomCenter |>.fillMaxWidth |>.testTag "hscrollbar")))))
+              (Modifier.align .bottomCenter |>.fillMaxWidth |>.testTag "hscrollbar")))))
 
 /-- The Cells demo UI (see the module docstring). `initial` seeds the sheet
 (tests boot it empty). -/

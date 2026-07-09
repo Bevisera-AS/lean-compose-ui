@@ -565,7 +565,7 @@ private def menuUi (f : MenuFixture) : Composable Unit :=
           ExposedDropdownMenuField scope (← f.selected.get) (expanded := isOpen)
           let anchor ← scope.anchor
           DropdownMenu isOpen (onDismissRequest := f.expanded.set false)
-            (anchor := anchor) (content := do
+            (anchor := anchor) (matchAnchorWidth := true) (content := do
               for name in ["Alpha", "Beta", "Gamma"] do
                 keyed name <| DropdownMenuItem name
                   (onClick := do f.selected.set name; f.expanded.set false))))

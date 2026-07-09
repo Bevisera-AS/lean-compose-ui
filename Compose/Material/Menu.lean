@@ -18,6 +18,9 @@ their `androidx.compose.material3` namesakes on the M10 diet:
   `onDismissRequest`; grabs key routing while open) holding an
   `AnimatedVisibility` (fade + expand vertically) around a bordered `Surface`
   (`shapes.medium`, `outline` border — no shadows in this renderer). The
+  surface wraps its **widest item** (`Modifier.widthIntrinsicMax`, 112dp
+  floor) — or the anchor's width with `matchAnchorWidth` — and the
+  `fillMaxWidth` items stretch to exactly it. The
   enter transition plays because visibility flips one frame after the popup
   registers. On close the popup **stays mounted while the mirror-image exit
   transition (fade + shrink vertically) plays**, then unregisters — a short
@@ -114,14 +117,28 @@ private def menuKeyHandler (menu : MenuState) : KeyEvent → IO Bool := fun ke =
 /-- A dropdown menu anchored below `anchor` (flipping above when out of
 room): a focusable popup that dismisses on outside click / Esc and routes
 Down/Up/Enter to its items while open. `expanded` drives it; closing is the
-caller's job via `onDismissRequest` (and item `onClick`s). Mirrors
+caller's job via `onDismissRequest` (and item `onClick`s). The menu is as
+wide as its widest item (`Modifier.widthIntrinsicMax`, 112dp floor, at most
+the window) with items stretching to exactly that width; `matchAnchorWidth`
+instead fixes the width to the anchor's — the exposed-dropdown convention
+(Material's `exposedDropdownSize`). Mirrors
 `androidx.compose.material3.DropdownMenu`. -/
 composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
     (anchor : Option Rect := none) (offset : IntOffset := ⟨0, 2⟩)
-    (modifier : Modifier := {})
+    (matchAnchorWidth : Bool := false) (modifier : Modifier := {})
     (content : Composable Unit := pure ()) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
+  let density ← LocalDensity.current
+  -- Width: the anchor's (exposed dropdown) or the widest item's — never the
+  -- window's (the overlay measures popup content with window-sized max
+  -- constraints, which `fillMaxWidth` items would otherwise stretch to).
+  let widthMod :=
+    match anchor with
+    | some a =>
+      if matchAnchorWidth && a.width > 0 then Modifier.width (density.pxToDp a.width)
+      else Modifier.widthIntrinsicMax
+    | none => Modifier.widthIntrinsicMax
   let menu ← remember MenuState.create
   -- Enter: the popup composes hidden, then the effect flips visibility on the
   -- next drain so AnimatedVisibility animates in. Exit: the popup stays
@@ -147,7 +164,7 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
           (enter := fadeIn (spec := some animSpec) ++ expandVertically (spec := some animSpec))
           (exit := fadeOut (spec := some animSpec) ++ shrinkVertically (spec := some animSpec))
           (content :=
-            Surface (modifier.sizeIn (minWidth := some 112))
+            Surface (modifier.then widthMod |>.sizeIn (minWidth := some 112))
               (shape := shapes.medium) (color := some colors.surface)
               (border := some { width := 1, color := colors.outline })
               (content :=
@@ -226,7 +243,9 @@ end ExposedDropdownMenuBoxScope
 /-- Pairs an anchor (compose it in `content`, e.g.
 `ExposedDropdownMenuField`) with its `DropdownMenu`: captures the anchor
 rect via `Modifier.onGloballyPositioned` and provides it (plus an expansion
-toggle) through the scope. Mirrors
+toggle) through the scope. Pass the enclosed `DropdownMenu`
+`matchAnchorWidth := true` so the menu matches the field's width (Material's
+exposed-dropdown convention). Mirrors
 `androidx.compose.material3.ExposedDropdownMenuBox`. -/
 composable def ExposedDropdownMenuBox (expanded : Bool)
     (onExpandedChange : Bool → IO Unit) (modifier : Modifier := {})

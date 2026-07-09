@@ -132,11 +132,25 @@ private def keyboardNav : IO Unit := do
     assertExists (.text "New")
     assertMissing (.text "Copy")
 
+/-- Regression ("menus span the full window"): the open dropdown wraps its
+widest item — the backdrop covers the window, the menu surface must not. The
+item's merged semantics row is the full hover row, so its bounds are the
+menu's inner width. -/
+private def dropdownWidth : IO Unit := do
+  let f ← fixture
+  runComposeTest (content := MenuBar f.menus) do
+    click (.text "File")
+    settle
+    let b ← boundsOf (.text "New")
+    check s!"menu bar dropdown: item wraps the menu, not the window (width {b.width})"
+      (b.width ≥ 112 && b.width < 320)
+
 /-- The MenuBar group. -/
 def run : IO Unit := do
   scenario "openHoverSwitch" openHoverSwitch
   scenario "activateAndDisabled" activateAndDisabled
   scenario "dismiss" dismiss
   scenario "keyboardNav" keyboardNav
+  scenario "dropdownWidth" dropdownWidth
 
 end Tests.MenuBar

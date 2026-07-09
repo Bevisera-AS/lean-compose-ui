@@ -36,7 +36,7 @@ composable def flavorPicker (choice : MutableState String)
     ExposedDropdownMenuField scope sel (expanded := open')
     let anchor ← scope.anchor
     DropdownMenu open' (onDismissRequest := expanded.set false) (anchor := anchor)
-      (content := do
+      (matchAnchorWidth := true) (content := do
         for f in flavors do
           keyed f (DropdownMenuItem f (onClick := do choice.set f; expanded.set false))))
 

@@ -147,7 +147,8 @@ private def menuBarDropdown (menu : MenuState) (items : Array MenuElement)
     (openIndex : MutableState (Option Nat)) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
-  Surface (Modifier.sizeIn (minWidth := some 112)) (shape := shapes.medium)
+  Surface (Modifier.widthIntrinsicMax |>.sizeIn (minWidth := some 112))
+    (shape := shapes.medium)
     (color := some colors.surface)
     (border := some { width := 1, color := colors.outline })
     (content :=

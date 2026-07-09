@@ -142,7 +142,7 @@ composable def flightBookerUi : Composable Unit := do
             (modifier := Modifier.testTag "mode")
           let anchor ← scope.anchor
           DropdownMenu open' (onDismissRequest := expanded.set false) (anchor := anchor)
-            (content := do
+            (matchAnchorWidth := true) (content := do
               for m in [oneWayLabel, returnLabel] do
                 keyed m (DropdownMenuItem m
                   (onClick := do mode.set m; expanded.set false))))

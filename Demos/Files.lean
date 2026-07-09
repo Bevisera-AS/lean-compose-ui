@@ -319,7 +319,7 @@ composable def breadcrumbBar (scope : LaunchScope) (fs : FsSource) (st : FilesSt
 human-readable size. Clicking a directory navigates in; clicking a file selects
 it. Highlighted when selected. -/
 composable def fileRow (scope : LaunchScope) (fs : FsSource) (st : FilesState)
-    (cwd : String) (e : FsEntry) : Composable Unit := do
+    (e : FsEntry) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   -- Read the selection *here* so this row's own restart scope tracks it: a
   -- `LazyColumn` item skips while its index is unchanged, so only a per-row
@@ -329,9 +329,20 @@ composable def fileRow (scope : LaunchScope) (fs : FsSource) (st : FilesState)
   let isSelected := match ← st.selected.get with
     | some s => s.name == e.name && s.isDir == e.isDir
     | none => false
-  let onClick : IO Unit :=
-    if e.isDir then navigate scope fs st (childPath cwd e.name)
-    else st.selected.set (some e)
+  -- The tap coroutine is retained across keyed row reuse (its key is constant),
+  -- so the click must read the *live* directory and entry rather than values
+  -- captured at composition — `st` is a stable handle and (name, kind) is the
+  -- row's key, so both stay correct even when the node is recycled.
+  let onClick : IO Unit := do
+    if e.isDir then
+      navigate scope fs st (childPath (← st.cwd.get) e.name)
+    else
+      match ← st.listing.get with
+      | .ok entries =>
+        match entries.find? (fun x => x.name == e.name && x.isDir == e.isDir) with
+        | some cur => st.selected.set (some cur)
+        | none => pure ()
+      | .error _ => pure ()
   Row (Modifier.testTag s!"row:{e.name}"
         |>.semantics (selected := some isSelected)
         |>.clickable onClick
@@ -376,7 +387,6 @@ composable def infoPanel (st : FilesState) : Composable Unit := do
 composable def listingArea (scope : LaunchScope) (fs : FsSource) (st : FilesState) :
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  let cwd ← st.cwd.get
   let showHidden ← st.showHidden.get
   let scroll ← rememberScrollState
   Box (Modifier.fillMaxWidth |>.fillMaxHeight |>.background colors.surface)
@@ -400,7 +410,7 @@ composable def listingArea (scope : LaunchScope) (fs : FsSource) (st : FilesStat
           (key := fun i => mixKeys (stringKey sorted[i]!.name)
             (if sorted[i]!.isDir then 1 else 0))
           (modifier := Modifier.fillMaxSize)
-          (itemContent := fun i => fileRow scope fs st cwd sorted[i]!)
+          (itemContent := fun i => fileRow scope fs st sorted[i]!)
         VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
     -- A subtle in-flight hint, shown over the (still-visible) previous listing.
     if ← st.loading.get then

@@ -45,6 +45,21 @@ private def fakeFs : FsSource := fun path =>
   | "/home/user/secret" => .error "permission denied"
   | _ => .ok #[]
 
+/-- Two directories that each hold a same-named subdirectory (`common`) and a
+same-named file (`dup.txt`, differing in size), each landing at the *same* sorted
+index in both parents — so a `LazyColumn` reuses (and skips) those rows across the
+navigation. Exercises the keyed-reuse stale-closure defect. -/
+private def dupFs : FsSource := fun path => return match path with
+  | "/" => .ok #[dir "home"]
+  | "/home" => .ok #[dir "user"]
+  -- sorted dirs-first: common(0), Docs(1), dup.txt(2)
+  | "/home/user" => .ok #[dir "common", dir "Docs", file "dup.txt" 111]
+  -- sorted dirs-first: common(0), Zeta(1), dup.txt(2)
+  | "/home/user/Docs" => .ok #[dir "common", dir "Zeta", file "dup.txt" 222]
+  | "/home/user/common" => .ok #[file "outer.txt" 7]
+  | "/home/user/Docs/common" => .ok #[file "inner.txt" 9]
+  | _ => .ok #[]
+
 /-- Fresh demo state pointing at the fake home (the listing loads on the first
 composition of `filesBody`). -/
 private def fresh : IO FilesState := FilesState.init "/home/user"
@@ -246,6 +261,41 @@ private def selectionHighlight : IO Unit := do
     assertSelected (.tag "row:readme.md") (expected := true)
     assertSelected (.tag "row:notes.txt") (expected := false)
 
+/-! ## Rows never fire a stale click closure across keyed reuse (fix #2) -/
+
+/-- A same-named directory (`common`) exists in both `/home/user` and
+`/home/user/Docs` at the same sorted index, so its row node is reused (and its
+tap coroutine retained) across the navigation. Clicking it must open the *current*
+directory's child, not the one captured when the row was first composed. -/
+private def sameNameDir : IO Unit := do
+  let st ← FilesState.init "/home/user"
+  runComposeTest (content := filesBody dupFs st) (width := 640) (height := 480) do
+    settleLoad st
+    navClick st (.tag "row:Docs")
+    checkEq "in Docs" (← st.cwd.get) "/home/user/Docs"
+    -- The reused `common` row must navigate into the nested one.
+    navClick st (.tag "row:common")
+    checkEq "entered the nested common, not the outer one"
+      (← st.cwd.get) "/home/user/Docs/common"
+    assertExists (.tag "row:inner.txt")
+    assertMissing (.tag "row:outer.txt")
+
+/-- The same-named `dup.txt` file (111 B outside, 222 B inside `Docs`) sits at the
+same index in both, so its row is reused. Selecting it after navigating must show
+the *current* directory's file (222 B), not the stale captured entry (111 B). -/
+private def sameNameFile : IO Unit := do
+  let st ← FilesState.init "/home/user"
+  runComposeTest (content := filesBody dupFs st) (width := 640) (height := 480) do
+    settleLoad st
+    click (.tag "row:dup.txt")
+    assertExists (.text "111 bytes (111 B)")
+    navClick st (.tag "row:Docs")
+    click (.tag "row:dup.txt")
+    -- The info panel reflects the current directory's file, not the stale one.
+    assertExists (.text "222 bytes (222 B)")
+    assertMissing (.text "111 bytes (111 B)")
+    assertExists (.text "/home/user/Docs/dup.txt")
+
 /-! ## Listing is loaded asynchronously off the UI thread (fix #3) -/
 
 /-- A slow (gated) directory read must not wedge the UI: the breadcrumb advances
@@ -311,6 +361,8 @@ def run : IO Unit := do
   scenario "permissionDenied" permissionDenied
   scenario "hiddenToggle" hiddenToggle
   scenario "selectionHighlight" selectionHighlight
+  scenario "sameNameDir" sameNameDir
+  scenario "sameNameFile" sameNameFile
   scenario "asyncCompletes" asyncCompletes
   scenario "asyncStaleResult" asyncStaleResult
 

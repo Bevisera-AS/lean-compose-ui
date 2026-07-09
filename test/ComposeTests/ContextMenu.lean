@@ -84,11 +84,35 @@ private def clickAwayDismiss : IO Unit := do
     settle
     assertMissing (.role .menuItem)
 
+/-! ## Primary clicks pass through to ancestor clickables -/
+
+private def leftClickBubbles : IO Unit := do
+  let clicks ← IO.mkRef (0 : Nat)
+  runComposeTest
+    (content :=
+      -- The clickable *wraps* the context-menu area: a left click on the area
+      -- must bubble out (the detector claims only right-button presses). The
+      -- clickable merges descendant semantics, so the click targets the outer
+      -- tag — its center is inside the area, which fills it.
+      Box (Modifier.clickable (clicks.modify (· + 1)) |>.testTag "outer")
+        (content :=
+          ContextMenuArea #[{ label := "Cut", onClick := pure () }]
+            (content := Box (Modifier.size 80 40))))
+    do
+      click (.tag "outer")
+      checkEq "left click reached the ancestor clickable" (← clicks.get) 1
+      assertMissing (.role .menuItem)     -- and did not open the menu
+      rightClick (.tag "outer")
+      settle
+      assertExists (.role .menuItem)      -- right click still owns the menu
+      checkEq "right click did not fire the ancestor" (← clicks.get) 1
+
 /-- The ContextMenu group. -/
 def run : IO Unit := do
   scenario "openSelectClose" openSelectClose
   scenario "disabledDoesNotFire" disabledDoesNotFire
   scenario "escDismiss" escDismiss
   scenario "clickAwayDismiss" clickAwayDismiss
+  scenario "leftClickBubbles" leftClickBubbles
 
 end Tests.ContextMenu

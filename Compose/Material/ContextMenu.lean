@@ -1,5 +1,4 @@
 import Compose.Material.Menu
-import Compose.Foundation.Gestures
 
 namespace Compose
 
@@ -10,9 +9,12 @@ namespace Compose
 `androidx.compose.foundation.ContextMenuArea` — a secondary (right) click
 inside `content` opens a menu at the click point:
 
-* The gesture is `detectTapGestures (onSecondaryTap := …)` (the desktop
-  context-menu click); the click position (content-local) is lifted to window
-  coordinates via the captured content rect and used as the menu anchor.
+* The gesture is a dedicated secondary-tap detector (the `onSecondaryTap`
+  branch of `detectTapGestures`, extracted so it claims **only** right-button
+  presses — primary clicks pass through unconsumed and keep working on
+  ancestor clickables). The click position (content-local) is lifted to
+  window coordinates via the captured content rect and used as the menu
+  anchor.
 * The menu itself **is** a `DropdownMenu`, so it inherits Menu.lean wholesale:
   the elevated bordered `Surface`, the enter/exit transitions, click-away and
   Esc dismissal, and Down/Up/Enter keyboard nav. Items come from a plain data
@@ -34,6 +36,32 @@ structure ContextMenuItem where
   onClick : IO Unit
   deriving Inhabited
 
+/-- Await events until the pressed button ends: a `release` (consumed) or an
+`exit` (`none`). The private helper of `detectTapGestures`, restated for the
+right-button-only detector below. -/
+private partial def awaitRelease (scope : PointerInputScope) :
+    UiTask (Option PointerEvent) := do
+  let ev ← scope.awaitEvent
+  match ev.eventType with
+  | .release => ev.consume; return some ev
+  | .exit => return none
+  | _ => awaitRelease scope
+
+/-- Detect completed right-button clicks *only*: a right press is consumed and
+`onSecondaryTap` fires on its release inside the element; every other event —
+crucially primary presses — passes through unconsumed, so ancestor clickables
+behave as if the area weren't there. (`detectTapGestures` consumes every
+press, which would swallow left clicks meant for ancestors.) -/
+private partial def detectSecondaryTap (onSecondaryTap : Offset → IO Unit)
+    (scope : PointerInputScope) : UiTask Unit := do
+  let ev ← scope.awaitEvent
+  if ev.eventType == .press && ev.button == some .right then
+    ev.consume
+    if let some rel ← awaitRelease scope then
+      if ← scope.containsLocal rel.position then
+        onSecondaryTap rel.position
+  detectSecondaryTap onSecondaryTap scope
+
 /-- Wrap `content` so a right-click inside it opens `items` in a `DropdownMenu`
 anchored at the click point: click-away or Esc dismisses, choosing an entry
 runs its `onClick` then closes, and disabled entries never fire. Mirrors
@@ -50,7 +78,7 @@ composable def ContextMenuArea (items : Array ContextMenuItem)
     expanded.set true
   let m := modifier.onGloballyPositioned rectRef.set
     |>.pointerInput (mixKeys (stringKey "Compose.ContextMenuArea") id.toUInt64)
-        (detectTapGestures (onSecondaryTap := some onSecondary))
+        (detectSecondaryTap onSecondary)
   Box m (content := content)
   let a ← anchor.get
   DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false)

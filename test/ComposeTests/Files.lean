@@ -227,6 +227,25 @@ private def hiddenToggle : IO Unit := do
     check "visible selection survives"
       ((← st.selected.get) == some (file "notes.txt" 2048 (some 1704067200)))
 
+/-! ## Selecting a file updates the row highlight in place (fix #1) -/
+
+private def selectionHighlight : IO Unit := do
+  let st ← fresh
+  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+    settleLoad st
+    -- Nothing selected: no row reports selected semantics.
+    assertSelected (.tag "row:notes.txt") (expected := false)
+    assertSelected (.tag "row:readme.md") (expected := false)
+    -- Clicking a file highlights *that* row (its `selected` semantics flips,
+    -- even though its `LazyColumn` index never moved).
+    click (.tag "row:notes.txt")
+    assertSelected (.tag "row:notes.txt") (expected := true)
+    assertSelected (.tag "row:readme.md") (expected := false)
+    -- Clicking another file moves the highlight off the first.
+    click (.tag "row:readme.md")
+    assertSelected (.tag "row:readme.md") (expected := true)
+    assertSelected (.tag "row:notes.txt") (expected := false)
+
 /-! ## Listing is loaded asynchronously off the UI thread (fix #3) -/
 
 /-- A slow (gated) directory read must not wedge the UI: the breadcrumb advances
@@ -291,6 +310,7 @@ def run : IO Unit := do
   scenario "fileInfo" fileInfo
   scenario "permissionDenied" permissionDenied
   scenario "hiddenToggle" hiddenToggle
+  scenario "selectionHighlight" selectionHighlight
   scenario "asyncCompletes" asyncCompletes
   scenario "asyncStaleResult" asyncStaleResult
 

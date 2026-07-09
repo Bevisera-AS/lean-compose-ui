@@ -319,8 +319,16 @@ composable def breadcrumbBar (scope : LaunchScope) (fs : FsSource) (st : FilesSt
 human-readable size. Clicking a directory navigates in; clicking a file selects
 it. Highlighted when selected. -/
 composable def fileRow (scope : LaunchScope) (fs : FsSource) (st : FilesState)
-    (cwd : String) (e : FsEntry) (isSelected : Bool) : Composable Unit := do
+    (cwd : String) (e : FsEntry) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  -- Read the selection *here* so this row's own restart scope tracks it: a
+  -- `LazyColumn` item skips while its index is unchanged, so only a per-row
+  -- read makes the highlight follow the selection (Compose's stable-lambda
+  -- skip means a value threaded from the parent would never update). Compare by
+  -- the stable identity (name + kind — the row's key) so a reused row resolves.
+  let isSelected := match ← st.selected.get with
+    | some s => s.name == e.name && s.isDir == e.isDir
+    | none => false
   let onClick : IO Unit :=
     if e.isDir then navigate scope fs st (childPath cwd e.name)
     else st.selected.set (some e)
@@ -369,7 +377,6 @@ composable def listingArea (scope : LaunchScope) (fs : FsSource) (st : FilesStat
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let cwd ← st.cwd.get
-  let sel ← st.selected.get
   let showHidden ← st.showHidden.get
   let scroll ← rememberScrollState
   Box (Modifier.fillMaxWidth |>.fillMaxHeight |>.background colors.surface)
@@ -393,9 +400,7 @@ composable def listingArea (scope : LaunchScope) (fs : FsSource) (st : FilesStat
           (key := fun i => mixKeys (stringKey sorted[i]!.name)
             (if sorted[i]!.isDir then 1 else 0))
           (modifier := Modifier.fillMaxSize)
-          (itemContent := fun i =>
-            let e := sorted[i]!
-            fileRow scope fs st cwd e (sel == some e))
+          (itemContent := fun i => fileRow scope fs st cwd sorted[i]!)
         VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
     -- A subtle in-flight hint, shown over the (still-visible) previous listing.
     if ← st.loading.get then

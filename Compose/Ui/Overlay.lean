@@ -163,9 +163,12 @@ private def overlayLayerContent (id : Nat) (anchor : Option Rect)
           Layout m .leaf (policyInputs := some 0x736372)
       else
         withGroup 0x6e736372 (pure ())
-      Layout (Modifier.pointerInput
-          (mixKeys (stringKey "Compose.Overlay.content") id.toUInt64) swallowClicks)
-        .root content (policyInputs := some 0x63747277))
+      -- A modal overlay marks its content subtree a focus scope, confining Tab
+      -- traversal to it while open (see `FocusManager.focusables`).
+      let contentMod := Modifier.pointerInput
+          (mixKeys (stringKey "Compose.Overlay.content") id.toUInt64) swallowClicks
+      let contentMod := if modal then contentMod.focusScope id else contentMod
+      Layout contentMod .root content (policyInputs := some 0x63747277))
 
 /-! ## The host -/
 
@@ -253,9 +256,13 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
               | none => return false
             else
               return false }
+      -- Modal overlays scope focus traversal to themselves and restore the
+      -- prior focus on close (see `FocusManager.pushModalScope`).
+      if modal then (← ctx.modalFocusHook.get) entry.id true
       return do
         ctx.unregisterKeyHandler entry.id
         ctx.unregisterOverlay entry.id
+        if modal then (← ctx.modalFocusHook.get) entry.id false
 
 /-- Compose `content` into an overlay above the window's main content,
 positioned below `anchor` (flipping above it when out of room, always

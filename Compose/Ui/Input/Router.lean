@@ -232,6 +232,10 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
   let conv := fun x y => do
     let (rx, ry) ← ctx.renderer.coordinatesFromWindow x y
     pure (⟨rx, ry⟩ : Offset)
+  -- Modal overlays (Dialog) scope Tab traversal to their subtree and restore
+  -- prior focus on close, through the focus manager.
+  ctx.modalFocusHook.set fun id opening =>
+    if opening then im.focus.pushModalScope id else im.focus.popModalScope id
   ctx.inputSink.set (im.sdlEvent conv)
   return im
 

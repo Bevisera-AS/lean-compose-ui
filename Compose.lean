@@ -65,6 +65,8 @@ import Compose.Material.ProgressIndicator
 import Compose.Material.Divider
 import Compose.Material.Scrollbar
 import Compose.Material.Menu
+import Compose.Material.Tooltip
+import Compose.Material.ContextMenu
 import Compose.Material.Dialog
 import Compose.Material.TextField
 import Compose.Test

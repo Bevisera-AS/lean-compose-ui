@@ -12,6 +12,8 @@ import ComposeTests.Text
 import ComposeTests.Material
 import ComposeTests.Overlay
 import ComposeTests.TextField
+import ComposeTests.Tooltip
+import ComposeTests.ContextMenu
 import ComposeTests.UiTest
 import ComposeTests.Counter
 import ComposeTests.TempConverter
@@ -50,6 +52,8 @@ def main : IO UInt32 := do
   Harness.group "Material" Material.run
   Harness.group "Overlay" Overlay.run
   Harness.group "TextField" TextField.run
+  Harness.group "Tooltip" Tooltip.run
+  Harness.group "ContextMenu" ContextMenu.run
   Harness.group "UiTest" UiTest.run
   Harness.group "Counter" Counter.run
   Harness.group "TempConverter" TempConverter.run

@@ -1,14 +1,16 @@
-import Sdl
+import Compose.Test
 
 /-!
 # Minimal runtime test harness
 
 Mirrors lean-sdl3's harness shape: `check`/`checkEq`/`checkThrows` report one
-line per assertion and bump a global failure counter; `group` runs a module's
-tests, turning an unexpected throw into a failure instead of aborting the run;
-`summary` returns the process exit code (1 if anything failed).
-`COMPOSE_TEST_GROUP=<Name>` runs a single group. Pixel-probe helpers
-(`colorNear`, `showColor`) for readback assertions live here too.
+line per assertion and bump global pass/failure counters; `group` runs a
+module's tests, turning an unexpected throw into a failure instead of
+aborting the run; `summary` prints the total check count (its own passes plus
+the MT framework's `Compose.Test.checksPassed`) and returns the process exit
+code (1 if anything failed). `COMPOSE_TEST_GROUP=<Name>` runs a single group.
+Pixel-probe helpers (`colorNear`, `showColor`) for readback assertions live
+here too.
 -/
 
 namespace Tests.Harness
@@ -16,9 +18,13 @@ namespace Tests.Harness
 /-- Global failure counter. -/
 initialize failures : IO.Ref Nat ← IO.mkRef 0
 
+/-- Global pass counter (the `ok` lines this harness printed itself). -/
+initialize passes : IO.Ref Nat ← IO.mkRef 0
+
 /-- Record a pass/fail for a boolean condition. -/
 def check (name : String) (cond : Bool) : IO Unit := do
   if cond then
+    passes.modify (· + 1)
     IO.println s!"ok {name}"
   else
     IO.eprintln s!"FAIL {name}"
@@ -27,6 +33,7 @@ def check (name : String) (cond : Bool) : IO Unit := do
 /-- Record a pass/fail for an equality, printing both sides on mismatch. -/
 def checkEq [BEq α] [ToString α] (name : String) (actual expected : α) : IO Unit := do
   if actual == expected then
+    passes.modify (· + 1)
     IO.println s!"ok {name}"
   else
     IO.eprintln s!"FAIL {name}: got {actual}, want {expected}"
@@ -64,14 +71,16 @@ def scenario (name : String) (body : IO Unit) : IO Unit := do
     IO.eprintln s!"FAIL {name}: {e}"
     failures.modify (· + 1)
 
-/-- Final tally; exit code 1 iff any check failed. -/
+/-- Final tally (harness passes + the MT framework's assertion passes); exit
+code 1 iff any check failed. -/
 def summary : IO UInt32 := do
   let n ← failures.get
+  let total := (← passes.get) + (← Compose.Test.checksPassed.get)
   if n == 0 then
-    IO.println "\nAll tests passed."
+    IO.println s!"\n{total} checks passed.\nAll tests passed."
     return 0
   else
-    IO.eprintln s!"\n{n} test(s) FAILED."
+    IO.eprintln s!"\n{n} test(s) FAILED ({total} checks passed)."
     return 1
 
 /-- Absolute difference of two `Nat`s. -/

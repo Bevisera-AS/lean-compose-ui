@@ -32,6 +32,7 @@ private def failsWith (label : String) (needles : List String)
     for nd in needles do
       unless (msg.splitOn nd).length > 1 do
         throw (IO.userError s!"{label}: message lacks \"{nd}\"\n--- message ---\n{msg}")
+    Harness.passes.modify (· + 1)
     IO.println s!"ok {label}"
 
 /-- Width of a rect (bounds assertions). -/
@@ -186,12 +187,12 @@ private def sliderDragAndKeys : IO Unit := do
       Slider (← value.get) value.set (modifier := Modifier.testTag "sl"))
     do
       assertRangeValue (.tag "sl") 0.25
-      -- Window is 320 wide; the slider fills it: track 12..308 (296 px).
+      -- Window is 480 wide; the slider fills it: track 12..468 (456 px).
       -- A click at the center seeks to 0.5 …
       click (.tag "sl")
       assertRangeValue (.tag "sl") 0.5 (tol := 0.02)
-      -- … and a 74 px drag moves a quarter of the track.
-      drag (.tag "sl") ⟨74, 0⟩
+      -- … and a 114 px drag moves a quarter of the track.
+      drag (.tag "sl") ⟨114, 0⟩
       assertRangeValue (.tag "sl") 0.75 (tol := 0.02)
       -- The click focused it; End jumps to the range end through key routing.
       assertFocused (.tag "sl")
@@ -249,6 +250,24 @@ private def animationClock : IO Unit := do
       assertThat (.tag "box") "settled at 200" (fun n => rw n.bounds == 200)
       settle
       assertThat (.tag "box") "stable after settle" (fun n => rw n.bounds == 200)
+
+/-! ## M14b verbs: replaceText and requestFocus -/
+
+private def replaceAndFocusVerbs : IO Unit := do
+  let value ← mutableStateOf "seed"
+  runComposeTest
+    (content := Column {} (content := fun _ => Tests.restartable 1 do
+      TextFieldS (← value.get) value.set (modifier := Modifier.testTag "tf")
+      Box (Modifier.testTag "target" |>.size 60 20 |>.focusable)))
+    do
+      assertTextEquals (.tag "tf") "seed"
+      replaceText (.tag "tf") "fresh"          -- select-all + retype, not append
+      assertTextEquals (.tag "tf") "fresh"
+      replaceText (.tag "tf") ""               -- empty replacement clears
+      assertTextEquals (.tag "tf") ""
+      requestFocus (.tag "target")             -- focus without a click
+      assertFocused (.tag "target")
+      assertNotFocused (.tag "tf")
 
 /-! ## Programmatic focus: FocusRequester from handlers and effects -/
 
@@ -328,6 +347,7 @@ def run : IO Unit := do
   scenario "widgetStates" widgetStates
   scenario "sliderDragAndKeys" sliderDragAndKeys
   scenario "scrollFlow" scrollFlow
+  scenario "replaceAndFocusVerbs" replaceAndFocusVerbs
   scenario "focusRequesterFlow" focusRequesterFlow
   scenario "animationClock" animationClock
   scenario "dialogFlow" dialogFlow

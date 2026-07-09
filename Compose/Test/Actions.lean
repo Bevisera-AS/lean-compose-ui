@@ -86,4 +86,25 @@ def typeText (m : Matcher) (text : String) : TestM Unit := do
     textInput c.toString
   awaitIdle
 
+/-- Replace the matching text field's content with `text`: focus it (a real
+click when needed), select all (Ctrl-A through the editing keymap), then
+type — the selection makes the first codepoint replace everything; an empty
+`text` clears via Backspace. Mirrors `performTextReplacement`. -/
+def replaceText (m : Matcher) (text : String) : TestM Unit := do
+  typeText m ""                        -- focus through the real input path
+  pressKey .a (mods := Sdl.Keymod.lCtrl)
+  if text.isEmpty then
+    pressKey .backspace
+  else
+    typeText m text
+
+/-- Move keyboard focus straight to the unique matching node — the
+programmatic seam for tests that need focus without a click (the node must
+still be focusable for keys to route as in production). Mirrors
+`SemanticsNodeInteraction.requestFocus`. -/
+def requestFocus (m : Matcher) : TestM Unit := do
+  let n ← find m
+  (← uiTest).input.focus.requestFocus (some n.layout)
+  awaitIdle
+
 end Compose.Test

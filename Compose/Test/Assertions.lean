@@ -17,8 +17,14 @@ Mirrors `assertExists` / `assertDoesNotExist` / `assertTextEquals` /
 `assertRangeInfoEquals` — as `TestM` verbs taking the `Matcher` first.
 -/
 
+/-- Process-global count of `ok` lines the assertions have printed — an
+external harness adds this to its own tally for a final "N checks passed"
+summary. -/
+initialize checksPassed : IO.Ref Nat ← IO.mkRef 0
+
 /-- Record a passing check (one `ok` line, harness-countable). -/
-private def pass (name : String) : TestM Unit :=
+private def pass (name : String) : TestM Unit := do
+  checksPassed.modify (· + 1)
   IO.println s!"ok {name}"
 
 /-- Pass/fail one named condition on the unique node matching `m`; the

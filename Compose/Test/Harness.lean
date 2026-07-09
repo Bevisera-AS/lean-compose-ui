@@ -204,6 +204,12 @@ run `body`, and dispose the composition. Time is fully controlled — see
 `awaitIdle`/`advanceTimeBy`/`settle`. Mirrors
 `androidx.compose.ui.test.runComposeUiTest` + `setContent`.
 
+**Size your window for the content**: root constraints are the window pixels,
+so content taller/wider than `width`/`height` gets cut by weight/fill layouts
+— a too-small window silently collapses trailing rows to zero height and
+their click targets vanish (the CRUD demo needed 540×460). The default is
+480×360; pass explicit dimensions for bigger screens.
+
 ```lean
 runComposeTest (counterApp) do
   click (.text "Increment")
@@ -211,7 +217,7 @@ runComposeTest (counterApp) do
 ```
 -/
 def runComposeTest (content : Composable Unit) (body : TestM Unit)
-    (width : Dp := 320) (height : Dp := 240) (theme : Bool := true)
+    (width : Dp := 480) (height : Dp := 360) (theme : Bool := true)
     (colors : ColorScheme := .light) (config : AppConfig := testConfig) :
     IO Unit := do
   let clockRef ← IO.mkRef (0 : UInt64)

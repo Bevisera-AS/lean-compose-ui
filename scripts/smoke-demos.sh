@@ -12,6 +12,10 @@ if [ -z "$demos" ]; then
   exit 0
 fi
 
+# The gallery launcher UI itself (not in --list, which is the demo registry).
+echo "=== smoke: gallery ==="
+lake exe gallery
+
 for demo in $demos; do
   echo "=== smoke: $demo ==="
   lake exe "$demo"

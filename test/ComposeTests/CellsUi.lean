@@ -171,6 +171,25 @@ private def virtualizationFlow : IO Unit := cellsTest do
   assertExists (.tag "cell-A1")
   assertMissing (.tag "cell-M40")
 
+/-! ## Horizontal scrollbar (the Material `HorizontalScrollbar`) -/
+
+private def hScrollbarDrag : IO Unit := cellsTest do
+  assertExists (.tag "hscrollbar")
+  -- The thumb sits at the track start at boot (scroll value 0): press inside
+  -- it and drag right — the grid follows through the travel↔scroll ratio
+  -- (~4.7 content px per track px here), far columns compose, near ones go.
+  let b ← boundsOf (.tag "hscrollbar")
+  let start : Offset := ⟨b.left + 20, (b.top + b.bottom) / 2⟩
+  mouseDown start
+  for i in [1:5] do
+    mouseMove (start + (⟨30 * i.toFloat32, 0⟩ : Offset))
+  mouseUp (start + (⟨120, 0⟩ : Offset))
+  awaitIdle
+  assertMissing (.tag "cell-A1")              -- scrolled off to the left
+  assertMissing (.tag "colh-A")               -- headers follow the same state
+  assertExists (.tag "cell-H1")               -- a mid-sheet column composed
+  assertExists (.tag "rowh-1")                -- the vertical axis untouched
+
 /-- The CellsUi group. -/
 def run : IO Unit := do
   scenario "selectionFlow" selectionFlow
@@ -180,5 +199,6 @@ def run : IO Unit := do
   scenario "formulaPropagation" formulaPropagation
   scenario "cycleFlow" cycleFlow
   scenario "virtualizationFlow" virtualizationFlow
+  scenario "hScrollbarDrag" hScrollbarDrag
 
 end Tests.CellsUi

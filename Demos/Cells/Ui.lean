@@ -23,8 +23,8 @@ rows `1`–`99`) over the pure formula engine in `Demos/Cells/Engine.lean`.
   clears the selected cell, arrows move the selection (auto-scrolled into
   view). Errors and cycles display their engine code (`#CYCLE!`, …) in the
   error color.
-* **Scrollbars**: the Material `VerticalScrollbar` plus a demo-local
-  horizontal variant (an M14 promotion candidate — see `HorizontalScrollbar`).
+* **Scrollbars**: the Material `VerticalScrollbar` + `HorizontalScrollbar`
+  overlaid on the grid's end/bottom edges.
 
 Headless smoke: `SDL_VIDEO_DRIVER=dummy COMPOSE_MAX_FRAMES=60 lake exe
 demo-cells`.
@@ -372,71 +372,6 @@ composable def gridCells (st : CellsState) (hs vs : ScrollState) :
         for ci in [c0:c1] do
           keyed ((ri + 1) * 26 + ci) (cellView st ⟨ci, ri + 1⟩))
 
-/-! ## Horizontal scrollbar (demo-local)
-
-`Compose/Material/Scrollbar.lean` ships only `VerticalScrollbar`; this is
-its horizontal transposition on a diet (no hover widening or auto-hide —
-the thumb shows whenever the content overflows). **M14 promotion
-candidate**: fold both axes into one Material scrollbar. -/
-
-/-- The horizontal scrollbar's pointer coroutine: thumb press drags 1:1
-through the travel↔scroll ratio; track press pages one viewport toward the
-click (the `scrollbarGesture` logic with the axes swapped). -/
-private partial def hScrollbarGesture (state : ScrollState)
-    (minThumbPx : Float32) (scope : PointerInputScope) : UiTask Unit := do
-  let ev ← scope.awaitEvent
-  if ev.eventType == .press then
-    ev.consume
-    let track := (← scope.size).width.toFloat32
-    let viewport ← state.viewportSizeState.cell.get
-    let content ← state.contentSizeState.cell.get
-    let maxVal ← state.maxValueState.cell.get
-    let v0 ← state.valueState.cell.get
-    let (len, off) := scrollbarThumb track viewport content v0 minThumbPx
-    if off ≤ ev.position.x && ev.position.x < off + len then
-      let travel := track - len
-      drag ev.position.x v0 (if travel ≤ 0 then 0 else maxVal / travel)
-    else
-      let _ ← state.scrollBy (if ev.position.x < off then -viewport else viewport)
-  hScrollbarGesture state minThumbPx scope
-where
-  /-- Follow one thumb drag until release/window-leave. -/
-  drag (x0 v0 ratio : Float32) : UiTask Unit := do
-    let ev ← scope.awaitEvent
-    match ev.eventType with
-    | .move =>
-      ev.consume
-      state.scrollTo (v0 + (ev.position.x - x0) * ratio)
-      drag x0 v0 ratio
-    | .release => ev.consume
-    | .exit => pure ()
-    | _ => drag x0 v0 ratio
-
-/-- A minimal horizontal scrollbar for `state`'s scroll container: overlay
-it along the content's bottom edge (e.g. `bs.align .bottomCenter
-|>.fillMaxWidth`); it is 8 dp tall. See the section docstring for the diet
-relative to `VerticalScrollbar`. -/
-composable def HorizontalScrollbar (state : ScrollState)
-    (modifier : Modifier := {}) : Composable Unit := do
-  let colors ← MaterialTheme.colorScheme
-  let density ← LocalDensity.current
-  let value ← state.value
-  let viewport ← state.viewportSize
-  let content ← state.contentSize
-  let minThumbPx := density.dpToPx scrollbarMinThumb
-  let m := modifier
-    |>.height 8
-    |>.pointerInput (mixKeys (stringKey "Demos.Cells.HorizontalScrollbar") state.id)
-        (hScrollbarGesture state minThumbPx)
-    |>.drawBehind do
-      let sz ← DrawScope.size
-      if content > viewport then
-        let (len, off) := scrollbarThumb sz.width viewport content value minThumbPx
-        let hpx := density.dpToPx 6
-        DrawScope.drawRoundRect (.solid (colors.onSurface.withAlpha 0.4))
-          (RoundRect.circular ⟨off, sz.height - hpx, off + len, sz.height⟩ (hpx / 2))
-  Layout m .leaf (policyInputs := some 0x68626172)
-
 /-! ## The screen -/
 
 /-- The formula bar: the selected reference and its source (the live draft
@@ -478,8 +413,10 @@ composable def cellsScreen (st : CellsState) (hs vs : ScrollState) :
           columnHeaders st hs
           Box (gcs.weight 1 |>.fillMaxWidth) (content := fun bs => do
             gridCells st hs vs
-            VerticalScrollbar vs (bs.align .centerEnd |>.fillMaxHeight)
-            HorizontalScrollbar hs (bs.align .bottomCenter |>.fillMaxWidth)))))
+            VerticalScrollbar vs
+              (bs.align .centerEnd |>.fillMaxHeight |>.testTag "vscrollbar")
+            HorizontalScrollbar hs
+              (bs.align .bottomCenter |>.fillMaxWidth |>.testTag "hscrollbar")))))
 
 /-- The Cells demo UI (see the module docstring). `initial` seeds the sheet
 (tests boot it empty). -/

@@ -187,12 +187,15 @@ def InputManager.sdlEvent (im : InputManager)
       { eventType := .release, position := ← conv be.x be.y, button := some be.button
         clicks := be.clicks, mods := ← Sdl.getModState, timestamp := be.timestamp }
   | .mouseWheel we =>
-    -- Wheel deltas are in scroll ticks; `flipped` ("natural") direction is
-    -- normalized so consumers always see one convention.
-    let flip : Float32 := if we.direction == .flipped then -1 else 1
+    -- Wheel deltas are in scroll ticks, used exactly as delivered: the OS has
+    -- already applied the user's scroll-direction preference (macOS "natural
+    -- scrolling"), so the values are in *content* terms. `.flipped` only marks
+    -- that they differ from raw device motion (for apps that want the raw
+    -- direction, e.g. wheel-as-zoom) — negating it here would undo the user's
+    -- system preference and reverse trackpad scrolling.
     im.pointerEvent
       { eventType := .scroll, position := ← conv we.mouseX we.mouseY
-        scrollDelta := ⟨we.x * flip, we.y * flip⟩
+        scrollDelta := ⟨we.x, we.y⟩
         mods := ← Sdl.getModState, timestamp := we.timestamp }
   | .keyDown ke | .keyUp ke =>
     im.keyEvent (.ofSdl ke)

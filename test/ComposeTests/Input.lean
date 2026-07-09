@@ -18,8 +18,8 @@ M6's synthetic-event suites, driven at two layers:
 
 * **Translator layer**: a bootstrapped headless window with constructed
   `Sdl.Event`s through `dispatchEvent` → `inputSink`, covering the SDL →
-  `PointerEvent`/`KeyEvent` translation (coordinates, wheel direction
-  normalization, key/text routing, window-leave, the M11 text-client hook).
+  `PointerEvent`/`KeyEvent` translation (coordinates, wheel delta
+  pass-through, key/text routing, window-leave, the M11 text-client hook).
 -/
 
 namespace Tests.Input
@@ -617,11 +617,13 @@ private def sdlTranslation : IO Unit := do
   send (.mouseButtonDown ⟨0, ⟨0⟩, ⟨0⟩, .left, true, 1, 10, 10⟩)
   send (.mouseButtonUp ⟨0, ⟨0⟩, ⟨0⟩, .left, false, 1, 10, 10⟩)
   checkEq "sdl: button events click" (← clicks.get) 1
-  -- Wheel at the mouse position; flipped direction normalizes.
+  -- Wheel at the mouse position; deltas pass through as delivered — the OS
+  -- already applied the user's direction preference, so `.flipped` must NOT
+  -- be negated (doing so reversed macOS natural trackpad scrolling).
   send (.mouseWheel ⟨0, ⟨0⟩, ⟨0⟩, 0, 2, .normal, 10, 10, 0, 2⟩)
   send (.mouseWheel ⟨0, ⟨0⟩, ⟨0⟩, 0, 2, .flipped, 10, 10, 0, 2⟩)
-  checkEq "sdl: wheel deltas (flipped normalized)" (← scrolls.get)
-    #[(⟨0, 2⟩ : Offset), (⟨0, -2⟩ : Offset)]
+  checkEq "sdl: wheel deltas (flipped passes through)" (← scrolls.get)
+    #[(⟨0, 2⟩ : Offset), (⟨0, 2⟩ : Offset)]
   -- Motion drives hover + cursor.
   send (.mouseMotion ⟨0, ⟨0⟩, ⟨0⟩, .none, 10, 10, 0, 0⟩)
   checkEq "sdl: hover sets the hand cursor" ((← cursors.get).map (·.val))

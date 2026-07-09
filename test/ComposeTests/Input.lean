@@ -270,6 +270,34 @@ private def doubleTapGesture : IO Unit := do
   checkEq "double: first click taps (no delay — documented deviation)" (← taps.get) 1
   checkEq "double: clicks=2 fires onDoubleTap" (← doubles.get) 1
 
+/-- Secondary tap: a right-button press+release inside bounds fires
+`onSecondaryTap` (never `onTap`); a release outside cancels; left clicks
+still tap. -/
+private def secondaryTapGesture : IO Unit := do
+  let taps ← IO.mkRef (0 : Nat)
+  let secs ← IO.mkRef (#[] : Array (Int32 × Int32))
+  let r ← rig <| Box {} (content := fun _ => do
+    leaf (Modifier.size 50 50 |>.pointerInput 1
+      (detectTapGestures
+        (onTap := some fun _ => taps.modify (· + 1))
+        (onSecondaryTap := some fun p => secs.modify (·.push (p.x.toInt32, p.y.toInt32))))))
+  let rightAt := fun (t : PointerEventType) (x y : Float32) =>
+    ({ eventType := t, position := ⟨x, y⟩, button := some .right } : PointerEvent)
+  let _ ← r.im.pointerEvent (rightAt .press 15 20)
+  let _ ← r.im.pointerEvent (rightAt .release 15 20)
+  checkEq "secondary: right click fires with the release position"
+    (← secs.get) #[((15 : Int32), (20 : Int32))]
+  checkEq "secondary: onTap stays silent" (← taps.get) 0
+  -- Click-cancel: release outside the element.
+  let _ ← r.im.pointerEvent (rightAt .press 15 20)
+  let _ ← r.im.pointerEvent (moveTo 120 120)
+  let _ ← r.im.pointerEvent (rightAt .release 120 120)
+  checkEq "secondary: release outside cancels" ((← secs.get).size) 1
+  -- The detector loops back to primary taps.
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  let _ ← r.im.pointerEvent (releaseAt 10 10)
+  checkEq "secondary: left click still taps" (← taps.get) 1
+
 /-- Long press: fires from the scheduler clock without a release, suppresses
 the tap, and lets an `onPress`'s `tryAwaitRelease` return `false` (pressed
 state resets). No real sleeping — the fake clock drives it. -/
@@ -612,6 +640,7 @@ def run : IO Unit := do
   hoverCursor
   tapGesture
   doubleTapGesture
+  secondaryTapGesture
   longPressGesture
   dragGesture
   focusTraversal

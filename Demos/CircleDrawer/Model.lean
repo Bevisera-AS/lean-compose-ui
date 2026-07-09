@@ -18,9 +18,9 @@ popup menu with "Adjust diameter…", which opens a modal `Dialog` whose
 history and a fresh action after undo invalidates redo.
 
 The state is a pure `Array Circle` inside an undo/redo `History` zipper with
-pure operations (see the `#guard`s below). Right-click is handled raw over
-`Modifier.pointerInput` because `detectTapGestures` does not distinguish mouse
-buttons (the button lives in `PointerEvent.button`). Headless:
+pure operations (see the `#guard`s below). The canvas combines
+`detectTapGestures` (`onTap` creates, `onSecondaryTap` opens the context
+menu) with `detectHover` for live selection. Headless:
 `SDL_VIDEO_DRIVER=dummy COMPOSE_MAX_FRAMES=60 lake exe demo-circles`.
 -/
 
@@ -142,38 +142,6 @@ end History
 
 /-! ## UI -/
 
-/-- The canvas pointer loop: hover updates the selection, a left-click
-(release inside the canvas) fires `onLeft`, a right-click fires `onRight`.
-Written raw because `detectTapGestures` does not distinguish mouse buttons.
-Reads only the stable state refs its callbacks close over — the coroutine
-launches once (constant key) so it must not capture per-frame values. -/
-partial def canvasGestures
-    (onLeft onRight onHover : Offset → IO Unit)
-    (scope : PointerInputScope) : UiTask Unit := do
-  let ev ← scope.awaitEvent
-  match ev.eventType with
-  | .enter => onHover ev.position
-  | .move  => onHover ev.position
-  | .press =>
-    ev.consume
-    let btn := ev.button
-    if let some relPos ← awaitRelease scope then
-      if ← scope.containsLocal relPos then
-        match btn with
-        | some .right => onRight relPos
-        | _           => onLeft relPos
-  | _ => pure ()
-  canvasGestures onLeft onRight onHover scope
-where
-  /-- Await the matching release (ignoring intervening moves); `none` if the
-  pointer leaves the window first. -/
-  awaitRelease (scope : PointerInputScope) : UiTask (Option Offset) := do
-    let ev ← scope.awaitEvent
-    match ev.eventType with
-    | .release => ev.consume; return some ev.position
-    | .exit    => return none
-    | _        => awaitRelease scope
-
 /-- The CircleDrawer screen (see the module docstring). -/
 composable def circleDrawerUi : Composable Unit := do
   let history   ← remember (mutableStateOf History.empty)
@@ -183,7 +151,8 @@ composable def circleDrawerUi : Composable Unit := do
   let liveDiam  ← remember (mutableStateOf defaultDiameter)
   let canvasRect ← remember (mutableStateOf Rect.zero)
 
-  -- Pointer callbacks touch only stable refs (see `canvasGestures`).
+  -- Pointer callbacks touch only stable refs — the gesture coroutines launch
+  -- once (constant keys), so they must not capture per-frame values.
   let onLeft  := fun (p : Offset) => history.modify (·.addCircle p)
   let onHover := fun (p : Offset) => hoverPos.set (some p)
   let onRight := fun (p : Offset) => do
@@ -232,7 +201,10 @@ composable def circleDrawerUi : Composable Unit := do
             |>.border 1 colors.outlineVariant
             |>.onGloballyPositioned canvasRect.set
             |>.drawBehind canvasDraw
-            |>.pointerInput 0 (canvasGestures onLeft onRight onHover)
+            |>.pointerInput 0 (detectTapGestures
+                (onTap := some onLeft) (onSecondaryTap := some onRight))
+            |>.pointerInput 1 (detectHover
+                (onEnter := onHover) (onMove := onHover))
             |>.testTag "canvas")
         (content := fun _ => pure ())
       -- Right-click context menu, anchored at the click (window coords).

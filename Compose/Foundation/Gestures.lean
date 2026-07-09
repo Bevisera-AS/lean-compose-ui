@@ -91,35 +91,50 @@ end PressScope
 
 /-- Detect taps, double taps (SDL `clicks`, see the module docstring), long
 presses (fires after `longPressMillis` without a release and suppresses the
-tap), and raw presses (`onPress` runs per press and may `tryAwaitRelease`).
-Presses and releases are consumed. Mirrors
+tap), secondary (right-button) taps, and raw presses (`onPress` runs per
+primary press and may `tryAwaitRelease`). Presses and releases are consumed.
+
+`onSecondaryTap` fires on a completed right-button click (release inside the
+element) — the desktop context-menu gesture, mirroring Compose desktop's
+`Modifier.onClick(matcher = PointerMatcher.mouse(PointerButton.Secondary))`.
+When it is omitted, right-button presses flow through the primary handlers
+(the pre-M14b behavior). Mirrors
 `androidx.compose.foundation.gestures.detectTapGestures`. -/
 partial def detectTapGestures
     (onTap : Option (Offset → IO Unit) := none)
     (onDoubleTap : Option (Offset → IO Unit) := none)
     (onLongPress : Option (Offset → IO Unit) := none)
+    (onSecondaryTap : Option (Offset → IO Unit) := none)
     (onPress : Option (PressScope → UiTask Unit) := none)
     (longPressMillis : UInt32 := 500)
     (scope : PointerInputScope) : UiTask Unit := do
   let ev ← scope.awaitEvent
   if ev.eventType == .press then
     ev.consume
-    let ps : PressScope :=
-      { scope, pressPosition := ev.position
-        outcomeRef := ← IO.mkRef none
-        longPressMs := if onLongPress.isSome then some longPressMillis else none
-        armRef := ← IO.mkRef true }
-    if let some press := onPress then press ps
-    match ← ps.awaitOutcome with
-    | .longPressed =>
-      if let some lp := onLongPress then lp ev.position
-    | .released rel =>
-      if ← scope.containsLocal rel.position then
-        if rel.clicks ≥ 2 && rel.clicks % 2 == 0 && onDoubleTap.isSome then
-          if let some dt := onDoubleTap then dt rel.position
-        else if let some tap := onTap then tap rel.position
-    | .cancelled => pure ()
-  detectTapGestures onTap onDoubleTap onLongPress onPress longPressMillis scope
+    if ev.button == some .right && onSecondaryTap.isSome then
+      -- Secondary click: fire on a release inside the element (no double/long
+      -- press variants — the desktop context-menu gesture is a plain click).
+      if let .released rel ← awaitReleaseOrCancel scope then
+        if ← scope.containsLocal rel.position then
+          if let some st := onSecondaryTap then st rel.position
+    else
+      let ps : PressScope :=
+        { scope, pressPosition := ev.position
+          outcomeRef := ← IO.mkRef none
+          longPressMs := if onLongPress.isSome then some longPressMillis else none
+          armRef := ← IO.mkRef true }
+      if let some press := onPress then press ps
+      match ← ps.awaitOutcome with
+      | .longPressed =>
+        if let some lp := onLongPress then lp ev.position
+      | .released rel =>
+        if ← scope.containsLocal rel.position then
+          if rel.clicks ≥ 2 && rel.clicks % 2 == 0 && onDoubleTap.isSome then
+            if let some dt := onDoubleTap then dt rel.position
+          else if let some tap := onTap then tap rel.position
+      | .cancelled => pure ()
+  detectTapGestures onTap onDoubleTap onLongPress onSecondaryTap onPress
+    longPressMillis scope
 
 /-- Detect drags: after a press moves beyond `touchSlop` px, `onDragStart`
 fires (then `onDrag position delta` per move, moves consumed), ending with

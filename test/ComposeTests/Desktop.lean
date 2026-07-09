@@ -120,6 +120,72 @@ private def contextMenu : IO Unit := do
     click (item "Add log entry"); settle
     checkEq "context menu logged" (← r.log.get) #["Context action"]
 
+/-! ## The real application shell (`desktopApp` end to end, headless) -/
+
+/-- The registry entry whose window has the given title, if any. -/
+private def entryTitled (app : ApplicationScope) (t : String) :
+    IO (Option WindowEntry) := do
+  for e in ← app.windows.get do
+    if (← e.ctx.window.getTitle) == t then return some e
+  return none
+
+/-- `entryTitled`, throwing when absent (test plumbing). -/
+private def entryTitled! (app : ApplicationScope) (t : String) : IO WindowEntry := do
+  match ← entryTitled app t with
+  | some e => return e
+  | none => throw (IO.userError s!"no live window titled '{t}'")
+
+/-- Bounds (render px) of the unique node matching `m` in `e`'s window. -/
+private def boundsIn (e : WindowEntry) (m : Matcher) : IO Rect := do
+  let forest ← semanticsForest e.ctx.root
+  let hits := forest.foldl (fun acc r => acc ++ r.flatten.filter m.test) #[]
+  if h : hits.size = 1 then
+    return hits[0].bounds
+  else
+    throw (IO.userError s!"expected one node matching {m.description} in \
+      '{← e.ctx.window.getTitle}', found {hits.size}\nsemantics tree:\n\
+      {dumpForest forest}")
+
+/-- Click (press + release) the center of the unique matching node in `e`'s
+window, routed through the application dispatcher by window id — the
+production multi-window input path. -/
+private def clickIn (app : ApplicationScope) (e : WindowEntry) (m : Matcher) :
+    IO Unit := do
+  let c := (← boundsIn e m).center
+  let (x, y) ← e.ctx.renderer.coordinatesToWindow c.x c.y
+  dispatchApplicationEvent app (.mouseButtonDown ⟨0, e.id, ⟨0⟩, .left, true, 1, x, y⟩)
+  dispatchApplicationEvent app (.mouseButtonUp ⟨0, e.id, ⟨0⟩, .left, false, 1, x, y⟩)
+
+/-- Boot the *real* `desktopApp` through `bootstrapApplication` and drive it
+with clicks: New Window grows the registry, About opens the dialog, and OK
+dismisses it — the demo's plain-do-block shell must recompose on its own
+(the regression that shipped: without the application root scope, these
+actions visibly did nothing). -/
+private def applicationShell : IO Unit := do
+  let app ← bootstrapApplication desktopApp
+  let _ ← stepApplication app (idleCapMs := 5)
+  checkEq "desktopApp boots one main window" (← app.windows.get).size 1
+  let main ← entryTitled! app "Desktop"
+  -- Toolbar "New Window" (real click, registry-routed): a second window opens.
+  clickIn app main (.tag "btn-new")
+  let _ ← stepApplication app (idleCapMs := 5)
+  checkEq "New Window opens a second window" (← app.windows.get).size 2
+  check "the extra window carries its id title"
+    (← entryTitled app "Window #0").isSome
+  -- Toolbar "About": the modal dialog appears…
+  clickIn app main (.tag "btn-about")
+  let _ ← stepApplication app (idleCapMs := 5)
+  checkEq "About opens the dialog window" (← app.windows.get).size 3
+  let about ← entryTitled! app "About"
+  -- …and its OK button dismisses it (state-driven close).
+  clickIn app about (.text "OK")
+  let _ ← stepApplication app (idleCapMs := 5)
+  checkEq "OK dismisses the About dialog" (← app.windows.get).size 2
+  check "main and extra windows survive the dismissal"
+    ((← entryTitled app "Desktop").isSome && (← entryTitled app "Window #0").isSome)
+  (← app.composition).dispose
+  checkEq "disposing tears every window down" (← app.windows.get).size 0
+
 /-- The Desktop group. -/
 def run : IO Unit := do
   scenario "menuActions" menuActions
@@ -127,5 +193,6 @@ def run : IO Unit := do
   scenario "toolbar" toolbar
   scenario "tooltip" tooltip
   scenario "contextMenu" contextMenu
+  scenario "applicationShell" applicationShell
 
 end Tests.Desktop

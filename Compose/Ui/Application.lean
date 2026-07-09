@@ -16,6 +16,11 @@ def main : IO UInt32 := Compose.application do
     Window "hello" 400 300 (content := ...)
 ```
 
+The content composes under a restartable root scope (`applicationRoot`), so
+the state reads in a plain do-block like the one above recompose the
+app-level composition when handlers write them — opening and closing windows
+state-driven, no `composable def` needed at the root.
+
 The app-level composition emits no layout nodes (emitting one throws — put
 widgets inside a `Window`). Each `Window` creates a full `WindowContext` via
 an effect on first composition, disposes it on leave, and updates
@@ -105,6 +110,14 @@ def exitApplication : Composable (IO Unit) := do
   | none => throw (IO.userError
       "Compose: exitApplication needs an application (run via Compose.application)")
 
+/-- Restartable root of the app-level composition: state reads in plain
+do-block content (`for id in ← windows.get`, `if ← isOpen.get then
+Window …`) are tracked by this scope, so handler writes recompose the
+application — creating/disposing windows — without `composable def` at the
+call site. The app-level analog of the window root's restart scope. -/
+composable def applicationRoot (content : Composable Unit) : Composable Unit :=
+  content
+
 /-- Applier of the app-level composition: windows are effects, not nodes, so
 inserting a node here is a bug — a widget composed outside a `Window` throws
 a clear error instead of silently vanishing. -/
@@ -136,7 +149,8 @@ def bootstrapApplication (content : Composable Unit) : IO ApplicationScope := do
       compositionCell := ← IO.mkRef none }
   let comp ← Composition.create (appApplier (← LayoutNode.create))
     (CompositionLocalProvider LocalApplication (some app) <|
-      CompositionLocalProvider LocalScheduler (some scheduler) content)
+      CompositionLocalProvider LocalScheduler (some scheduler) <|
+        applicationRoot content)
   comp.setOnInvalidate (app.dirty.set true)
   app.compositionCell.set (some comp)
   return app

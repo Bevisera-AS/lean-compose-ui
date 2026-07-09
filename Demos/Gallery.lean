@@ -52,6 +52,8 @@ def demos : List DemoEntry :=
       desc := "7GUIs #7 — a virtualized spreadsheet with formulas." },
     { exe := "demo-desktop",  title := "Desktop components",
       desc := "Multi-window, menu bar, context menu, tooltips, system tray." },
+    { exe := "demo-files",    title := "File manager",
+      desc := "Breadcrumb navigation, sorted listing, file info panel." },
     { exe := "demo-smoke",    title := "Smoke",
       desc := "Timers + frame clock + recomposition (M5 shell)." } ]
 

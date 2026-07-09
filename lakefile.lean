@@ -173,6 +173,13 @@ the `_root_.main` entry is in `Demos/DesktopMain.lean`. -/
 lean_exe «demo-desktop» where
   root := `Demos.DesktopMain
 
+/-- Final demo: a minimal file manager — breadcrumb navigation, dirs-first
+sorted listing (`LazyColumn` + scrollbar), and a file info panel over an
+injected `FsSource`. Model + UI live in `Demos/Files.lean` (importable by the MT
+suite); the `_root_.main` entry is in `Demos/FilesMain.lean`. -/
+lean_exe «demo-files» where
+  root := `Demos.FilesMain
+
 /-- M12 demo *libraries* (model + UI, no `_root_.main`): the reusable modules
 the demo exes wrap and the MT suites import. Declared as their own
 `default_target` lib (like `CellsEngine`) so `lake build` compiles them, runs
@@ -186,4 +193,4 @@ lean_lib Demos where
   srcDir := "."
   globs := #[.one `Demos.Counter, .one `Demos.TempConverter,
     .one `Demos.FlightBooker, .one `Demos.Timer, .one `Demos.Crud,
-    .one `Demos.Desktop, .one `Demos.Gallery]
+    .one `Demos.Desktop, .one `Demos.Files, .one `Demos.Gallery]

@@ -31,7 +31,7 @@ private def dropdownUi (expanded : MutableState Bool) : Composable Unit :=
 /-- An open menu is as wide as its widest item (112dp floor), never the
 window. -/
 private def dropdownWrapsWidestItem : IO Unit := do
-  let expanded ← mutableStateOf false
+  let expanded ← MutableState.create false
   runComposeTest (dropdownUi expanded) do
     click (.text "Open")
     settle
@@ -63,8 +63,8 @@ private def exposedUi (expanded : MutableState Bool) (sel : MutableState String)
 /-- An exposed dropdown's menu matches the field's width — not the widest
 item, not the window (Material's `ExposedDropdownMenuBox` convention). -/
 private def exposedMatchesFieldWidth : IO Unit := do
-  let expanded ← mutableStateOf false
-  let sel ← mutableStateOf "Alpha"
+  let expanded ← MutableState.create false
+  let sel ← MutableState.create "Alpha"
   runComposeTest (exposedUi expanded sel) do
     click (.tag "field")
     settle

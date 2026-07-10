@@ -266,7 +266,7 @@ private def buttonDisabled : IO Unit := do
 /-- Checkbox: click and Space toggle with correct callback values; the
 checked visuals settle to a primary box with an onPrimary mark. -/
 private def checkboxToggles : IO Unit := do
-  let checked ← mutableStateOf false
+  let checked ← MutableState.create false
   let calls ← IO.mkRef (#[] : Array Bool)
   let r ← mboot <| themed <| Tests.restartable 1 do
     let c ← checked.get
@@ -301,7 +301,7 @@ private def checkboxToggles : IO Unit := do
 /-- Radio pair: clicking the second selects it (animated dot appears there,
 not on the first); Enter when focused also selects. -/
 private def radioSelects : IO Unit := do
-  let choice ← mutableStateOf (0 : Nat)
+  let choice ← MutableState.create (0 : Nat)
   let calls ← IO.mkRef (#[] : Array Nat)
   let r ← mboot (h := 200) <| themed <| Column do
     Tests.restartable 1 do
@@ -327,7 +327,7 @@ private def radioSelects : IO Unit := do
 /-- Switch: click toggles (thumb slides right, track turns primary), Enter
 toggles back. -/
 private def switchToggles : IO Unit := do
-  let on ← mutableStateOf false
+  let on ← MutableState.create false
   let calls ← IO.mkRef (#[] : Array Bool)
   let r ← mboot <| themed <| Tests.restartable 1 do
     let o ← on.get
@@ -382,7 +382,7 @@ private def disabledControls : IO Unit := do
 /-- Continuous slider: press-to-seek, drag with continuous updates then
 `onValueChangeFinished`, arrow/Home/End keys, and track pixels. -/
 private def sliderInteraction : IO Unit := do
-  let value ← mutableStateOf (0.2 : Float32)
+  let value ← MutableState.create (0.2 : Float32)
   let changes ← IO.mkRef (#[] : Array Float32)
   let finished ← IO.mkRef (0 : Nat)
   let r ← mboot <| themed <| Tests.restartable 1 do
@@ -440,7 +440,7 @@ private def sliderInteraction : IO Unit := do
 /-- Stepped slider over a custom range: seeks snap to the tick grid and the
 callback reports range-mapped values. -/
 private def sliderStepsAndRange : IO Unit := do
-  let value ← mutableStateOf (0.0 : Float32)
+  let value ← MutableState.create (0.0 : Float32)
   let changes ← IO.mkRef (#[] : Array Float32)
   let r ← mboot <| themed <| Tests.restartable 1 do
     let v ← value.get

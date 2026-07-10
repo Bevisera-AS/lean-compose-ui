@@ -17,8 +17,8 @@ open Compose Compose.Test Tests.Harness Demos.Timer
 
 /-- Elapsed grows with the fake clock, clamps at the duration, and then stops. -/
 private def ticksAndStops : IO Unit := do
-  let elapsed ← mutableStateOf (0.0 : Float32)
-  let duration ← mutableStateOf (1000.0 : Float32)
+  let elapsed ← MutableState.create (0.0 : Float32)
+  let duration ← MutableState.create (1000.0 : Float32)
   runComposeTest (timerBody elapsed duration) do
     checkEq "starts at 0" (← elapsed.get) 0.0
     assertRangeValue (.tag "gauge") 0.0
@@ -40,8 +40,8 @@ private def ticksAndStops : IO Unit := do
 elapsed clamps the gauge to full; Reset (the real button) zeroes it and lets
 it run again. -/
 private def resumeClampReset : IO Unit := do
-  let elapsed ← mutableStateOf (0.0 : Float32)
-  let duration ← mutableStateOf (1000.0 : Float32)
+  let elapsed ← MutableState.create (0.0 : Float32)
+  let duration ← MutableState.create (1000.0 : Float32)
   runComposeTest (timerBody elapsed duration) do
     -- Run to completion.
     advanceTimeBy 1500
@@ -67,8 +67,8 @@ private def resumeClampReset : IO Unit := do
 /-- The duration slider is wired to the duration state (real drag through the
 router). -/
 private def sliderDrivesDuration : IO Unit := do
-  let elapsed ← mutableStateOf (0.0 : Float32)
-  let duration ← mutableStateOf (0.0 : Float32)
+  let elapsed ← MutableState.create (0.0 : Float32)
+  let duration ← MutableState.create (0.0 : Float32)
   runComposeTest (timerBody elapsed duration) do
     checkEq "duration starts at 0" (← duration.get) 0.0
     -- A rightward drag raises the duration off zero.

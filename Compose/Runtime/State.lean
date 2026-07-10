@@ -116,20 +116,56 @@ instance [Nonempty α] : Nonempty (MutableState α) :=
   ⟨{ id := ⟨0⟩, cell := Classical.choice inferInstance,
      eq := fun _ _ => true, dependents := Classical.choice inferInstance }⟩
 
-/-- Create a `MutableState` with an explicit equality policy. Prefer
-`mutableStateOf`/`mutableStateOfAlwaysNotify`. -/
-def mutableStateOfPolicy (eq : α → α → Bool) (init : α) : IO (MutableState α) :=
+/-- A deferred state initializer: `IO` that composition will not auto-run.
+Binding one directly in a `Composable` do-block is a type error (`StateInit …
+expected Composable …`) — wrap it in `remember`/`rememberKeyed` so the state
+survives recomposition. Enforces, via types, what the Kotlin compose-rules
+lint calls "remember missing". In plain `IO` (state holders, tests, app
+plumbing) use the `MutableState.create*`/`DerivedState.create` constructors
+instead; `.run` runs any initializer in `IO`. -/
+structure StateInit (α : Type) where
+  /-- Run the initializer in plain `IO` (the explicit escape hatch). -/
+  run : IO α
+
+/-- `remember` initializers compose (`remember do`, `xs.mapM fun _ =>
+mutableStateOf …`); plain `IO` lifts in. The reverse (`StateInit` into `IO` or
+`Composable`) deliberately has no lift — that is the gate. -/
+instance : Monad StateInit where
+  pure x := ⟨pure x⟩
+  bind x f := ⟨do (f (← x.run)).run⟩
+
+instance : MonadLift IO StateInit := ⟨fun x => ⟨x⟩⟩
+
+/-- Create a `MutableState` in plain `IO` with an explicit equality policy
+(see `mutableStateOfPolicy` for the composition-side builder). -/
+def MutableState.createPolicy (eq : α → α → Bool) (init : α) : IO (MutableState α) :=
   return { id := ⟨← freshId⟩, cell := ← IO.mkRef init, eq,
            dependents := ← IO.mkRef #[] }
 
-/-- Observable state with the structural-equality skip policy. Mirrors
+/-- Create a `MutableState` in plain `IO` (state holders, tests, app
+plumbing) with the structural-equality skip policy. Inside composition use
+`remember (mutableStateOf x)` instead. -/
+def MutableState.create [BEq α] (init : α) : IO (MutableState α) :=
+  MutableState.createPolicy (· == ·) init
+
+/-- `MutableState.create` with the never-equal policy: every write notifies. -/
+def MutableState.createAlwaysNotify (init : α) : IO (MutableState α) :=
+  MutableState.createPolicy (fun _ _ => false) init
+
+/-- `MutableState.createPolicy` as a composition initializer:
+`remember (mutableStateOfPolicy eq x)`. -/
+def mutableStateOfPolicy (eq : α → α → Bool) (init : α) : StateInit (MutableState α) :=
+  ⟨MutableState.createPolicy eq init⟩
+
+/-- Observable state with the structural-equality skip policy, remembered
+across recompositions: `remember (mutableStateOf x)`. Mirrors
 `androidx.compose.runtime.mutableStateOf` (with `structuralEqualityPolicy`). -/
-def mutableStateOf [BEq α] (init : α) : IO (MutableState α) :=
+def mutableStateOf [BEq α] (init : α) : StateInit (MutableState α) :=
   mutableStateOfPolicy (· == ·) init
 
 /-- Observable state that treats every write as a change. Mirrors
 `mutableStateOf(init, neverEqualPolicy())`. -/
-def mutableStateOfAlwaysNotify (init : α) : IO (MutableState α) :=
+def mutableStateOfAlwaysNotify (init : α) : StateInit (MutableState α) :=
   mutableStateOfPolicy (fun _ _ => false) init
 
 namespace MutableState
@@ -206,14 +242,13 @@ instance [Nonempty α] : Nonempty (DerivedState α) :=
      invalidateCell := Classical.choice inferInstance,
      disposed := Classical.choice inferInstance }⟩
 
-/-- Create a derived state. When an upstream state changes, the value is
-recomputed eagerly (re-registering its reads); dependents are invalidated
-only if the recomputed value differs per `BEq`. A throwing `compute` never
-escapes the upstream write (`Invalidatable.invalidate` contract): the state
-falls back to dirty, wakes every dependent, and rethrows at the next `get`.
-Prefer `rememberDerived`/`rememberDerivedKeyed` in composition — they
-`dispose` the state when it leaves. Mirrors `derivedStateOf`. -/
-def derivedStateOf [BEq α] (compute : IO α) : IO (DerivedState α) := do
+/-- Create a derived state in plain `IO`. When an upstream state changes, the
+value is recomputed eagerly (re-registering its reads); dependents are
+invalidated only if the recomputed value differs per `BEq`. A throwing
+`compute` never escapes the upstream write (`Invalidatable.invalidate`
+contract): the state falls back to dirty, wakes every dependent, and rethrows
+at the next `get`. -/
+def DerivedState.create [BEq α] (compute : IO α) : IO (DerivedState α) := do
   let cache ← IO.mkRef (none : Option α)
   let dependents ← IO.mkRef (#[] : Array Invalidatable)
   let invalidateCell ← IO.mkRef (pure () : IO Unit)
@@ -233,6 +268,12 @@ def derivedStateOf [BEq α] (compute : IO α) : IO (DerivedState α) := do
       cache.set none
       (← dependents.get).forM (·.invalidate)
   return s
+
+/-- `DerivedState.create` as a composition initializer. Prefer
+`rememberDerived`/`rememberDerivedKeyed` — they `dispose` the state when it
+leaves the composition. Mirrors `derivedStateOf`. -/
+def derivedStateOf [BEq α] (compute : IO α) : StateInit (DerivedState α) :=
+  ⟨DerivedState.create compute⟩
 
 namespace DerivedState
 

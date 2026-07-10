@@ -80,9 +80,9 @@ namespace Animatable
 def create [BEq α] (initial : α) (conv : VectorConverter α) : IO (Animatable α) := do
   let vec := conv.toVector initial
   return { conv
-           value := ← mutableStateOf initial
-           targetValue := ← mutableStateOf initial
-           isRunning := ← mutableStateOf false
+           value := ← MutableState.create initial
+           targetValue := ← MutableState.create initial
+           isRunning := ← MutableState.create false
            velocityVec := ← IO.mkRef (AnimationVector.zero vec.dim)
            generation := ← IO.mkRef 0
            lowerBound := ← IO.mkRef none

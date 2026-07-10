@@ -68,7 +68,7 @@ All SDL video/render/event calls happen on the main thread only — never in
   ```lean
   open Compose.Test in
   private def counter : IO Unit := do
-    let n ← mutableStateOf (0 : Nat)
+    let n ← MutableState.create (0 : Nat)
     runComposeTest
       (content := Tests.restartable 1 do
         Button (n.modify (· + 1)) (content := Text "+1")

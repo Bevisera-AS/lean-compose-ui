@@ -53,7 +53,7 @@ every upstream write forever. -/
 def rememberDerivedKeyed [BEq κ] [BEq α] [Nonempty α] (k : κ) (compute : IO α) :
     Composable (DerivedState α) := fun c =>
   c.rememberObservedKeyed k do
-    let d ← derivedStateOf compute
+    let d ← DerivedState.create compute
     pure (d, { onRemembered := pure (), onForgotten := d.dispose })
 
 /-- Keyless `rememberDerivedKeyed`: one derived state per composition

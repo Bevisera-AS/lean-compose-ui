@@ -234,7 +234,7 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     let entry : OverlayEntry ← remember do
       pure { id := ← freshId
              content := ← IO.mkRef (pure () : Composable Unit)
-             revision := ← mutableStateOf 0
+             revision := ← MutableState.create 0
              locals := ← IO.mkRef .empty }
     let dismissRef ← updatedRef onDismissRequest
     let keyRef ← updatedRef onKeyEvent

@@ -52,7 +52,7 @@ namespace MenuState
 
 /-- Fresh, empty menu state. -/
 def create : IO MenuState :=
-  return { items := ← IO.mkRef #[], highlighted := ← mutableStateOf none }
+  return { items := ← IO.mkRef #[], highlighted := ← MutableState.create none }
 
 /-- Move the highlight by `delta` items (wrapping); from nothing, Down lands
 on the first item and Up on the last. -/
@@ -255,7 +255,7 @@ composable def ExposedDropdownMenuBox (expanded : Bool)
     (content : ExposedDropdownMenuBoxScope → Composable Unit := fun _ => pure ())
     (modifier : Modifier := {}) : Composable Unit := do
   let scope : ExposedDropdownMenuBoxScope ← remember do
-    pure { anchorRect := ← mutableStateOf Rect.zero
+    pure { anchorRect := ← MutableState.create Rect.zero
            expandedRef := ← IO.mkRef expanded
            onExpandedChangeRef := ← IO.mkRef onExpandedChange }
   scope.expandedRef.set expanded

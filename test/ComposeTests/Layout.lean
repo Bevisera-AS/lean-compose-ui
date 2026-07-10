@@ -330,7 +330,7 @@ private def intrinsicTwoPassSound : IO Unit := do
 /-! ## Invalidation and caching -/
 
 private def recompositionRemeasures : IO Unit := do
-  let s ← mutableStateOf (30 : Dp)
+  let s ← MutableState.create (30 : Dp)
   let cnt ← IO.mkRef (0 : Nat)
   let (root, comp) ← composeTree <| restartable 1 do
     let v ← s.get
@@ -357,7 +357,7 @@ private def constraintsShortCircuit : IO Unit := do
   checkEq "short-circuit: new constraints re-measure" (← cnt.get) 2
 
 private def measureStateTargeting : IO Unit := do
-  let s ← mutableStateOf (20 : Nat)
+  let s ← MutableState.create (20 : Nat)
   let cntA ← IO.mkRef (0 : Nat)
   let cntB ← IO.mkRef (0 : Nat)
   let cntP ← IO.mkRef (0 : Nat)
@@ -387,7 +387,7 @@ private def measureStateTargeting : IO Unit := do
   checkEq "measure-state: new size" (← sizeAt root [0, 0]) (⟨30, 10⟩ : IntSize)
 
 private def survivingSizeStopsPropagation : IO Unit := do
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let cntA ← IO.mkRef (0 : Nat)
   let cntP ← IO.mkRef (0 : Nat)
   -- A reads `s` in measure but its size does not depend on it.
@@ -411,8 +411,8 @@ keeps a dirty path connected to the root and the owner hook fires, so the
 follow-up pass re-measures the earlier sibling instead of leaving it stale
 forever. -/
 private def midPassDirtyOfVisitedSibling : IO Unit := do
-  let s ← mutableStateOf (10 : Nat)      -- A's width source
-  let trigger ← mutableStateOf (0 : Nat) -- B's remeasure trigger
+  let s ← MutableState.create (10 : Nat)      -- A's width source
+  let trigger ← MutableState.create (0 : Nat) -- B's remeasure trigger
   let cntA ← IO.mkRef (0 : Nat)
   let policyA : MeasurePolicy := fun _ _ _ => do
     cntA.modify (· + 1)
@@ -451,7 +451,7 @@ already-visited scroll node mid-pass — the header must still end up at the
 re-clamped offset. -/
 private def sharedScrollStickyHeader : IO Unit := do
   let s ← Compose.ScrollState.create
-  let wide ← mutableStateOf true -- main content: 1000px wide, then 300px
+  let wide ← MutableState.create true -- main content: 1000px wide, then 300px
   Compose.Test.runComposeTest (theme := false)
       (Column (Tests.restartable 1 do
         let w : Dp := if ← wide.get then 1000 else 300

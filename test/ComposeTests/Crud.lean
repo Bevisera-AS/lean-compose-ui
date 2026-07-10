@@ -19,8 +19,8 @@ open Compose Compose.Test Tests.Harness Demos.Crud
 /-- Fresh, seeded demo state for one scenario. -/
 private def freshState : IO (MutableState Db × MutableState String ×
     MutableState String × MutableState String) := do
-  return (← mutableStateOf seed, ← mutableStateOf "", ← mutableStateOf "",
-          ← mutableStateOf "")
+  return (← MutableState.create seed, ← MutableState.create "", ← MutableState.create "",
+          ← MutableState.create "")
 
 /-- Create appends an entry from the field contents; row clicks select the
 underlying entry (by id). -/

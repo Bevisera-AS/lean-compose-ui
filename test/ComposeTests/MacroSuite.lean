@@ -41,7 +41,7 @@ def counterScope : IO Unit := do
   let t ← TestTree.create
   let pruns ← IO.mkRef (0 : Nat)
   let cruns ← IO.mkRef (0 : Nat)
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let comp ← Composition.create t.applier (counterParent ⟨t⟩ ⟨pruns⟩ ⟨cruns⟩ ⟨s⟩)
   checkEq "counter: initial tree" (← t.render) "(root hdr n0)"
   checkEq "counter: initial runs" ((← pruns.get), (← cruns.get)) (1, 1)
@@ -77,8 +77,8 @@ def skipping : IO Unit := do
   let pruns ← IO.mkRef (0 : Nat)
   let aruns ← IO.mkRef (0 : Nat)
   let bruns ← IO.mkRef (0 : Nat)
-  let tick ← mutableStateOf (0 : Nat)
-  let label ← mutableStateOf "a"
+  let tick ← MutableState.create (0 : Nat)
+  let label ← MutableState.create "a"
   let comp ← Composition.create t.applier
     (skipParent ⟨pruns⟩ ⟨aruns⟩ ⟨bruns⟩ ⟨tick⟩ ⟨label⟩)
   let runs : IO (Nat × Nat × Nat) :=
@@ -117,7 +117,7 @@ def ifFlip : IO Unit := do
   let t ← TestTree.create
   let inits ← IO.mkRef (0 : Nat)
   let seen ← IO.mkRef (#[] : Array String)
-  let flag ← mutableStateOf true
+  let flag ← MutableState.create true
   let comp ← Composition.create t.applier (branchy ⟨t⟩ ⟨inits⟩ ⟨seen⟩ ⟨flag⟩)
   checkEq "if: initial tree" (← t.render) "(root a x b)"
   checkEq "if: then-branch remembered" (← seen.get) #["T0"]
@@ -155,7 +155,7 @@ composable def modal (t : Stable TestTree) (m : Stable (MutableState Mode)) :
 indices for every alternative. -/
 def matchModes : IO Unit := do
   let t ← TestTree.create
-  let m ← mutableStateOf Mode.small
+  let m ← MutableState.create Mode.small
   let comp ← Composition.create t.applier (modal ⟨t⟩ ⟨m⟩)
   checkEq "match: small" (← t.render) "(root s sm e)"
   m.set .medium
@@ -181,7 +181,7 @@ disposes exactly the leftover iterations (their state is not resurrected). -/
 def forLoop : IO Unit := do
   let t ← TestTree.create
   let ctr ← IO.mkRef (0 : Nat)
-  let items ← mutableStateOf ["a", "b"]
+  let items ← MutableState.create ["a", "b"]
   let comp ← Composition.create t.applier (loopy ⟨t⟩ ⟨ctr⟩ ⟨items⟩)
   checkEq "for: initial tree" (← t.render) "(root a0 b1)"
   items.set ["a", "b", "c"]
@@ -209,7 +209,7 @@ remembered state (nodes move instead of being recreated). -/
 def keyedForLoop : IO Unit := do
   let t ← TestTree.create
   let ctr ← IO.mkRef (0 : Nat)
-  let items ← mutableStateOf ["a", "b", "c"]
+  let items ← MutableState.create ["a", "b", "c"]
   let comp ← Composition.create t.applier (keyedLoop ⟨t⟩ ⟨ctr⟩ ⟨items⟩)
   checkEq "keyedFor: initial tree" (← t.render) "(root a0 b1 c2)"
   let _ ← t.takeLog
@@ -229,7 +229,7 @@ groups keeps independent, stable remembered state in each. -/
 def contentLambda : IO Unit := do
   let t ← TestTree.create
   let ctr ← IO.mkRef (0 : Nat)
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let comp ← Composition.create t.applier <| restartable 1 <| callTwice <|
     composable fun slot => do
       let v ← s.get
@@ -260,9 +260,9 @@ composable def nestedFlow (t : Stable TestTree) (outer inner : Stable (MutableSt
 indices correct. -/
 def nestedControlFlow : IO Unit := do
   let t ← TestTree.create
-  let outer ← mutableStateOf true
-  let inner ← mutableStateOf true
-  let items ← mutableStateOf [1, 2]
+  let outer ← MutableState.create true
+  let inner ← MutableState.create true
+  let items ← MutableState.create [1, 2]
   let comp ← Composition.create t.applier (nestedFlow ⟨t⟩ ⟨outer⟩ ⟨inner⟩ ⟨items⟩)
   checkEq "nest: initial" (← t.render) "(root top a1 a2 bot)"
   inner.set false
@@ -297,8 +297,8 @@ def restartArgs : IO Unit := do
   let t ← TestTree.create
   let pruns ← IO.mkRef (0 : Nat)
   let log ← IO.mkRef (#[] : Array String)
-  let labelSt ← mutableStateOf "a"
-  let child ← mutableStateOf (0 : Nat)
+  let labelSt ← MutableState.create "a"
+  let child ← MutableState.create (0 : Nat)
   let comp ← Composition.create t.applier (stampParent ⟨pruns⟩ ⟨log⟩ ⟨labelSt⟩ ⟨child⟩)
   checkEq "restart: initial" (← log.get) #["a:0"]
   labelSt.set "b"

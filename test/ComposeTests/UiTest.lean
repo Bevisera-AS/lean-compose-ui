@@ -73,9 +73,9 @@ private def findersAndFailures : IO Unit := runComposeTest
 /-! ## Clicks through the real router -/
 
 private def clickThroughRouter : IO Unit := do
-  let checked ← mutableStateOf false
+  let checked ← MutableState.create false
   let offCalls ← IO.mkRef (0 : Nat)
-  let count ← mutableStateOf (0 : Nat)
+  let count ← MutableState.create (0 : Nat)
   runComposeTest
     (Column (Tests.restartable 1 do
       Checkbox (← checked.get) checked.set (modifier := Modifier.testTag "cb")
@@ -105,8 +105,8 @@ private def clickThroughRouter : IO Unit := do
 /-! ## Keyboard: focus traversal and activation -/
 
 private def keyboardFlow : IO Unit := do
-  let checked ← mutableStateOf false
-  let count ← mutableStateOf (0 : Nat)
+  let checked ← MutableState.create false
+  let count ← MutableState.create (0 : Nat)
   runComposeTest
     (Column (Tests.restartable 1 do
       Checkbox (← checked.get) checked.set (modifier := Modifier.testTag "cb")
@@ -128,7 +128,7 @@ private def keyboardFlow : IO Unit := do
 /-! ## Text input through the IME commit path -/
 
 private def textFieldFlow : IO Unit := do
-  let value ← mutableStateOf ""
+  let value ← MutableState.create ""
   runComposeTest
     (Column (Tests.restartable 1 do
       TextField (← value.get) value.set (modifier := Modifier.testTag "name")
@@ -152,8 +152,8 @@ private def textFieldFlow : IO Unit := do
 /-! ## Toggle/selection/range state across the widget set -/
 
 private def widgetStates : IO Unit := do
-  let on ← mutableStateOf false
-  let choice ← mutableStateOf (0 : Nat)
+  let on ← MutableState.create false
+  let choice ← MutableState.create (0 : Nat)
   runComposeTest
     (Column (Tests.restartable 1 do
       Switch (← on.get) on.set (modifier := Modifier.testTag "sw")
@@ -176,7 +176,7 @@ private def widgetStates : IO Unit := do
 /-! ## Drag and keys on a slider -/
 
 private def sliderDragAndKeys : IO Unit := do
-  let value ← mutableStateOf (0.25 : Float32)
+  let value ← MutableState.create (0.25 : Float32)
   runComposeTest
     (Tests.restartable 1 do
       Slider (← value.get) value.set (modifier := Modifier.testTag "sl")) do
@@ -219,7 +219,7 @@ private def scrollFlow : IO Unit := runComposeTest
 /-! ## The controlled clock drives animation deterministically -/
 
 private def animationClock : IO Unit := do
-  let big ← mutableStateOf false
+  let big ← MutableState.create false
   runComposeTest
     (Column (Tests.restartable 1 do
       let w ← animateDpAsState (if (← big.get) then 200 else 40) (.tween 200 0 .linear)
@@ -247,7 +247,7 @@ private def animationClock : IO Unit := do
 /-! ## M14b verbs: replaceText and requestFocus -/
 
 private def replaceAndFocusVerbs : IO Unit := do
-  let value ← mutableStateOf "seed"
+  let value ← MutableState.create "seed"
   runComposeTest
     (Column (Tests.restartable 1 do
       TextField (← value.get) value.set (modifier := Modifier.testTag "tf")
@@ -286,7 +286,7 @@ private def focusRequesterFlow : IO Unit := do
 /-! ## Overlays: alert dialog in the semantics tree -/
 
 private def dialogFlow : IO Unit := do
-  let open' ← mutableStateOf false
+  let open' ← MutableState.create false
   let confirmed ← IO.mkRef false
   runComposeTest
     (Tests.restartable 1 do
@@ -308,7 +308,7 @@ private def dialogFlow : IO Unit := do
 /-! ## Modal focus is scoped to the dialog, restored on close -/
 
 private def dialogFocusScope : IO Unit := do
-  let open' ← mutableStateOf false
+  let open' ← MutableState.create false
   runComposeTest
     (Tests.restartable 1 do
       Column do
@@ -360,8 +360,8 @@ private def scrollAnimateInterrupt : IO Unit := do
 /-! ## Overlays: dropdown menu items are real, clickable nodes -/
 
 private def menuFlow : IO Unit := do
-  let expanded ← mutableStateOf false
-  let picked ← mutableStateOf "-"
+  let expanded ← MutableState.create false
+  let picked ← MutableState.create "-"
   runComposeTest
     (Column (Tests.restartable 1 do
       Button (expanded.set true) (Text "menu")

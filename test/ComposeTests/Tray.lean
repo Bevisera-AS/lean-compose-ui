@@ -87,7 +87,7 @@ private def sdlBody : IO Unit := do
 
   -- Callback wiring: run the bound closure and confirm it can write state; also
   -- probe whether SDL fires it on a simulated click under the dummy driver.
-  let hits ← mutableStateOf (0 : Nat)
+  let hits ← MutableState.create (0 : Nat)
   let st1 ← mountTray #[item "Tap" (hits.modify (· + 1))] none none
   (match (← st1.menu.getEntries)[0]? with
     | some e => e.click

@@ -45,9 +45,9 @@ namespace InteractionSource
 /-- Fresh source, all flags down. Mirrors `MutableInteractionSource()`. -/
 def create : IO InteractionSource :=
   return { id := (← freshId).toUInt64
-           pressed := ← mutableStateOf false
-           hovered := ← mutableStateOf false
-           focused := ← mutableStateOf false }
+           pressed := ← MutableState.create false
+           hovered := ← MutableState.create false
+           focused := ← MutableState.create false }
 
 end InteractionSource
 

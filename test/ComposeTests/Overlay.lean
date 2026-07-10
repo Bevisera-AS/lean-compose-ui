@@ -160,7 +160,7 @@ private def scrollWheel : IO Unit := do
 re-clamps the value. -/
 private def scrollProgrammatic : IO Unit := do
   let st ← ScrollState.create
-  let count ← mutableStateOf (4 : Nat)
+  let count ← MutableState.create (4 : Nat)
   let r ← oboot <| Column (modifier := Modifier.size 100 100 |>.verticalScroll st)
     (Tests.restartable 1 do
       let n ← count.get
@@ -376,7 +376,7 @@ private def popupContent (open' : MutableState Bool) (anchor : Rect)
 /-- Opens above the main content, positions below its anchor, dismisses on
 outside click / Esc but not on inside clicks. -/
 private def popupBasics : IO Unit := do
-  let open' ← mutableStateOf false
+  let open' ← MutableState.create false
   let r ← oboot <| popupContent open' ⟨50, 50, 100, 70⟩
     (Box (modifier := Modifier.size 60 40 |>.background .red))
   check "popup: closed — backdrop everywhere" (near (← r.pixel 60 80) .green)
@@ -408,7 +408,7 @@ private def popupBasics : IO Unit := do
 /-- An anchor near the bottom flips the popup above itself; positions clamp
 to the window. -/
 private def popupFlip : IO Unit := do
-  let open' ← mutableStateOf true
+  let open' ← MutableState.create true
   let r ← oboot <| popupContent open' ⟨50, 250, 100, 290⟩
     (Box (modifier := Modifier.size 60 40 |>.background .red))
   r.settle
@@ -419,8 +419,8 @@ private def popupFlip : IO Unit := do
 
 /-- Esc dismisses the innermost of two stacked popups first. -/
 private def popupStackedEsc : IO Unit := do
-  let open1 ← mutableStateOf true
-  let open2 ← mutableStateOf true
+  let open1 ← MutableState.create true
+  let open2 ← MutableState.create true
   let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .green) do
     Tests.restartable 1 do
       if ← open1.get then
@@ -455,7 +455,7 @@ private def popupStackedEsc : IO Unit := do
 click and Esc dismiss; a content click does not. -/
 private def dialogModal : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
-  let open' ← mutableStateOf false
+  let open' ← MutableState.create false
   let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white) do
     Button (clicks.modify (· + 1)) (Text "OK")
     Tests.restartable 1 do
@@ -501,7 +501,7 @@ private def dialogModal : IO Unit := do
 
 /-- AlertDialog: title/text/buttons render and the confirm button fires. -/
 private def alertDialogBasics : IO Unit := do
-  let open' ← mutableStateOf true
+  let open' ← MutableState.create true
   let confirmed ← IO.mkRef (0 : Nat)
   let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white)
     (Tests.restartable 1 do
@@ -558,8 +558,8 @@ private def menuUi (f : MenuFixture) : Composable Unit :=
 item click selects and closes. -/
 private def menuMouse : IO Unit := do
   let f : MenuFixture :=
-    { expanded := ← mutableStateOf false
-      selected := ← mutableStateOf "Alpha"
+    { expanded := ← MutableState.create false
+      selected := ← MutableState.create "Alpha"
       toggles := ← IO.mkRef #[] }
   let r ← oboot (menuUi f)
   r.settle
@@ -592,8 +592,8 @@ private def menuMouse : IO Unit := do
 grabs key routing (the focused anchor's Enter handling must not fire). -/
 private def menuKeyboard : IO Unit := do
   let f : MenuFixture :=
-    { expanded := ← mutableStateOf false
-      selected := ← mutableStateOf "Alpha"
+    { expanded := ← MutableState.create false
+      selected := ← MutableState.create "Alpha"
       toggles := ← IO.mkRef #[] }
   let r ← oboot (menuUi f)
   r.settle
@@ -625,7 +625,7 @@ aimed elsewhere is not swallowed by the dying menu. Re-opening mid-exit
 restores interactivity. The exit window is driven by frame ticks (`s`), so
 `render`/`runDue` progress input without unmounting the menu. -/
 private def menuExitInert : IO Unit := do
-  let expanded ← mutableStateOf false
+  let expanded ← MutableState.create false
   let btn ← IO.mkRef (0 : Nat)
   let keyHits ← IO.mkRef (0 : Nat)
   let r ← oboot <| themed <| Column (modifier := Modifier.fillMaxSize |>.background .white) do

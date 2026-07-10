@@ -130,10 +130,10 @@ def seedSheet : Sheet :=
 
 /-- Fresh screen state over `initial`. -/
 def CellsState.create (initial : Sheet := seedSheet) : IO CellsState :=
-  return { sheet := ← mutableStateOfAlwaysNotify initial
-           selected := ← mutableStateOf (⟨0, 1⟩ : CellRef)
-           editing := ← mutableStateOf (none : Option CellRef)
-           draft := ← mutableStateOf "" }
+  return { sheet := ← MutableState.createAlwaysNotify initial
+           selected := ← MutableState.create (⟨0, 1⟩ : CellRef)
+           editing := ← MutableState.create (none : Option CellRef)
+           draft := ← MutableState.create "" }
 
 namespace CellsState
 

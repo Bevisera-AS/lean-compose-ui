@@ -374,10 +374,10 @@ composable def windowImpl (dialog : Bool) (title : String) (width height : Dp)
     let parentCtx? ← LocalWindowContext.current -- DialogWindow's parent
     let node : WindowNode ← remember do
       pure { contentRef := ← IO.mkRef (pure () : Composable Unit)
-             revision := ← mutableStateOf 0
+             revision := ← MutableState.create 0
              locals := ← IO.mkRef .empty
              onClose := ← IO.mkRef (pure true)
-             closed := ← mutableStateOf false
+             closed := ← MutableState.create false
              ctxCell := ← IO.mkRef none }
     if !(← node.closed.get) then
       -- Refresh the capture every composition (latest state closures/locals),

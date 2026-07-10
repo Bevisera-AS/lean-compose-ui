@@ -76,7 +76,7 @@ def CompositionLocalProvider (l : CompositionLocal α) (value : α)
       else do
         -- The cell's identity is stable across recompositions; only its value
         -- changes, invalidating exactly the registered readers.
-        let cell ← c.remember (mutableStateOfPolicy l.eq value)
+        let cell ← c.remember (MutableState.createPolicy l.eq value)
         cell.set value
         pure (SlotVal.mk cell)
     c.locals.set (saved.insert l.id entry)

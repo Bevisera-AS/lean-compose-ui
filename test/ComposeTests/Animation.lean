@@ -167,7 +167,7 @@ never writes again); the value animates from the interrupted position. -/
 private def animateFloatAsStateLifecycle : IO Unit := do
   let t ← TestTree.create
   let (s, _) ← fakeSched
-  let target ← mutableStateOf (0.0 : Float32)
+  let target ← MutableState.create (0.0 : Float32)
   let cell ← IO.mkRef (none : Option (State Float32))
   let comp ← Composition.create t.applier <|
     CompositionLocalProvider LocalScheduler (some s) <| restartable 1 do
@@ -202,8 +202,8 @@ targets. -/
 private def animateWrappersRoundtrip : IO Unit := do
   let t ← TestTree.create
   let (s, _) ← fakeSched
-  let targetDp ← mutableStateOf (0 : Dp)
-  let targetColor ← mutableStateOf Color.black
+  let targetDp ← MutableState.create (0 : Dp)
+  let targetColor ← MutableState.create Color.black
   let dpCell ← IO.mkRef (none : Option (State Dp))
   let colorCell ← IO.mkRef (none : Option (State Color))
   let comp ← Composition.create t.applier <|
@@ -239,7 +239,7 @@ retargets are continuous, and `currentState`/`isRunning` update on settle. -/
 private def transitionSegments : IO Unit := do
   let t ← TestTree.create
   let (s, _) ← fakeSched
-  let targetSt ← mutableStateOf (0 : Nat)
+  let targetSt ← MutableState.create (0 : Nat)
   let trCell ← IO.mkRef (none : Option (Transition Nat))
   let vCell ← IO.mkRef (none : Option (State Float32))
   -- 0→1 animates in 100 ms, every other segment in 200 ms.
@@ -302,7 +302,7 @@ after leaving the composition. -/
 private def infiniteTransitionLoop : IO Unit := do
   let t ← TestTree.create
   let (s, _) ← fakeSched
-  let show' ← mutableStateOf true
+  let show' ← MutableState.create true
   let vCell ← IO.mkRef (none : Option (State Float32))
   let comp ← Composition.create t.applier <|
     CompositionLocalProvider LocalScheduler (some s) <| restartable 1 do
@@ -373,7 +373,7 @@ fractions animate within bounds) and removes it exactly when the exit
 completes. -/
 private def visibilityExitKeepsContent : IO Unit := do
   let (s, _) ← fakeSched
-  let visible ← mutableStateOf true
+  let visible ← MutableState.create true
   let (root, comp) ← composeVisibility s visible
   s.runDue 0
   check "visibility: initially-visible content skips the enter animation"
@@ -402,7 +402,7 @@ private def visibilityExitKeepsContent : IO Unit := do
 (content never leaves the composition). -/
 private def visibilityReshowReverses : IO Unit := do
   let (s, _) ← fakeSched
-  let visible ← mutableStateOf true
+  let visible ← MutableState.create true
   let (root, comp) ← composeVisibility s visible
   s.runDue 0
   visible.set false

@@ -652,15 +652,17 @@ def keyed [Hashable κ] (k : κ) (body : Composable α) : Composable α :=
   withGroup (mixKeys keyedGroupSalt (hash k)) body
 
 /-- Positional memoization: `init` runs on first composition only; later
-passes through the same slot return the stored value. Mirrors
+passes through the same slot return the stored value. State builders
+(`mutableStateOf`, `derivedStateOf`) are `StateInit` and fit directly;
+arbitrary `IO` initializers lift in. Mirrors
 `androidx.compose.runtime.remember`. -/
-def remember [Nonempty α] (init : IO α) : Composable α := fun c =>
-  c.remember init
+def remember [Nonempty α] (init : StateInit α) : Composable α := fun c =>
+  c.remember init.run
 
 /-- `remember` that re-initializes when `k` changes. Mirrors
 `remember(key1) { ... }`. -/
-def rememberKeyed [BEq κ] [Nonempty α] (k : κ) (init : IO α) : Composable α := fun c =>
-  c.rememberKeyed k init
+def rememberKeyed [BEq κ] [Nonempty α] (k : κ) (init : StateInit α) : Composable α := fun c =>
+  c.rememberKeyed k init.run
 
 /-- Emit a node into the applied tree: `create` runs once (the node is
 inserted at the exact index among its siblings), `update` runs every pass

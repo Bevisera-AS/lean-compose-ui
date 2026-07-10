@@ -30,7 +30,7 @@ private def tree (picked : MutableState String) (disabledFired : IO.Ref Bool) :
 /-! ## Right-click opens; choosing an entry runs it and closes -/
 
 private def openSelectClose : IO Unit := do
-  let picked ← mutableStateOf "-"
+  let picked ← MutableState.create "-"
   let disabledFired ← IO.mkRef false
   runComposeTest (tree picked disabledFired) do
     assertMissing (.role .menuItem)
@@ -46,7 +46,7 @@ private def openSelectClose : IO Unit := do
 /-! ## Disabled entries render dimmed and never fire; the menu stays open -/
 
 private def disabledDoesNotFire : IO Unit := do
-  let picked ← mutableStateOf "-"
+  let picked ← MutableState.create "-"
   let disabledFired ← IO.mkRef false
   runComposeTest (tree picked disabledFired) do
     rightClick (.tag "area")
@@ -60,7 +60,7 @@ private def disabledDoesNotFire : IO Unit := do
 /-! ## Esc dismisses -/
 
 private def escDismiss : IO Unit := do
-  let picked ← mutableStateOf "-"
+  let picked ← MutableState.create "-"
   let disabledFired ← IO.mkRef false
   runComposeTest (tree picked disabledFired) do
     rightClick (.tag "area")
@@ -73,7 +73,7 @@ private def escDismiss : IO Unit := do
 /-! ## A click outside dismisses -/
 
 private def clickAwayDismiss : IO Unit := do
-  let picked ← mutableStateOf "-"
+  let picked ← MutableState.create "-"
   let disabledFired ← IO.mkRef false
   runComposeTest (tree picked disabledFired) do
     rightClick (.tag "area")

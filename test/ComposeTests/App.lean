@@ -41,7 +41,7 @@ private def rendersComposition : IO Unit := do
 between renders nothing (dirty-driven, wired through the invalidation
 hooks — no polling). -/
 private def stateWriteRedraws : IO Unit := do
-  let color ← mutableStateOf Color.red
+  let color ← MutableState.create Color.red
   let ctx ← boot <| Tests.restartable 1 do
     let c ← color.get
     Box (modifier := Modifier.size 50 50 |>.background c)
@@ -237,7 +237,7 @@ private def idleStepBlocks : IO Unit := do
 /-- A scheduler timer bounds the wait: the loop wakes for the deadline, runs
 the coroutine, and renders its state write. -/
 private def timerWakesAndRenders : IO Unit := do
-  let color ← mutableStateOf Color.red
+  let color ← MutableState.create Color.red
   let ctx ← boot do
     LaunchedEffect 0 (block := do
       UiTask.delay 30

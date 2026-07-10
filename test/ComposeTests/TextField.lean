@@ -133,7 +133,7 @@ private def fieldRig (initial : TextFieldValue := {}) (w : Dp := 240)
     (placeholder : String := "") (label : Option String := none)
     (isError : Bool := false) (enabled : Bool := true) (fieldWidth : Option Dp := none) :
     IO (TRig × MutableState TextFieldValue × IO.Ref (Array TextFieldValue)) := do
-  let value ← mutableStateOf initial
+  let value ← MutableState.create initial
   let calls ← IO.mkRef (#[] : Array TextFieldValue)
   let m := match fieldWidth with
     | some fw => Modifier.width fw
@@ -157,7 +157,7 @@ private def fieldContent (value : MutableState TextFieldValue)
       (modifier := Modifier.testTag "field")
 
 private def typingEndToEnd : IO Unit := do
-  let value ← mutableStateOf ({} : TextFieldValue)
+  let value ← MutableState.create ({} : TextFieldValue)
   let calls ← IO.mkRef (#[] : Array TextFieldValue)
   runComposeTest (fieldContent value calls) do
     -- typeText click-focuses through the real click-to-focus path, then
@@ -183,7 +183,7 @@ private def typingEndToEnd : IO Unit := do
 /-! ## Full keyboard editing scripts (MT framework) -/
 
 private def editingScripts : IO Unit := do
-  let value ← mutableStateOf ({} : TextFieldValue)
+  let value ← MutableState.create ({} : TextFieldValue)
   let calls ← IO.mkRef (#[] : Array TextFieldValue)
   runComposeTest (fieldContent value calls) do
     typeText (.tag "field") "hello world"
@@ -238,7 +238,7 @@ private def minWidthOverflow : IO Unit := do
   -- A field in a Row narrower than the 280 dp default min: it clamps to fit
   -- rather than forcing the Row to overflow (which once collapsed it to zero
   -- height). The Row keeps a real, non-zero height.
-  let v1 ← mutableStateOf ({} : TextFieldValue)
+  let v1 ← MutableState.create ({} : TextFieldValue)
   runComposeTest (width := 400)
     (Row (modifier := Modifier.width 120 |>.testTag "row") do
       Tests.restartable 1 do ValueTextField (← v1.get) v1.set (modifier := Modifier.testTag "tf"))
@@ -252,7 +252,7 @@ private def minWidthOverflow : IO Unit := do
   -- The `minWidth` knob shrinks the field's floor so it fits a small parent
   -- even when width is unbounded (a horizontally scrolling Row) — the default
   -- 280 would report 280 there.
-  let v2 ← mutableStateOf ({} : TextFieldValue)
+  let v2 ← MutableState.create ({} : TextFieldValue)
   runComposeTest (width := 400)
     (do
       let sc ← rememberScrollState
@@ -267,7 +267,7 @@ private def minWidthOverflow : IO Unit := do
 /-! ## macOS line-motion keys (⌘, MT framework) -/
 
 private def macKeys : IO Unit := do
-  let value ← mutableStateOf ({} : TextFieldValue)
+  let value ← MutableState.create ({} : TextFieldValue)
   let calls ← IO.mkRef (#[] : Array TextFieldValue)
   runComposeTest (fieldContent value calls) do
     typeText (.tag "field") "hello world"            -- caret at 11
@@ -288,7 +288,7 @@ private def macKeys : IO Unit := do
 /-! ## Multi-byte safety (MT framework) -/
 
 private def multiByteEditing : IO Unit := do
-  let value ← mutableStateOf ({} : TextFieldValue)
+  let value ← MutableState.create ({} : TextFieldValue)
   let calls ← IO.mkRef (#[] : Array TextFieldValue)
   runComposeTest (fieldContent value calls) do
     typeText (.tag "field") "héllo"
@@ -591,7 +591,7 @@ private def placeholderAndLabel : IO Unit := do
 /-! ## TextField (String convenience, MT framework) -/
 
 private def stringOverload : IO Unit := do
-  let value ← mutableStateOf ""
+  let value ← MutableState.create ""
   let calls ← IO.mkRef (#[] : Array String)
   runComposeTest
     (Tests.restartable 1 do

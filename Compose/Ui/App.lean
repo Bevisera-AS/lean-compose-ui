@@ -122,7 +122,7 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
   let textContext : TextContext :=
     { fontStore := ← FontStore.create
       textEngine := ← Sdl.Ttf.createRendererTextEngine renderer }
-  let densityState ← mutableStateOf ({ density := if scale > 0 then scale else 1 } : Density)
+  let densityState ← MutableState.create ({ density := if scale > 0 then scale else 1 } : Density)
   let ctx : WindowContext :=
     { window, renderer, densityState, scheduler, wakeEvent, textContext
       root := ← LayoutNode.create
@@ -131,7 +131,7 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       quitRequested := ← IO.mkRef false
       framesRendered := ← IO.mkRef 0
       inputSink := ← IO.mkRef fun _ => pure false
-      overlays := ← mutableStateOfPolicy (fun _ _ => false) #[]
+      overlays := ← MutableState.createPolicy (fun _ _ => false) #[]
       keyHandlers := ← IO.mkRef #[]
       focusManager := ← IO.mkRef none
       modalFocusHook := ← IO.mkRef fun _ _ => pure () }

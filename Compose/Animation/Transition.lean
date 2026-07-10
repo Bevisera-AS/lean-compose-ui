@@ -73,9 +73,9 @@ namespace Transition
 
 /-- Create a transition resting at `initial` (both states equal, idle). -/
 def create [BEq σ] (initial : σ) : IO (Transition σ) :=
-  return { currentState := ← mutableStateOf initial
-           targetState := ← mutableStateOf initial
-           isRunning := ← mutableStateOf false
+  return { currentState := ← MutableState.create initial
+           targetState := ← MutableState.create initial
+           isRunning := ← MutableState.create false
            props := ← IO.mkRef #[] }
 
 /-- If every registered property has settled, finish the transition:

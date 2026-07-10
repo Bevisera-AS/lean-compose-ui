@@ -60,13 +60,19 @@ main-thread-only (lean-sdl3 guarantees `main` runs there). Consequences:
 
 ```lean
 MutableState α          -- identity-carrying mutable cell
-mutableStateOf  [BEq α] (init : α) : IO (MutableState α)   -- structural-equality skip policy
-mutableStateOfAlwaysNotify (init : α) : IO (MutableState α) -- never-equal policy
+mutableStateOf  [BEq α] (init : α) : StateInit (MutableState α)   -- structural-equality skip policy
+mutableStateOfAlwaysNotify (init : α) : StateInit (MutableState α) -- never-equal policy
 MutableState.get    : IO α        -- registers a read with the ambient observer
 MutableState.set    : α → IO Unit -- no-op if equal per policy; else invalidates dependents
 MutableState.modify : (α → α) → IO Unit
-derivedStateOf [BEq α] (compute : IO α) : IO (DerivedState α)
+derivedStateOf [BEq α] (compute : IO α) : StateInit (DerivedState α)
 ```
+
+The builders return `StateInit` — a deferred initializer that `remember` takes
+directly and that composition will not auto-run, so a forgotten `remember`
+(state silently resetting every recomposition — the compose-rules "remember
+missing" lint) is a type error. Plain-`IO` contexts (state holders, tests, app
+plumbing) use the `MutableState.create*`/`DerivedState.create` constructors.
 
 Read observation: a module-global observer stack
 `initialize readObserver : IO.Ref (Array (StateId → IO Unit))`. Pushing an

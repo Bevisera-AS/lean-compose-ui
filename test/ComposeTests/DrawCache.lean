@@ -17,8 +17,8 @@ namespace Tests.DrawCache
 open Compose Compose.Test Tests.Harness
 
 private def staticShapeAcrossAnimation : IO Unit := do
-  let target ← mutableStateOf (0 : Dp)   -- the neighbor's animated offset
-  let side ← mutableStateOf (40 : Dp)    -- the static box's side length
+  let target ← MutableState.create (0 : Dp)   -- the neighbor's animated offset
+  let side ← MutableState.create (40 : Dp)    -- the static box's side length
   runComposeTest
     (Column (Tests.restartable 1 do
       -- The static shape: rounded background + rounded border = two meshes.

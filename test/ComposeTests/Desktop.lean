@@ -29,7 +29,7 @@ private structure Rig where
   quit : IO.Ref Nat
 
 private def rig : IO Rig := do
-  return { log := ← mutableStateOf #[], accent := ← mutableStateOf 0,
+  return { log := ← MutableState.create #[], accent := ← MutableState.create 0,
            newWin := ← IO.mkRef 0, about := ← IO.mkRef 0, quit := ← IO.mkRef 0 }
 
 /-- Mount `desktopBody` on a rig's state, its hooks counting invocations. -/

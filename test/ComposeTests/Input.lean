@@ -472,7 +472,7 @@ private def textRouting : IO Unit := do
 /-- A modal scope popping back to a node that was removed while the modal was
 open clears focus instead of restoring the detached node. -/
 private def modalPopDetached : IO Unit := do
-  let show' ← mutableStateOf true
+  let show' ← MutableState.create true
   let r ← rig <| Tests.restartable 1 do
     if ← show'.get then
       withGroup 11 <| Column do
@@ -542,7 +542,7 @@ private def clickableDisabled : IO Unit := do
 flip relaunch path) resets the pressed interaction instead of latching the
 state layer on. -/
 private def clickableCancelResetsPressed : IO Unit := do
-  let enabled ← mutableStateOf true
+  let enabled ← MutableState.create true
   let srcCell ← IO.mkRef (none : Option InteractionSource)
   let r ← rig <| Tests.restartable 1 <| Box do
     let src ← rememberInteractionSource
@@ -560,7 +560,7 @@ open Compose.Test in
 /-- MT-level: hold a real press through the full pipeline, flip `enabled`
 mid-press, and the interaction source resets. -/
 private def clickableCancelMt : IO Unit := do
-  let enabled ← mutableStateOf true
+  let enabled ← MutableState.create true
   let srcCell ← IO.mkRef (none : Option InteractionSource)
   runComposeTest
     (Tests.restartable 1 do
@@ -582,8 +582,8 @@ private def clickableCancelMt : IO Unit := do
 cancelled first) and is cancelled when the node leaves the composition. -/
 private def pointerInputLifecycle : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let key ← mutableStateOf (0 : UInt64)
-  let show' ← mutableStateOf true
+  let key ← MutableState.create (0 : UInt64)
+  let show' ← MutableState.create true
   let r ← rig <| Tests.restartable 1 do
     if ← show'.get then
       withGroup 11 <| Box do
@@ -709,7 +709,7 @@ private def focusDetachClears : IO Unit := do
   let hook ← IO.mkRef (#[] : Array Bool)
   let focusLog ← IO.mkRef (#[] : Array Bool)
   let keys ← IO.mkRef (0 : Nat)
-  let show' ← mutableStateOf true
+  let show' ← MutableState.create true
   let ctx ← bootstrap "compose-focus-detach" 200 150
     (Tests.restartable 1 do
       if ← show'.get then
@@ -745,7 +745,7 @@ private def focusDetachClears : IO Unit := do
 /-- The cursor icon set by a removed node is restored without mouse motion:
 the post-layout hover sync recomputes the path and the icon. -/
 private def hoverCursorResync : IO Unit := do
-  let show' ← mutableStateOf true
+  let show' ← MutableState.create true
   let r ← rig <| Tests.restartable 1 do
     if ← show'.get then
       withGroup 11 <| leaf (Modifier.size 50 50 |>.pointerHoverIcon .text)
@@ -764,7 +764,7 @@ write, no mouse move) receives its `enter` — the post-layout hover sync
 re-runs the path diff at the last known position. -/
 private def hoverAppearUnderCursor : IO Unit := do
   let srcCell ← IO.mkRef (none : Option InteractionSource)
-  let show' ← mutableStateOf false
+  let show' ← MutableState.create false
   Compose.Test.runComposeTest
     (Tests.restartable 1 do
       let src ← rememberInteractionSource
@@ -787,7 +787,7 @@ private def hoverAppearUnderCursor : IO Unit := do
 `InteractionSource` does not stay latched hovered. -/
 private def hoverDetachUnlatch : IO Unit := do
   let srcCell ← IO.mkRef (none : Option InteractionSource)
-  let show' ← mutableStateOf true
+  let show' ← MutableState.create true
   Compose.Test.runComposeTest
     (Tests.restartable 1 do
       let src ← rememberInteractionSource

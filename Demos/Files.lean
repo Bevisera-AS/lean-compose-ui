@@ -283,13 +283,13 @@ def navigate (scope : LaunchScope) (fs : FsSource) (st : FilesState)
 `filesBody` kicks off the initial (async) listing load. Used by the tests. -/
 def FilesState.init (home : String) : IO FilesState := do
   let st : FilesState :=
-    { cwd := ← mutableStateOf home,
+    { cwd := ← MutableState.create home,
       -- `Except` has no `BEq`, and every navigation genuinely re-reads, so
       -- always-notify is both required and correct here.
-      listing := ← mutableStateOfAlwaysNotify (.ok #[]),
-      selected := ← mutableStateOf none,
-      showHidden := ← mutableStateOf false,
-      loading := ← mutableStateOf false,
+      listing := ← MutableState.createAlwaysNotify (.ok #[]),
+      selected := ← MutableState.create none,
+      showHidden := ← MutableState.create false,
+      loading := ← MutableState.create false,
       generation := ← IO.mkRef 0 }
   return st
 

@@ -18,7 +18,7 @@ open Compose Tests.Harness
 runs exactly once. -/
 def rememberSame : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let inits ← IO.mkRef (0 : Nat)
   let seen ← IO.mkRef (#[] : Array Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
@@ -34,7 +34,7 @@ def rememberSame : IO Unit := do
 re-initializes when it changes. -/
 def rememberKeyedReinit : IO Unit := do
   let t ← TestTree.create
-  let key ← mutableStateOf "a"
+  let key ← MutableState.create "a"
   let inits ← IO.mkRef (0 : Nat)
   let seen ← IO.mkRef (#[] : Array Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
@@ -53,7 +53,7 @@ def rememberKeyedReinit : IO Unit := do
 siblings. -/
 def conditional : IO Unit := do
   let t ← TestTree.create
-  let flag ← mutableStateOf false
+  let flag ← MutableState.create false
   let comp ← Composition.create t.applier <| restartable 1 do
     emitLabeled t "a"
     if ← flag.get then
@@ -79,7 +79,7 @@ def conditional : IO Unit := do
 trailing sibling. -/
 def multiNodeConditional : IO Unit := do
   let t ← TestTree.create
-  let flag ← mutableStateOf true
+  let flag ← MutableState.create true
   let comp ← Composition.create t.applier <| restartable 1 do
     if ← flag.get then
       withGroup 11 do
@@ -105,7 +105,7 @@ def multiNodeConditional : IO Unit := do
 remembered state; removal disposes the right group. -/
 def keyedReorder : IO Unit := do
   let t ← TestTree.create
-  let items ← mutableStateOf ["a", "b", "c"]
+  let items ← MutableState.create ["a", "b", "c"]
   let ctr ← IO.mkRef (0 : Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
     let xs ← items.get
@@ -129,7 +129,7 @@ def keyedReorder : IO Unit := do
 /-- Reordering keyed items that each emit two nodes moves the whole range. -/
 def keyedMultiNodeMove : IO Unit := do
   let t ← TestTree.create
-  let items ← mutableStateOf ["a", "b"]
+  let items ← MutableState.create ["a", "b"]
   let comp ← Composition.create t.applier <| restartable 1 do
     let xs ← items.get
     for x in xs do
@@ -147,7 +147,7 @@ def keyedMultiNodeMove : IO Unit := do
 correct base applier index and node parent. -/
 def scopeInsideNode : IO Unit := do
   let t ← TestTree.create
-  let flag ← mutableStateOf false
+  let flag ← MutableState.create false
   let comp ← Composition.create t.applier do
     emitLabeled t "box" do
       emitLabeled t "p"
@@ -173,8 +173,8 @@ applier indices must reflect the new positions, including node-count deltas
 propagated by earlier re-runs in the same drain. -/
 def scopeRerunAfterReorder : IO Unit := do
   let t ← TestTree.create
-  let items ← mutableStateOf ["a", "b"]
-  let flag ← mutableStateOf false
+  let items ← MutableState.create ["a", "b"]
+  let flag ← MutableState.create false
   let comp ← Composition.create t.applier <| restartable 1 do
     let xs ← items.get
     for x in xs do
@@ -207,8 +207,8 @@ def scopeRerunAfterReorder : IO Unit := do
 writes are no-ops. -/
 def stateTargeting : IO Unit := do
   let t ← TestTree.create
-  let sA ← mutableStateOf (0 : Nat)
-  let sB ← mutableStateOf (0 : Nat)
+  let sA ← MutableState.create (0 : Nat)
+  let sB ← MutableState.create (0 : Nat)
   let rA ← IO.mkRef (0 : Nat)
   let rB ← IO.mkRef (0 : Nat)
   let rAB ← IO.mkRef (0 : Nat)
@@ -238,8 +238,8 @@ def stateTargeting : IO Unit := do
 condition flips, the no-longer-read state stops re-running the scope. -/
 def latestRunReads : IO Unit := do
   let t ← TestTree.create
-  let cond ← mutableStateOf true
-  let sX ← mutableStateOf (0 : Nat)
+  let cond ← MutableState.create true
+  let sX ← MutableState.create (0 : Nat)
   let runs ← IO.mkRef (0 : Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
     runs.modify (· + 1)
@@ -261,7 +261,7 @@ def latestRunReads : IO Unit := do
 /-- `mutableStateOfAlwaysNotify` invalidates on equal writes too. -/
 def alwaysNotify : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOfAlwaysNotify (0 : Nat)
+  let s ← MutableState.createAlwaysNotify (0 : Nat)
   let runs ← IO.mkRef (0 : Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
     let _ ← s.get
@@ -273,7 +273,7 @@ def alwaysNotify : IO Unit := do
 /-- A write during recomposition joins the same drain and converges. -/
 def writeDuringRecomposition : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let runs ← IO.mkRef (0 : Nat)
   let _ ← Composition.create t.applier <| restartable 1 do
     runs.modify (· + 1)
@@ -286,7 +286,7 @@ def writeDuringRecomposition : IO Unit := do
 /-- An unconditional self-write trips the iteration cap with a loud error. -/
 def invalidationLoopDetected : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOfAlwaysNotify (0 : Nat)
+  let s ← MutableState.createAlwaysNotify (0 : Nat)
   checkThrows "loop: iteration cap reported" <|
     Composition.create t.applier <| restartable 1 do
       s.set ((← s.get) + 1)
@@ -296,7 +296,7 @@ queue then skips them (no double runs). Valid children are skipped entirely,
 with node indices intact across the skip. -/
 def ancestorRerunsChild : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let rOuter ← IO.mkRef (0 : Nat)
   let rBoth ← IO.mkRef (0 : Nat)
   let rQuiet ← IO.mkRef (0 : Nat)
@@ -333,7 +333,7 @@ before the replacement content's remembers. -/
 def disposalOrdering : IO Unit := do
   let t ← TestTree.create
   let events ← IO.mkRef (#[] : Array String)
-  let flag ← mutableStateOf true
+  let flag ← MutableState.create true
   let comp ← Composition.create t.applier <| restartable 1 do
     if ← flag.get then
       withGroup 11 do
@@ -355,8 +355,8 @@ before new launch) and on leaving the composition. -/
 def disposableEffect : IO Unit := do
   let t ← TestTree.create
   let events ← IO.mkRef (#[] : Array String)
-  let key ← mutableStateOf "a"
-  let alive ← mutableStateOf true
+  let key ← MutableState.create "a"
+  let alive ← MutableState.create true
   let comp ← Composition.create t.applier <| restartable 1 do
     if ← alive.get then
       withGroup 11 do
@@ -380,7 +380,7 @@ def disposableEffect : IO Unit := do
 def sideEffect : IO Unit := do
   let t ← TestTree.create
   let events ← IO.mkRef (#[] : Array String)
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
     let v ← s.get
     SideEffect (events.modify (·.push s!"se {v}"))
@@ -397,7 +397,7 @@ readers; non-reading scopes in the subtree skip. -/
 def localDynamic : IO Unit := do
   let t ← TestTree.create
   let l ← compositionLocalOf (0 : Nat)
-  let s ← mutableStateOf (1 : Nat)
+  let s ← MutableState.create (1 : Nat)
   let seen ← IO.mkRef (#[] : Array Nat)
   let rReader ← IO.mkRef (0 : Nat)
   let rOther ← IO.mkRef (0 : Nat)
@@ -422,7 +422,7 @@ provider subtree (readers and non-readers alike). -/
 def localStatic : IO Unit := do
   let t ← TestTree.create
   let l ← staticCompositionLocalOf (0 : Nat)
-  let s ← mutableStateOf (1 : Nat)
+  let s ← MutableState.create (1 : Nat)
   let seen ← IO.mkRef (#[] : Array Nat)
   let rReader ← IO.mkRef (0 : Nat)
   let rOther ← IO.mkRef (0 : Nat)
@@ -460,9 +460,9 @@ def localDefaultAndShadowing : IO Unit := do
 when the computed value changes. -/
 def derivedState : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOf (0 : Nat)
+  let s ← MutableState.create (0 : Nat)
   let computes ← IO.mkRef (0 : Nat)
-  let d ← derivedStateOf do
+  let d ← DerivedState.create do
     computes.modify (· + 1)
     return (← s.get) / 2
   let runs ← IO.mkRef (0 : Nat)
@@ -510,7 +510,7 @@ def setContentAndDispose : IO Unit := do
 group) is reported as a slot underflow instead of silent corruption. -/
 def slotUnderflowReported : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOf false
+  let s ← MutableState.create false
   let comp ← Composition.create t.applier <| restartable 1 do
     let _ ← remember (pure (1 : Nat))
     if ← s.get then
@@ -522,8 +522,8 @@ def slotUnderflowReported : IO Unit := do
 writes after removal no longer run `compute`. -/
 def derivedStateUnsubscribes : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOf (0 : Nat)
-  let alive ← mutableStateOf true
+  let s ← MutableState.create (0 : Nat)
+  let alive ← MutableState.create true
   let computes ← IO.mkRef (0 : Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
     if ← alive.get then
@@ -549,8 +549,8 @@ def derivedStateUnsubscribes : IO Unit := do
 disposed and stops tracking its upstreams. -/
 def derivedKeyChangeDisposes : IO Unit := do
   let t ← TestTree.create
-  let s ← mutableStateOf (0 : Nat)
-  let key ← mutableStateOf "a"
+  let s ← MutableState.create (0 : Nat)
+  let key ← MutableState.create "a"
   let computes ← IO.mkRef (0 : Nat)
   let comp ← Composition.create t.applier <| restartable 1 do
     let k ← key.get
@@ -571,7 +571,7 @@ is pure RC, no cycle collector): parent/scope/children/slots of every removed
 group are cleared, so the subtree is actually freeable. -/
 def removalSeversSubtree : IO Unit := do
   let t ← TestTree.create
-  let flag ← mutableStateOf true
+  let flag ← MutableState.create true
   let captured ← IO.mkRef (none : Option Group)
   let capturedScope ← IO.mkRef (none : Option RecomposeScope)
   -- Raw combinators so the test can hold on to the group and its scope.
@@ -642,7 +642,7 @@ abandoned (nothing launched, nothing double-run), and the scope recovers once
 the offending state changes. -/
 def throwDuringRecomposition : IO Unit := do
   let t ← TestTree.create
-  let boom ← mutableStateOf false
+  let boom ← MutableState.create false
   let events ← IO.mkRef (#[] : Array String)
   let comp ← Composition.create t.applier <| restartable 1 do
     DisposableEffect "outer" do

@@ -138,7 +138,7 @@ private def rendersGlyphs : IO Unit := do
 
 /-- A state-driven text change re-renders with changed coverage. -/
 private def stateChangeRerenders : IO Unit := do
-  let textState ← mutableStateOf "Hi"
+  let textState ← MutableState.create "Hi"
   let ctx ← boot <| Tests.restartable 1 do
     let t ← textState.get
     Text t (style := { fontSize := 24, color := .black })

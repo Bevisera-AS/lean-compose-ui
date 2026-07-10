@@ -111,7 +111,7 @@ state write, the application is done when none remain, and flipping the state
 back reopens a fresh window. Plain do-block content — the reads are tracked
 by `bootstrapApplication`'s restartable root, the documented usage. -/
 private def stateDrivenCloseAndReopen : IO Unit := do
-  let openB ← mutableStateOf true
+  let openB ← MutableState.create true
   let app ← bootstrapApplication do
     Window "sd-a" 120 100 (Box (modifier := Modifier.size 40 40 |>.background .green))
       (config := cfg)
@@ -136,7 +136,7 @@ private def stateDrivenCloseAndReopen : IO Unit := do
 /-- The application is done once the last window leaves (the composition had
 settled), and `runApplicationLoop` returns promptly on `done`. -/
 private def exitsWhenEmpty : IO Unit := do
-  let openA ← mutableStateOf true
+  let openA ← MutableState.create true
   let app ← bootstrapApplication do
     if ← openA.get then
       Window "ee-a" 100 80 (config := cfg)
@@ -189,8 +189,8 @@ private def dialogParentAndModal : IO Unit := do
 
 /-- Title and size follow the parameters on recomposition. -/
 private def titleAndSizeFollowParams : IO Unit := do
-  let title ← mutableStateOf "before"
-  let wide ← mutableStateOf false
+  let title ← MutableState.create "before"
+  let wide ← MutableState.create false
   let app ← bootstrapApplication do
     let t ← title.get
     let w : Dp := if ← wide.get then 300 else 200
@@ -258,7 +258,7 @@ private def vsyncEnabledCount (app : ApplicationScope) : IO (Option Nat) := do
 windows never serialize on N vblank waits. The pure election is `#guard`ed at
 `vsyncTargets`; this drives it through the real registry. -/
 private def singlePacerElection : IO Unit := do
-  let keepA ← mutableStateOf true
+  let keepA ← MutableState.create true
   let app ← bootstrapApplication do
     if ← keepA.get then Window "vs-a" 120 100 (config := vcfg)
     Window "vs-b" 120 100 (config := vcfg)

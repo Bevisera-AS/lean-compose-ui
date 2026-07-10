@@ -66,10 +66,10 @@ namespace ScrollState
 /-- Fresh state at offset `initial`. -/
 def create (initial : Float32 := 0) : IO ScrollState :=
   return { id := (← freshId).toUInt64
-           valueState := ← mutableStateOf (max 0 initial)
-           maxValueState := ← mutableStateOf 0
-           viewportSizeState := ← mutableStateOf 0
-           contentSizeState := ← mutableStateOf 0
+           valueState := ← MutableState.create (max 0 initial)
+           maxValueState := ← MutableState.create 0
+           viewportSizeState := ← MutableState.create 0
+           contentSizeState := ← MutableState.create 0
            mutationGen := ← IO.mkRef 0 }
 
 /-- Cancel any in-flight scroll animation and claim the mutation lock; returns

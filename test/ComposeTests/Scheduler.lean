@@ -267,7 +267,7 @@ private def launchedEffectLifecycle : IO Unit := do
   let t ← TestTree.create
   let (s, clock, _) ← fakeSched
   let log ← IO.mkRef (#[] : Array String)
-  let key ← mutableStateOf (0 : Nat)
+  let key ← MutableState.create (0 : Nat)
   let comp ← Composition.create t.applier <|
     CompositionLocalProvider LocalScheduler (some s) <| restartable 1 do
       let k ← key.get
@@ -309,7 +309,7 @@ private def launchScopeAutoCancel : IO Unit := do
   let (s, clock, _) ← fakeSched
   let log ← IO.mkRef (#[] : Array String)
   let scopeCell ← IO.mkRef (none : Option LaunchScope)
-  let show' ← mutableStateOf true
+  let show' ← MutableState.create true
   let comp ← Composition.create t.applier <|
     CompositionLocalProvider LocalScheduler (some s) <| restartable 1 do
       if ← show'.get then

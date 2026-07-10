@@ -199,6 +199,9 @@ composable def circleDrawerUi : Composable Unit := do
       Box (modifier := Modifier.fillMaxWidth |>.height 360
             |>.background colors.surface
             |>.border 1 colors.outlineVariant
+            -- Clip after the border: circles near the edge (or outside it,
+            -- after a window shrink) clip to the canvas, the border stays.
+            |>.clip .rectangle
             |>.onGloballyPositioned canvasRect.set
             |>.drawBehind canvasDraw
             |>.pointerInput 0 (detectTapGestures

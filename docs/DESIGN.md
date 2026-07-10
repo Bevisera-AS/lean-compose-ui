@@ -387,8 +387,10 @@ contexts). The loop (power-friendly, dirty-driven):
 
 Live resize: macOS/Windows run a modal loop *inside* step 1's pump, freezing
 the app until mouse-up. An SDL event watch (armed only while the loop is
-parked in the pump) renders resized/exposed windows synchronously from within
-it, so content reflows during the drag.
+parked in the pump) runs steps 3–4 synchronously from within it — once per
+actual size change, deduping the several events each drag tick posts — so
+content reflows and timers/animations advance during the drag. A drag held
+motionless posts no events, so nothing can advance until the next tick.
 
 **Overlays**: `Popup (anchor-relative positioning, onDismiss, focusable)` and
 `Dialog (scrim, Esc/click-outside dismiss)` compose their content into

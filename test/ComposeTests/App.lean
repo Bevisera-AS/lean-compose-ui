@@ -137,12 +137,14 @@ where
     w.modify (fun d => ⟨d.value + 1⟩)
     growForever ticks w
 
-/-- The live-resize watch callback renders synchronously — but only when the
-loop is parked in the pump (`armed`), on a window the lookup knows, and not
-re-entrantly (`busy`). Driven directly with synthetic events: the dummy
-driver suppresses real resize events, and the arming itself is exercised by
-every `runApp` under the smoke script. -/
-private def liveResizeWatchRenders : IO Unit := do
+/-- The live-resize watch callback renders synchronously — once per actual
+size change (the several events of one drag tick dedupe via `lastSize`),
+advancing the scheduler and frame clock as it goes — and only when armed
+(loop parked in the pump), on a known window, not re-entrantly. Driven
+directly with synthetic events: the dummy driver suppresses real resize
+events, and the arming itself is exercised by every `runApp` under the
+smoke script. -/
+private partial def liveResizeWatchRenders : IO Unit := do
   let ctx ← boot (Box (modifier := Modifier.fillMaxSize |>.background .red))
   let _ ← step ctx cfg
   let f0 ← ctx.framesRendered.get
@@ -151,39 +153,71 @@ private def liveResizeWatchRenders : IO Unit := do
     return if w == wid then some (ctx, cfg) else none
   let armed ← IO.mkRef false
   let busy ← IO.mkRef false
+  let last : IO.Ref (Option (Sdl.WindowId × Int32 × Int32)) ← IO.mkRef none
+  let watchEvent := liveResizeWatchEvent lookup armed busy last
   let resized : Sdl.Event := .windowResized ⟨0, wid, 300, 200⟩
   -- Unarmed (loop mid-drain or mid-render): must not render.
-  liveResizeWatchEvent lookup armed busy resized
+  watchEvent resized
   checkEq "watch: unarmed event does not render" (← ctx.framesRendered.get) f0
   armed.set true
   -- Armed resize: grow the window; the callback remeasures and presents
   -- without any `step` — fill content covers the new geometry.
   ctx.window.setSize 300 200
-  liveResizeWatchEvent lookup armed busy resized
+  watchEvent resized
   checkEq "watch: armed resize renders synchronously" (← ctx.framesRendered.get) (f0 + 1)
   check "watch: frame consumed (no pending dirty)" (!(← ctx.needsFrame.get))
   let (w1, h1) ← ctx.window.getSizeInPixels
   check "watch: fill covers the new geometry"
     (colorNear (← pixel ctx (w1 - 2) (h1 - 2)) 255 0 0)
-  -- Armed expose: renders (fresh pixels while the OS holds the loop).
-  liveResizeWatchEvent lookup armed busy (.windowExposed ⟨0, wid, 0, 0⟩)
-  checkEq "watch: armed expose renders" (← ctx.framesRendered.get) (f0 + 2)
+  -- The rest of the drag tick's burst (pixel-size-changed, exposed) at the
+  -- same size: deduped to the one render above.
+  watchEvent (.windowPixelSizeChanged ⟨0, wid, 300, 200⟩)
+  watchEvent (.windowExposed ⟨0, wid, 0, 0⟩)
+  checkEq "watch: same-size burst renders once" (← ctx.framesRendered.get) (f0 + 1)
+  -- An otherwise-dirtied window re-renders even at an unchanged size.
+  ctx.requestFrame
+  watchEvent (.windowExposed ⟨0, wid, 0, 0⟩)
+  checkEq "watch: dirty window renders at unchanged size" (← ctx.framesRendered.get) (f0 + 2)
   -- Unknown window id: dropped.
-  liveResizeWatchEvent lookup armed busy (.windowResized ⟨0, ⟨wid.val + 1⟩, 300, 200⟩)
+  watchEvent (.windowResized ⟨0, ⟨wid.val + 1⟩, 300, 200⟩)
   checkEq "watch: unknown window dropped" (← ctx.framesRendered.get) (f0 + 2)
   -- Busy (re-entered during its own render): dropped.
   busy.set true
-  liveResizeWatchEvent lookup armed busy resized
+  watchEvent resized
   busy.set false
   checkEq "watch: re-entrant call dropped" (← ctx.framesRendered.get) (f0 + 2)
   -- Non-resize events: ignored.
-  liveResizeWatchEvent lookup armed busy (.quit ⟨0⟩)
+  watchEvent (.quit ⟨0⟩)
   checkEq "watch: unrelated event ignored" (← ctx.framesRendered.get) (f0 + 2)
+  -- A size change advances the scheduler and frame clock (timers/animations
+  -- progress mid-drag): an awaitFrame-looping coroutine ticks exactly once.
+  let ticks ← IO.mkRef (0 : Nat)
+  let ctx2 ← boot do
+    LaunchedEffect 0 (tickForever ticks)
+    Box (modifier := Modifier.fillMaxSize |>.background .red)
+  let _ ← step ctx2 cfg  -- first render; queues the coroutine
+  let _ ← step ctx2 cfg  -- starts it (parks on the frame clock)
+  let wid2 ← ctx2.window.id
+  let lookup2 : Sdl.WindowId → IO (Option (WindowContext × AppConfig)) := fun w =>
+    return if w == wid2 then some (ctx2, cfg) else none
+  let armed2 ← IO.mkRef true
+  let busy2 ← IO.mkRef false
+  let last2 : IO.Ref (Option (Sdl.WindowId × Int32 × Int32)) ← IO.mkRef none
+  let t0 ← ticks.get
+  ctx2.window.setSize 320 240
+  liveResizeWatchEvent lookup2 armed2 busy2 last2 (.windowResized ⟨0, wid2, 320, 240⟩)
+  checkEq "watch: size change ticks the frame clock" (← ticks.get) (t0 + 1)
   -- `step` arms the watch only across its wait/poll phase.
   let watch ← installLiveResizeWatch lookup
   let _ ← step ctx cfg (idleCapMs := 5) (watch := some watch)
   check "watch: disarmed after a step" (!(← watch.armed.get))
   watch.remove
+where
+  /-- Bump `ticks` once per frame-clock tick, forever. -/
+  tickForever (ticks : IO.Ref Nat) : UiTask Unit := do
+    let _ ← UiTask.awaitFrame
+    ticks.modify (· + 1)
+    tickForever ticks
 
 /-- An idle step (no dirty state, no timers, no frame work) blocks on the
 event wait until the cap instead of spinning. Coarse bounds: at least most

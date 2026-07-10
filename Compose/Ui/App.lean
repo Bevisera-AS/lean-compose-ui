@@ -24,8 +24,9 @@ power-friendly event loop from DESIGN.md:
 
 During a live resize drag, macOS/Windows run a modal loop *inside* step 1;
 an SDL event watch (`installLiveResizeWatch`, armed only while the loop is
-parked in the pump) renders resized/exposed windows synchronously from within
-it, so content keeps reflowing mid-drag.
+parked in the pump) runs steps 3–4 synchronously from within it — once per
+actual size change — so content reflows and timers/animations keep advancing
+mid-drag.
 
 State writes anywhere schedule frames through the M5 invalidation hooks
 (`Composition.setOnInvalidate`, `LayoutNode.setOnRequestRemeasure`) — the
@@ -245,7 +246,17 @@ recomposition drain or another render (our own `setSize` calls can push resize
 events mid-drain on real drivers; those must wait for the normal pass). `busy`
 bars re-entry while the callback itself renders (a drained effect calling
 `setSize` would otherwise recurse). Off the main thread the callback does
-nothing — watches run on whatever thread posts the event. -/
+nothing — watches run on whatever thread posts the event.
+
+Each drag tick posts several events (`windowPixelSizeChanged`,
+`windowResized`, `windowExposed`); rendering every one means multiple vsynced
+presents per tick — visible stutter. `lastSize` dedupes: a size actually
+changing renders once (after running due coroutines and ticking the frame
+clock, so timers and animations advance mid-drag — the loop's phase 3 can't
+run while the OS holds the pump); repeat events at the same size render only
+if something else dirtied the window (`needsFrame`, e.g. a background task's
+state write). While the drag is held *motionless* no events arrive at all, so
+nothing can advance — timers catch up on the next tick or on release. -/
 
 /-- An installed live-resize watch (`installLiveResizeWatch`): the SDL watch
 registration plus the flags the loop and the callback coordinate through. -/
@@ -258,19 +269,25 @@ structure LiveResizeWatch where
   armed : IO.Ref Bool
   /-- True while the callback itself is rendering (re-entry barrier). -/
   busy : IO.Ref Bool
+  /-- Window and pixel size of the callback's last render — the burst dedupe
+  (one render and one clock tick per actual size change, not per event). -/
+  lastSize : IO.Ref (Option (Sdl.WindowId × Int32 × Int32))
 
 /-- The live-resize callback body (factored out of `installLiveResizeWatch`
-so tests can drive it with synthetic events): for a `windowResized`/
-`windowExposed` event, if the loop is parked (`armed`), we're on the main
-thread, we're not already rendering (`busy`), and `lookup` knows the window,
-remeasure (resized only) and render it synchronously. Anything else is
-ignored — the queued copy of the event still reaches the normal dispatch,
-whose extra repaint draws the same pixels. -/
+so tests can drive it with synthetic events): for a resize-family event, if
+the loop is parked (`armed`), we're on the main thread, we're not already
+rendering (`busy`), and `lookup` knows the window — then, when the pixel size
+actually changed since the last watch render, advance the scheduler and frame
+clock once and render; at an unchanged size render only if the window is
+otherwise dirty. Anything else is ignored — the queued copy of the event
+still reaches the normal dispatch. -/
 def liveResizeWatchEvent
     (lookup : Sdl.WindowId → IO (Option (WindowContext × AppConfig)))
-    (armed busy : IO.Ref Bool) (event : Sdl.Event) : IO Unit :=
+    (armed busy : IO.Ref Bool)
+    (lastSize : IO.Ref (Option (Sdl.WindowId × Int32 × Int32)))
+    (event : Sdl.Event) : IO Unit :=
   match event with
-  | .windowResized e => go true e.windowId
+  | .windowResized e | .windowPixelSizeChanged e => go true e.windowId
   | .windowExposed e => go false e.windowId
   | _ => pure ()
 where
@@ -281,8 +298,20 @@ where
     let some (ctx, config) ← lookup wid | return
     busy.set true
     try
-      if remeasure then ctx.root.markNeedsRemeasure
-      renderFrame ctx config
+      let (pw, ph) ← ctx.window.getSizeInPixels
+      let key := some (wid, pw, ph)
+      let sizeChanged := (← lastSize.get) != key
+      if sizeChanged then
+        -- One clock advance per actual size change: timers and animations
+        -- progress during the drag at the drag's own tick rate.
+        let now ← Sdl.getTicksNS
+        ctx.scheduler.runDue now
+        if ← ctx.scheduler.hasFrameWork then
+          ctx.scheduler.tickFrame now
+        if remeasure then ctx.root.markNeedsRemeasure
+      if sizeChanged || (← ctx.needsFrame.get) then
+        renderFrame ctx config
+        lastSize.set key
     finally
       busy.set false
 
@@ -296,8 +325,9 @@ def installLiveResizeWatch
     IO LiveResizeWatch := do
   let armed ← IO.mkRef false
   let busy ← IO.mkRef false
-  let id ← Sdl.addEventWatch (liveResizeWatchEvent lookup armed busy)
-  return { id, armed, busy }
+  let lastSize ← IO.mkRef none
+  let id ← Sdl.addEventWatch (liveResizeWatchEvent lookup armed busy lastSize)
+  return { id, armed, busy, lastSize }
 
 /-- Uninstall the watch (before disposing the contexts `lookup` reaches). -/
 def LiveResizeWatch.remove (w : LiveResizeWatch) : IO Unit := do

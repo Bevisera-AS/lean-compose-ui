@@ -18,13 +18,13 @@ count. -/
 composable def counterUi : Composable Unit := do
   let count ← remember (mutableStateOf (0 : Nat))
   let n ← count.get
-  MaterialTheme (content :=
-    Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := do
-        Text "Counter" (style := { fontSize := 22 })
-        TextField (toString n) (fun _ => pure ()) (enabled := false)
-          (modifier := Modifier.testTag "count")
-        Button (count.modify (· + 1)) (modifier := Modifier.testTag "count-btn")
-          (content := Text "Count")))
+  MaterialTheme do
+    Column (modifier := Modifier.padding (all := 16))
+        (verticalArrangement := .spacedBy 12) do
+      Text "Counter" (style := { fontSize := 22 })
+      TextField (toString n) (fun _ => pure ()) (enabled := false)
+        (modifier := Modifier.testTag "count")
+      Button (count.modify (· + 1)) (Text "Count")
+        (modifier := Modifier.testTag "count-btn")
 
 end Demos.Counter

@@ -137,8 +137,8 @@ private def menuBarElement (openIndex : MutableState (Option Nat)) :
       (onClick := if enabled then (do onClick; openIndex.set none) else pure ())
       (enabled := enabled)
   | .separator =>
-    Box (Modifier.fillMaxWidth |>.padding (vertical := some 4))
-      (content := HorizontalDivider)
+    Box HorizontalDivider
+      (modifier := Modifier.fillMaxWidth |>.padding (vertical := some 4))
 
 /-- The dropdown surface for the open menu: `Menu.lean`'s outlined
 `shapes.medium` `Surface` around a `Column` of items, providing the shared
@@ -147,15 +147,14 @@ private def menuBarDropdown (menu : MenuState) (items : Array MenuElement)
     (openIndex : MutableState (Option Nat)) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
-  Surface (Modifier.widthIntrinsicMax |>.sizeIn (minWidth := some 112))
-    (shape := shapes.medium)
-    (color := some colors.surface)
-    (border := some { width := 1, color := colors.outline })
-    (content :=
-      CompositionLocalProvider LocalMenuState (some menu) <|
-        Column (Modifier.padding (vertical := some 8)) (content := do
-          for h in [0:items.size] do
-            keyed h (menuBarElement openIndex items[h]!)))
+  Surface (modifier := Modifier.widthIntrinsicMax |>.sizeIn (minWidth := some 112))
+      (shape := shapes.medium)
+      (color := some colors.surface)
+      (border := some { width := 1, color := colors.outline }) do
+    CompositionLocalProvider LocalMenuState (some menu) <|
+      Column (modifier := Modifier.padding (vertical := some 8)) do
+        for h in [0:items.size] do
+          keyed h (menuBarElement openIndex items[h]!)
 
 /-- One top-level label on the bar: opens its menu on click (while a menu is
 open the backdrop handles bar clicks instead), captures its bounds for the
@@ -172,8 +171,8 @@ composable def menuBarLabel (index : Nat) (label : String)
     |>.clickable (openIndex.set (some index)) (source := some source)
     |>.background (if active then colors.onSurface.withAlpha 0.08 else .transparent)
     |>.padding (horizontal := some 12)
-  Box m (contentAlignment := .center)
-    (content := Text label (color := some colors.onSurface))
+  Box (modifier := m) (contentAlignment := .center) do
+    Text label (color := some colors.onSurface)
 
 /-- An in-window desktop menu bar: a themed top strip of `menus` whose labels
 drop their items below on click, with hover-to-switch, keyboard navigation, and
@@ -197,26 +196,26 @@ composable def MenuBar (menus : Array MenuBarMenu) : Composable Unit := do
       return ctx.unregisterKeyHandler handlerId
     | none => return pure ()
   -- The bar strip: labels + a bottom divider, on the theme surface.
-  Column (Modifier.fillMaxWidth |>.background colors.surface) (content := do
-    Row (Modifier.fillMaxWidth |>.height menuBarHeight) (content := do
+  Column (modifier := Modifier.fillMaxWidth |>.background colors.surface) do
+    Row (modifier := Modifier.fillMaxWidth |>.height menuBarHeight) do
       for i in [0:menus.size] do
         if let some rs := labelRects[i]? then
-          keyed i (menuBarLabel i menus[i]!.label openIndex rs))
-    HorizontalDivider)
+          keyed i (menuBarLabel i menus[i]!.label openIndex rs)
+    HorizontalDivider
   -- While open: a full-window backdrop (lowest — hover/click logic + click-away)
   -- then the dropdown for the open menu (above it). Fixed compose order keeps
   -- the z-order stable across menu switches.
   if let some i ← openIndex.get then
     withGroup 0x6d626f do
-      Popup (onDismissRequest := none) (content :=
+      Popup (onDismissRequest := none) do
         Spacer (Modifier.fillMaxSize
           |>.pointerInput (stringKey "Compose.MenuBar.backdrop")
-              (menuBarBackdrop labelRects openIndex)))
+              (menuBarBackdrop labelRects openIndex))
       let anchor ← match labelRects[i]? with
         | some rs => rs.get
         | none => pure Rect.zero
-      Popup (anchor := if anchor == Rect.zero then none else some anchor)
-        (content := menuBarDropdown menuState menus[i]!.items openIndex)
+      Popup (menuBarDropdown menuState menus[i]!.items openIndex)
+        (anchor := if anchor == Rect.zero then none else some anchor)
   else
     withGroup 0x6d626e (pure ())
 

@@ -152,26 +152,25 @@ private def overlayLayerContent (id : Nat) (anchor : Option Rect)
     (content : Composable Unit) : Composable Unit :=
   Layout {} (layerPolicy anchor alignment offset)
     (policyInputs := some (mixKeys 0x6f766c79 (positionKey anchor alignment offset)))
-    (hitTestable := interactive)
-    (content := do
-      if interactive && (dismissable || modal) then
-        withGroup 0x736372 do
-          let m := Modifier.pointerInput
-              (mixKeys (stringKey "Compose.Overlay.scrim") id.toUInt64)
-              (dismissClicks dismiss)
-            |>.then (match scrimColor with
-                     | some col => Modifier.background col
-                     | none => {})
-            |>.then (if modal then Modifier.onScroll (fun d => pure d) else {})
-          Layout m .leaf (policyInputs := some 0x736372)
-      else
-        withGroup 0x6e736372 (pure ())
-      -- A modal overlay marks its content subtree a focus scope, confining Tab
-      -- traversal to it while open (see `FocusManager.focusables`).
-      let contentMod := Modifier.pointerInput
-          (mixKeys (stringKey "Compose.Overlay.content") id.toUInt64) swallowClicks
-      let contentMod := if modal then contentMod.focusScope id else contentMod
-      Layout contentMod .root content (policyInputs := some 0x63747277))
+    (hitTestable := interactive) do
+    if interactive && (dismissable || modal) then
+      withGroup 0x736372 do
+        let m := Modifier.pointerInput
+            (mixKeys (stringKey "Compose.Overlay.scrim") id.toUInt64)
+            (dismissClicks dismiss)
+          |>.then (match scrimColor with
+                   | some col => Modifier.background col
+                   | none => {})
+          |>.then (if modal then Modifier.onScroll (fun d => pure d) else {})
+        Layout m .leaf (policyInputs := some 0x736372)
+    else
+      withGroup 0x6e736372 (pure ())
+    -- A modal overlay marks its content subtree a focus scope, confining Tab
+    -- traversal to it while open (see `FocusManager.focusables`).
+    let contentMod := Modifier.pointerInput
+        (mixKeys (stringKey "Compose.Overlay.content") id.toUInt64) swallowClicks
+    let contentMod := if modal then contentMod.focusScope id else contentMod
+    Layout contentMod .root content (policyInputs := some 0x63747277)
 
 /-! ## The host -/
 

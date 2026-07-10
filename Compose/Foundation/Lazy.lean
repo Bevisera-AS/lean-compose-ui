@@ -105,10 +105,9 @@ composable def LazyColumn (state : ScrollState) (itemHeight : Dp) (count : Nat)
   let (first, lastEx) ← windowState.get
   Layout (modifier.verticalScroll state) (lazyPolicy first count itemPx)
     (policyInputs := some (mixKeys 0x6c617a79 <| mixKeys first.toUInt64 <|
-      mixKeys count.toUInt64 itemPx.toFloat32.toBits.toUInt64))
-    (content := do
-      for i in [first:lastEx] do
-        keyed (key i) (lazyItem i itemContent))
+      mixKeys count.toUInt64 itemPx.toFloat32.toBits.toUInt64)) do
+    for i in [first:lastEx] do
+      keyed (key i) (lazyItem i itemContent)
 
 /-! ## LazyGrid -/
 
@@ -169,10 +168,9 @@ composable def LazyGrid (columns rows : Nat) (cellWidth cellHeight : Dp)
   let m := match hState with | some s => modifier.horizontalScroll s | none => modifier
   let m := match vState with | some s => m.verticalScroll s | none => m
   Layout (m.then contentModifier) (lazyGridPolicy c0 r0 (c1 - c0) columns rows cw ch)
-    (policyInputs := some (mixKeys 0x6c677269 (lazyGridKey c0 c1 r0 r1 cw ch)))
-    (content := do
-      for r in [r0:r1] do
-        for c in [c0:c1] do
-          keyed (key c r) (itemContent c r))
+    (policyInputs := some (mixKeys 0x6c677269 (lazyGridKey c0 c1 r0 r1 cw ch))) do
+    for r in [r0:r1] do
+      for c in [c0:c1] do
+        keyed (key c r) (itemContent c r)
 
 end Compose

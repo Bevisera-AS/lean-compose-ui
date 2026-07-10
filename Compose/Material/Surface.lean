@@ -45,9 +45,9 @@ def Surface (content : Composable Unit := pure ())
              | none => {})
     |>.clip shape
   let ambientStyle ← LocalTextStyle.current
-  Box m (content :=
+  Box (modifier := m) do
     CompositionLocalProvider LocalContentColor resolvedContent <|
       CompositionLocalProvider LocalTextStyle
-        { ambientStyle with color := resolvedContent } content)
+        { ambientStyle with color := resolvedContent } content
 
 end Compose

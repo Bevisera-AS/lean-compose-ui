@@ -16,7 +16,7 @@ Two views, mirroring `androidx.compose.ui.test`'s merged/unmerged trees:
 * **raw** (unmerged): every semantics-bearing node appears.
 * **merged** (the default): a node with `mergeDescendants` (every
   `Modifier.clickable`) absorbs the *texts* of its non-merging descendants
-  and hides them — so `Button (content := Text "OK")` is one node with
+  and hides them — so `Button onClick (Text "OK")` is one node with
   `texts = #["OK"]` and `role = button`. Nested merging nodes stay separate
   children (Compose's merge boundary rule). Only text merges; other
   properties stay with the node that stated them — a documented

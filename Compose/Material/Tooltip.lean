@@ -68,11 +68,10 @@ composable def TooltipArea (tooltip : Composable Unit) (content : Composable Uni
   let m := modifier.onGloballyPositioned rectRef.set
     |>.pointerInput (mixKeys (stringKey "Compose.TooltipArea") id.toUInt64)
         (tooltipGesture rectRef pos visible delayRef)
-  Box m (content := content)
+  Box content (modifier := m)
   if ← visible.get then
     let p ← pos.get
-    Popup (anchor := some ⟨p.x, p.y, p.x, p.y⟩) (offset := ⟨8, 20⟩)
-      (content := tooltip)
+    Popup tooltip (anchor := some ⟨p.x, p.y, p.x, p.y⟩) (offset := ⟨8, 20⟩)
 
 /-- A small themed surface around a line of text — the default tooltip body,
 Material's compact `PlainTooltip` look (`surfaceVariant` container, small
@@ -81,10 +80,10 @@ composable def TooltipSurface (text : String) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
   let typo ← MaterialTheme.typography
-  Surface (Modifier.padding (horizontal := some 8) (vertical := some 4))
-    (shape := shapes.extraSmall) (color := some colors.surfaceVariant)
-    (border := some { width := 1, color := colors.outlineVariant })
-    (content := Text text (style := typo.bodyMedium))
+  Surface (modifier := Modifier.padding (horizontal := some 8) (vertical := some 4))
+      (shape := shapes.extraSmall) (color := some colors.surfaceVariant)
+      (border := some { width := 1, color := colors.outlineVariant }) do
+    Text text (style := typo.bodyMedium)
 
 /-- `TooltipArea` with the default `TooltipSurface` body — the common
 "hover a control, see a text label" case. -/

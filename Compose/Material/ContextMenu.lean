@@ -79,16 +79,15 @@ composable def ContextMenuArea (items : Array ContextMenuItem)
   let m := modifier.onGloballyPositioned rectRef.set
     |>.pointerInput (mixKeys (stringKey "Compose.ContextMenuArea") id.toUInt64)
         (detectSecondaryTap onSecondary)
-  Box m (content := content)
+  Box content (modifier := m)
   let a ← anchor.get
   DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false)
-    (anchor := some ⟨a.x, a.y, a.x, a.y⟩) (offset := ⟨0, 0⟩)
-    (content := do
-      for i in [0:items.size] do
-        let it : ContextMenuItem := items[i]!
-        keyed i <|
-          DropdownMenuItem it.label (enabled := it.enabled)
-            (onClick := if it.enabled then do it.onClick; expanded.set false
-                        else pure ()))
+      (anchor := some ⟨a.x, a.y, a.x, a.y⟩) (offset := ⟨0, 0⟩) do
+    for i in [0:items.size] do
+      let it : ContextMenuItem := items[i]!
+      keyed i <|
+        DropdownMenuItem it.label (enabled := it.enabled)
+          (onClick := if it.enabled then do it.onClick; expanded.set false
+                      else pure ())
 
 end Compose

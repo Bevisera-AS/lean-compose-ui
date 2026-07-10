@@ -43,10 +43,10 @@ private def buttonImpl (onClick : IO Unit) (modifier : Modifier) (enabled : Bool
     |>.clip shape
     |>.then layer
     |>.padding (horizontal := some horizontalPadding) (vertical := some 8)
-  Box m (contentAlignment := .center) (content :=
+  Box (modifier := m) (contentAlignment := .center) do
     CompositionLocalProvider LocalContentColor contentColor <|
       CompositionLocalProvider LocalTextStyle
-        { typo.labelLarge with color := contentColor } content)
+        { typo.labelLarge with color := contentColor } content
 
 /-- Filled button: `primary` container, `onPrimary` content. Mirrors
 `androidx.compose.material3.Button`. -/

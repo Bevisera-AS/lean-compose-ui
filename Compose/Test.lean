@@ -14,7 +14,7 @@ verbs taking the matcher first, and time only moves when the test says so.
 
 ```lean
 open Compose.Test in
-runComposeTest (content := counterApp) do
+runComposeTest counterApp do
   assertExists (.text "Count: 0")
   click (.text "Increment")                -- real SDL events, real hit test
   assertExists (.text "Count: 1")

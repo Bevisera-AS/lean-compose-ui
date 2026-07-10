@@ -222,7 +222,7 @@ def runComposeTest (content : Composable Unit) (body : TestM Unit)
     IO Unit := do
   let clockRef ← IO.mkRef (0 : UInt64)
   let sched ← Scheduler.create (clock := clockRef.get)
-  let wrapped := if theme then MaterialTheme (colors := colors) (content := content)
+  let wrapped := if theme then MaterialTheme content (colors := colors)
                  else content
   let ctx ← bootstrap "runComposeTest" width height
     (CompositionLocalProvider LocalScheduler (some sched) wrapped) config

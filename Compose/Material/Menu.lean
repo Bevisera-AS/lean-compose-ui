@@ -164,19 +164,16 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
     Popup (anchor := anchor) (offset := offset)
       (onDismissRequest := some onDismissRequest) (focusable := true)
       (interactive := expanded)
-      (onKeyEvent := menuKeyHandler menu) (content := do
-        let v ← vis.get
-        AnimatedVisibility v
+      (onKeyEvent := menuKeyHandler menu) do
+      let v ← vis.get
+      AnimatedVisibility v
           (enter := fadeIn (spec := some animSpec) ++ expandVertically (spec := some animSpec))
-          (exit := fadeOut (spec := some animSpec) ++ shrinkVertically (spec := some animSpec))
-          (content :=
-            Surface (modifier.then widthMod |>.sizeIn (minWidth := some 112))
-              (shape := shapes.medium) (color := some colors.surface)
-              (border := some { width := 1, color := colors.outline })
-              (content :=
-                CompositionLocalProvider LocalMenuState (some menu) <|
-                  Column (Modifier.padding (vertical := some 8))
-                    (content := content))))
+          (exit := fadeOut (spec := some animSpec) ++ shrinkVertically (spec := some animSpec)) do
+        Surface (modifier := modifier.then widthMod |>.sizeIn (minWidth := some 112))
+            (shape := shapes.medium) (color := some colors.surface)
+            (border := some { width := 1, color := colors.outline }) do
+          CompositionLocalProvider LocalMenuState (some menu) <|
+            Column content (modifier := Modifier.padding (vertical := some 8))
 
 /-- One menu entry: `text` + `onClick` (the caller closes the menu in
 `onClick`/`onDismissRequest`). Hover or Down/Up highlight it (onSurface 8 %
@@ -212,9 +209,9 @@ composable def DropdownMenuItem (text : String) (onClick : IO Unit)
     |>.background (if highlighted && enabled then colors.onSurface.withAlpha 0.08
                    else .transparent)
     |>.padding (horizontal := some 12) (vertical := some 8)
-  Box m (contentAlignment := .centerStart) (content :=
+  Box (modifier := m) (contentAlignment := .centerStart) do
     Text text (color := some (if enabled then colors.onSurface
-                              else colors.onSurface.withAlpha disabledContentAlpha)))
+                              else colors.onSurface.withAlpha disabledContentAlpha))
 
 /-- Receiver scope of `ExposedDropdownMenuBox` content: the captured anchor
 rect (window coordinates) and the expansion toggle. Mirrors
@@ -263,8 +260,8 @@ composable def ExposedDropdownMenuBox (expanded : Bool)
            onExpandedChangeRef := ← IO.mkRef onExpandedChange }
   scope.expandedRef.set expanded
   scope.onExpandedChangeRef.set onExpandedChange
-  Box (modifier.onGloballyPositioned scope.anchorRect.set)
-    (content := content scope)
+  Box (content scope)
+    (modifier := modifier.onGloballyPositioned scope.anchorRect.set)
 
 /-- The ▾ trailing glyph of `ExposedDropdownMenuField`, drawn with two lines
 (no icon font). Flips ▴ while expanded. -/
@@ -293,9 +290,9 @@ composable def ExposedDropdownMenuField (scope : ExposedDropdownMenuBoxScope)
     |>.border (if focused then 2 else 1)
         (if focused then colors.primary else colors.outline) shapes.extraSmall
     |>.padding (horizontal := some 12) (vertical := some 8)
-  Row m (verticalAlignment := .centerVertically) (content := do
+  Row (modifier := m) (verticalAlignment := .centerVertically) do
     Text value (color := some colors.onSurface)
     Spacer (Modifier.weight 1 |>.height 1)
-    trailingTriangle colors.onSurfaceVariant expanded)
+    trailingTriangle colors.onSurfaceVariant expanded
 
 end Compose

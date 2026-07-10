@@ -13,7 +13,7 @@ Compose for Desktop's `application { Window(...) }`:
 def main : IO UInt32 := Compose.application do
   let isOpen ← remember (mutableStateOf true)
   if ← isOpen.get then
-    Window "hello" 400 300 (content := ...)
+    Window "hello" 400 300 do ...
 ```
 
 The content composes under a restartable root scope (`applicationRoot`), so

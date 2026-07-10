@@ -11,6 +11,17 @@ distribution are pure helpers (`Arrangement.positions`,
 `distributeWeights`), `#guard`-tested against Compose's numeric behavior
 (float accumulation with per-position rounding; round-robin remainder pixels
 for weights so totals are exact).
+
+Component signature convention (library-wide): the content slot comes right
+after the required arguments and every option follows with a default — pass
+options by name and write content as a trailing `do` block, Lean's native
+spelling of Kotlin's trailing lambda:
+
+```lean
+Surface (modifier := Modifier.fillMaxWidth) (shape := .rounded 12) do
+  Row (modifier := Modifier.padding (all := 12)) (verticalAlignment := .centerVertically) do
+    Text "hi"
+```
 -/
 
 /-- Main-axis arrangement of a `Row`/`Column`'s children. `top`/`bottom` are

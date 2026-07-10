@@ -118,7 +118,7 @@ private def ORig.wheel (r : ORig) (x y dy : Float32) : IO Unit :=
   r.send (.mouseWheel ⟨0, ⟨0⟩, ⟨0⟩, 0, dy, .normal, x, y, 0, dy.toInt32⟩)
 
 private def themed (content : Composable Unit) : Composable Unit :=
-  MaterialTheme (content := content)
+  MaterialTheme content
 
 /-- A colored fixed-size block. -/
 private def block (w h : Dp) (c : Compose.Color) : Composable Unit :=
@@ -130,12 +130,11 @@ private def block (w h : Dp) (c : Compose.Color) : Composable Unit :=
 shifts the drawn content. -/
 private def scrollWheel : IO Unit := do
   let st ← ScrollState.create
-  let r ← oboot <| Column (Modifier.size 100 100 |>.verticalScroll st)
-    (content := do
-      block 100 50 .red
-      block 100 50 .green
-      block 100 50 .blue
-      block 100 50 .yellow)
+  let r ← oboot <| Column (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+    block 100 50 .red
+    block 100 50 .green
+    block 100 50 .blue
+    block 100 50 .yellow
   check "scroll: starts at 0" ((← st.value) == 0)
   check "scroll: maxValue = content − viewport" ((← st.maxValue) == 100)
   check "scroll: viewport reported" ((← st.viewportSize) == 100)
@@ -162,8 +161,8 @@ re-clamps the value. -/
 private def scrollProgrammatic : IO Unit := do
   let st ← ScrollState.create
   let count ← mutableStateOf (4 : Nat)
-  let r ← oboot <| Column (Modifier.size 100 100 |>.verticalScroll st)
-    (content := Tests.restartable 1 do
+  let r ← oboot <| Column (modifier := Modifier.size 100 100 |>.verticalScroll st)
+    (Tests.restartable 1 do
       let n ← count.get
       for i in [0:n] do
         keyed i (block 100 50 (if i % 2 == 0 then .red else .green)))
@@ -187,12 +186,11 @@ private def scrollProgrammatic : IO Unit := do
 private def scrollNested : IO Unit := do
   let outer ← ScrollState.create
   let inner ← ScrollState.create
-  let r ← oboot <| Column (Modifier.size 100 100 |>.verticalScroll outer)
-    (content := do
-      Column (Modifier.size 100 60 |>.verticalScroll inner) (content := do
-        block 100 60 .red
-        block 100 60 .green)
-      block 100 140 .blue)
+  let r ← oboot <| Column (modifier := Modifier.size 100 100 |>.verticalScroll outer) do
+    Column (modifier := Modifier.size 100 60 |>.verticalScroll inner) do
+      block 100 60 .red
+      block 100 60 .green
+    block 100 140 .blue
   check "nested: inner max" ((← inner.maxValue) == 60)
   check "nested: outer max" ((← outer.maxValue) == 100)
   r.wheel 50 30 (-1)
@@ -213,11 +211,9 @@ private def scrollNested : IO Unit := do
 /-- Thumb pixels: proportional geometry, right-aligned 4 dp thumb. -/
 private def scrollbarGeometry : IO Unit := do
   let st ← ScrollState.create
-  let r ← oboot <| themed <| Box (Modifier.size 100 100 |>.background .white)
-    (content := do
-      Column (Modifier.fillMaxSize |>.verticalScroll st) (content :=
-        block 100 400 .white)
-      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight))
+  let r ← oboot <| themed <| Box (modifier := Modifier.size 100 100 |>.background .white) do
+    Column (modifier := Modifier.fillMaxSize |>.verticalScroll st) (block 100 400 .white)
+    VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight)
   r.settle
   let thumb := overWhite (L.onSurface.withAlpha 0.4)
   -- track 100, viewport 100, content 400 ⇒ thumb 25 px at offset 0.
@@ -236,11 +232,9 @@ private def scrollbarGeometry : IO Unit := do
 page by a viewport. -/
 private def scrollbarDrag : IO Unit := do
   let st ← ScrollState.create
-  let r ← oboot <| themed <| Box (Modifier.size 100 100 |>.background .white)
-    (content := do
-      Column (Modifier.fillMaxSize |>.verticalScroll st) (content :=
-        block 100 400 .white)
-      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight))
+  let r ← oboot <| themed <| Box (modifier := Modifier.size 100 100 |>.background .white) do
+    Column (modifier := Modifier.fillMaxSize |>.verticalScroll st) (block 100 400 .white)
+    VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight)
   r.settle
   -- Thumb 25 px at 0; drag from inside it by 30 px: ratio = 300/75 = 4.
   r.press 96 10
@@ -268,11 +262,9 @@ private def scrollbarDrag : IO Unit := do
 widens the thumb to 8 dp. -/
 private def scrollbarAutoHide : IO Unit := do
   let st ← ScrollState.create
-  let r ← oboot <| themed <| Box (Modifier.size 100 100 |>.background .white)
-    (content := do
-      Column (Modifier.fillMaxSize |>.verticalScroll st) (content :=
-        block 100 400 .white)
-      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight))
+  let r ← oboot <| themed <| Box (modifier := Modifier.size 100 100 |>.background .white) do
+    Column (modifier := Modifier.fillMaxSize |>.verticalScroll st) (block 100 400 .white)
+    VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight)
   r.settle
   let thumb := overWhite (L.onSurface.withAlpha 0.4)
   check "auto-hide: visible after boot activity" (near (← r.pixel 98 10) thumb 20)
@@ -315,10 +307,8 @@ private def lazyVirtualization : IO Unit := do
     states.modify (·.push (i, s))
     DisposableEffect i (do pure (disposed.modify (·.push i)))
     Spacer (Modifier.size 100 20)
-  let r ← oboot <| Box (Modifier.size 100 100)
-    (content :=
-      LazyColumn st (itemHeight := 20) (count := 100)
-        (modifier := Modifier.fillMaxWidth) (itemContent := item))
+  let r ← oboot <| Box (modifier := Modifier.size 100 100) do
+    LazyColumn st (itemHeight := 20) (count := 100) item (modifier := Modifier.fillMaxWidth)
   r.settle
   check "lazy: total scroll range = count×height − viewport"
     ((← st.maxValue) == 100 * 20 - 100)
@@ -353,12 +343,10 @@ private def lazyVirtualization : IO Unit := do
 /-- The lazy list scrolls with the wheel and draws the right items. -/
 private def lazyWheelPixels : IO Unit := do
   let st ← ScrollState.create
-  let r ← oboot <| Box (Modifier.size 100 100)
-    (content :=
-      LazyColumn st (itemHeight := 20) (count := 100)
-        (modifier := Modifier.fillMaxWidth)
-        (itemContent := fun i =>
-          block 100 20 (if i % 2 == 0 then .red else .green)))
+  let r ← oboot <| Box (modifier := Modifier.size 100 100) do
+    LazyColumn st (itemHeight := 20) (count := 100)
+        (modifier := Modifier.fillMaxWidth) fun i =>
+      block 100 20 (if i % 2 == 0 then .red else .green)
   r.settle
   check "lazy pixels: row 0 at the top" (near (← r.pixel 50 10) .red)
   check "lazy pixels: row 1 below" (near (← r.pixel 50 30) .green)
@@ -377,11 +365,11 @@ private def lazyWheelPixels : IO Unit := do
 /-- A dismissable popup gated on `open`, anchored at `anchor`. -/
 private def popupContent (open' : MutableState Bool) (anchor : Rect)
     (body : Composable Unit) : Composable Unit :=
-  themed <| Box (Modifier.fillMaxSize |>.background .green) (content :=
-    Tests.restartable 1 do
+  themed <| Box (modifier := Modifier.fillMaxSize |>.background .green)
+    (Tests.restartable 1 do
       if ← open'.get then
-        withGroup 1 <| Popup (anchor := some anchor)
-          (onDismissRequest := some (open'.set false)) (content := body)
+        withGroup 1 <| Popup body (anchor := some anchor)
+          (onDismissRequest := some (open'.set false))
       else
         withGroup 2 (pure ()))
 
@@ -433,22 +421,21 @@ private def popupFlip : IO Unit := do
 private def popupStackedEsc : IO Unit := do
   let open1 ← mutableStateOf true
   let open2 ← mutableStateOf true
-  let r ← oboot <| themed <| Box (Modifier.fillMaxSize |>.background .green)
-    (content := do
-      Tests.restartable 1 do
-        if ← open1.get then
-          withGroup 1 <| Popup (anchor := some ⟨20, 20, 40, 40⟩)
-            (onDismissRequest := some (open1.set false))
-            (content := Box (modifier := Modifier.size 60 30 |>.background .red))
-        else
-          withGroup 2 (pure ())
-      Tests.restartable 2 do
-        if ← open2.get then
-          withGroup 3 <| Popup (anchor := some ⟨150, 20, 170, 40⟩)
-            (onDismissRequest := some (open2.set false))
-            (content := Box (modifier := Modifier.size 60 30 |>.background .blue))
-        else
-          withGroup 4 (pure ()))
+  let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .green) do
+    Tests.restartable 1 do
+      if ← open1.get then
+        withGroup 1 <| Popup (Box (modifier := Modifier.size 60 30 |>.background .red))
+          (anchor := some ⟨20, 20, 40, 40⟩)
+          (onDismissRequest := some (open1.set false))
+      else
+        withGroup 2 (pure ())
+    Tests.restartable 2 do
+      if ← open2.get then
+        withGroup 3 <| Popup (Box (modifier := Modifier.size 60 30 |>.background .blue))
+          (anchor := some ⟨150, 20, 170, 40⟩)
+          (onDismissRequest := some (open2.set false))
+      else
+        withGroup 4 (pure ())
   r.settle
   check "stacked: both popups drawn"
     (near (← r.pixel 30 50) .red && near (← r.pixel 160 50) .blue)
@@ -469,15 +456,14 @@ click and Esc dismiss; a content click does not. -/
 private def dialogModal : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
   let open' ← mutableStateOf false
-  let r ← oboot <| themed <| Box (Modifier.fillMaxSize |>.background .white)
-    (content := do
-      Button (clicks.modify (· + 1)) (content := Text "OK")
-      Tests.restartable 1 do
-        if ← open'.get then
-          withGroup 1 <| Dialog (open'.set false)
-            (content := Box (modifier := Modifier.size 80 40 |>.background .red))
-        else
-          withGroup 2 (pure ()))
+  let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white) do
+    Button (clicks.modify (· + 1)) (Text "OK")
+    Tests.restartable 1 do
+      if ← open'.get then
+        withGroup 1 <| Dialog (open'.set false)
+          (Box (modifier := Modifier.size 80 40 |>.background .red))
+      else
+        withGroup 2 (pure ())
   -- Baseline: the button works.
   r.click 30 20
   r.settle
@@ -517,17 +503,15 @@ private def dialogModal : IO Unit := do
 private def alertDialogBasics : IO Unit := do
   let open' ← mutableStateOf true
   let confirmed ← IO.mkRef (0 : Nat)
-  let r ← oboot <| themed <| Box (Modifier.fillMaxSize |>.background .white)
-    (content :=
-      Tests.restartable 1 do
-        if ← open'.get then
-          withGroup 1 <| AlertDialog (onDismissRequest := open'.set false)
-            (title := "Title") (text := "Body text")
-            (confirmButton :=
-              TextButton (do confirmed.modify (· + 1); open'.set false)
-                (content := Text "OK"))
-        else
-          withGroup 2 (pure ()))
+  let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white)
+    (Tests.restartable 1 do
+      if ← open'.get then
+        withGroup 1 <| AlertDialog (onDismissRequest := open'.set false)
+          (title := "Title") (text := "Body text")
+          (confirmButton :=
+            TextButton (do confirmed.modify (· + 1); open'.set false) (Text "OK"))
+      else
+        withGroup 2 (pure ()))
   r.settle
   -- The dialog surface is a centered light card over the dimmed backdrop.
   check "alert: surface drawn in the center" (near (← r.pixel 150 150) L.surface 6)
@@ -556,19 +540,19 @@ private structure MenuFixture where
   toggles : IO.Ref (Array Bool)
 
 private def menuUi (f : MenuFixture) : Composable Unit :=
-  themed <| Box (Modifier.fillMaxSize |>.background .green) (content :=
-    Tests.restartable 1 do
+  themed <| Box (modifier := Modifier.fillMaxSize |>.background .green)
+    (Tests.restartable 1 do
       let isOpen ← f.expanded.get
       ExposedDropdownMenuBox isOpen
         (fun v => do f.toggles.modify (·.push v); f.expanded.set v)
-        (content := fun scope => do
+        fun scope => do
           ExposedDropdownMenuField scope (← f.selected.get) (expanded := isOpen)
           let anchor ← scope.anchor
           DropdownMenu isOpen (onDismissRequest := f.expanded.set false)
-            (anchor := anchor) (matchAnchorWidth := true) (content := do
-              for name in ["Alpha", "Beta", "Gamma"] do
-                keyed name <| DropdownMenuItem name
-                  (onClick := do f.selected.set name; f.expanded.set false))))
+              (anchor := anchor) (matchAnchorWidth := true) do
+            for name in ["Alpha", "Beta", "Gamma"] do
+              keyed name <| DropdownMenuItem name
+                (onClick := do f.selected.set name; f.expanded.set false))
 
 /-- The combobox toggles open on click; the menu draws over the content;
 item click selects and closes. -/
@@ -644,14 +628,13 @@ private def menuExitInert : IO Unit := do
   let expanded ← mutableStateOf false
   let btn ← IO.mkRef (0 : Nat)
   let keyHits ← IO.mkRef (0 : Nat)
-  let r ← oboot <| themed <| Column (Modifier.fillMaxSize |>.background .white)
-    (content := do
-      Spacer (Modifier.size 100 200)
-      Spacer (Modifier.size 80 40 |>.background .blue |>.clickable (btn.modify (· + 1)))
-      Tests.restartable 1 do
-        DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false)
-          (anchor := some ⟨10, 10, 60, 30⟩) (content :=
-            DropdownMenuItem "Pick" (onClick := expanded.set false)))
+  let r ← oboot <| themed <| Column (modifier := Modifier.fillMaxSize |>.background .white) do
+    Spacer (Modifier.size 100 200)
+    Spacer (Modifier.size 80 40 |>.background .blue |>.clickable (btn.modify (· + 1)))
+    Tests.restartable 1 do
+      DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false)
+          (anchor := some ⟨10, 10, 60, 30⟩) do
+        DropdownMenuItem "Pick" (onClick := expanded.set false)
   -- A normal (non-capture) app key handler standing in for "the rest of the
   -- app": an inert menu must let keys reach it.
   let hid ← freshId

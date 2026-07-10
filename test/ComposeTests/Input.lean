@@ -114,9 +114,9 @@ private partial def logEvents (log : IO.Ref (Array String)) (tag : String)
 a point missing the top sibling falls through to the one below. -/
 private def hitZOrder : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     leaf (Modifier.size 50 50 |>.pointerInput 1 (logEvents log "under" (only := [.press])))
-    leaf (Modifier.size 30 30 |>.pointerInput 2 (logEvents log "over" (only := [.press]))))
+    leaf (Modifier.size 30 30 |>.pointerInput 2 (logEvents log "over" (only := [.press])))
   let _ ← r.im.pointerEvent (pressAt 10 10)
   checkEq "z-order: overlap goes to the later sibling" (← log.get) #["over:press"]
   log.set #[]
@@ -129,11 +129,10 @@ private def hitZOrder : IO Unit := do
 test), for the node's own handlers and for its children. -/
 private def hitClipBounds : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := do
-    Box (Modifier.size 40 40 |>.clip .circle |>.pointerInput 1 (logEvents log "self"))
-      (content := do
-        leaf (Modifier.fillMaxSize |>.pointerInput 2 (logEvents log "child")))
-    pure ())
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 40 40 |>.clip .circle |>.pointerInput 1 (logEvents log "self")) do
+      leaf (Modifier.fillMaxSize |>.pointerInput 2 (logEvents log "child"))
+    pure ()
   let _ ← r.im.pointerEvent (pressAt 2 2)   -- inside the rect, outside the circle
   checkEq "clip: circle corner misses" (← log.get) (#[] : Array String)
   let _ ← r.im.pointerEvent (releaseAt 2 2)
@@ -145,10 +144,10 @@ private def hitClipBounds : IO Unit := do
 positions are delivered element-local. -/
 private def hitWrapperOffsets : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     leaf (Modifier.padding (all := 10)
       |>.pointerInput 1 (logEvents log "pad" (withPos := true))
-      |>.size 30 30))
+      |>.size 30 30)
   let _ ← r.im.pointerEvent (pressAt 5 5)   -- in the padding ring
   checkEq "offset: padding ring misses" (← log.get) (#[] : Array String)
   let _ ← r.im.pointerEvent (releaseAt 5 5)
@@ -163,11 +162,10 @@ unconsumed events bubble to the root. -/
 private def consumptionBubbling : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
   let r ← rig <|
-    Box (Modifier.size 50 50 |>.pointerInput 1
-          (logEvents log "outer" (only := [.press, .release])))
-      (content := do
-        leaf (Modifier.size 50 50 |>.pointerInput 2
-          (logEvents log "inner" (only := [.press, .release]) (consume := [.press]))))
+    Box (modifier := Modifier.size 50 50 |>.pointerInput 1
+          (logEvents log "outer" (only := [.press, .release]))) do
+      leaf (Modifier.size 50 50 |>.pointerInput 2
+        (logEvents log "inner" (only := [.press, .release]) (consume := [.press])))
   let _ ← r.im.pointerEvent (pressAt 10 10)
   checkEq "consume: inner consumed, outer silent" (← log.get) #["inner:press"]
   log.set #[]
@@ -182,11 +180,10 @@ private def scrollConsumption : IO Unit := do
   let outer ← IO.mkRef (#[] : Array Offset)
   let eat ← IO.mkRef true
   let r ← rig <|
-    Box (Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure .zero))
-      (content := do
-        leaf (Modifier.size 50 50 |>.onScroll (fun d => do
-          inner.modify (·.push d)
-          return (if ← eat.get then d else .zero))))
+    Box (modifier := Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure .zero)) do
+      leaf (Modifier.size 50 50 |>.onScroll (fun d => do
+        inner.modify (·.push d)
+        return (if ← eat.get then d else .zero)))
   let _ ← r.im.pointerEvent (scrollAt 10 10 ⟨0, 3⟩)
   checkEq "scroll: inner handler got the delta" (← inner.get) #[(⟨0, 3⟩ : Offset)]
   checkEq "scroll: consumed, outer silent" (← outer.get) (#[] : Array Offset)
@@ -201,9 +198,8 @@ consumed event stops before it. -/
 private def scrollAxisSplit : IO Unit := do
   let outer ← IO.mkRef (#[] : Array Offset)
   let r ← rig <|
-    Box (Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure d))
-      (content := do
-        leaf (Modifier.size 50 50 |>.onScroll (fun d => pure ⟨0, d.y⟩)))
+    Box (modifier := Modifier.size 50 50 |>.onScroll (fun d => do outer.modify (·.push d); pure d)) do
+      leaf (Modifier.size 50 50 |>.onScroll (fun d => pure ⟨0, d.y⟩))
   let _ ← r.im.pointerEvent (scrollAt 10 10 ⟨4, 3⟩)
   checkEq "axis split: inner ate y, outer saw the x remainder"
     (← outer.get) #[(⟨4, 0⟩ : Offset)]
@@ -219,11 +215,10 @@ private def hoverEnterExit : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
   let ee : List PointerEventType := [.enter, .exit]
   let r ← rig <|
-    Box (Modifier.size 100 80 |>.pointerInput 9 (logEvents log "p" ee))
-      (content := do
-        Row {} (content := do
-          leaf (Modifier.size 50 50 |>.pointerInput 1 (logEvents log "a" ee))
-          leaf (Modifier.size 50 50 |>.pointerInput 2 (logEvents log "b" ee))))
+    Box (modifier := Modifier.size 100 80 |>.pointerInput 9 (logEvents log "p" ee)) do
+      Row do
+        leaf (Modifier.size 50 50 |>.pointerInput 1 (logEvents log "a" ee))
+        leaf (Modifier.size 50 50 |>.pointerInput 2 (logEvents log "b" ee))
   let _ ← r.im.pointerEvent (moveTo 10 10)
   checkEq "hover: enters root→leaf" (← log.get) #["p:enter", "a:enter"]
   log.set #[]
@@ -238,11 +233,10 @@ private def hoverEnterExit : IO Unit := do
 where none applies. -/
 private def hoverCursor : IO Unit := do
   let r ← rig <|
-    Box (Modifier.size 100 80 |>.pointerHoverIcon .crosshair)
-      (content := do
-        Row {} (content := do
-          leaf (Modifier.size 50 50 |>.pointerHoverIcon .text)
-          leaf (Modifier.size 50 50)))
+    Box (modifier := Modifier.size 100 80 |>.pointerHoverIcon .crosshair) do
+      Row do
+        leaf (Modifier.size 50 50 |>.pointerHoverIcon .text)
+        leaf (Modifier.size 50 50)
   let _ ← r.im.pointerEvent (moveTo 10 10)   -- over the text leaf
   let _ ← r.im.pointerEvent (moveTo 60 10)   -- over the plain leaf: parent icon
   let _ ← r.im.pointerEvent (moveTo 10 70)   -- over the parent only
@@ -257,9 +251,9 @@ private def hoverCursor : IO Unit := do
 is a click-cancel. -/
 private def tapGesture : IO Unit := do
   let taps ← IO.mkRef (#[] : Array (Int32 × Int32))
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     leaf (Modifier.size 50 50 |>.pointerInput 1
-      (detectTapGestures (onTap := some fun p => taps.modify (·.push (p.x.toInt32, p.y.toInt32))))))
+      (detectTapGestures (onTap := some fun p => taps.modify (·.push (p.x.toInt32, p.y.toInt32)))))
   let _ ← r.im.pointerEvent (pressAt 10 10)
   checkEq "tap: nothing until release" (← taps.get) (#[] : Array (Int32 × Int32))
   let _ ← r.im.pointerEvent (releaseAt 12 14)
@@ -275,11 +269,11 @@ private def tapGesture : IO Unit := do
 private def doubleTapGesture : IO Unit := do
   let taps ← IO.mkRef (0 : Nat)
   let doubles ← IO.mkRef (0 : Nat)
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectTapGestures
         (onTap := some fun _ => taps.modify (· + 1))
-        (onDoubleTap := some fun _ => doubles.modify (· + 1)))))
+        (onDoubleTap := some fun _ => doubles.modify (· + 1))))
   let _ ← r.im.pointerEvent (pressAt 10 10)
   let _ ← r.im.pointerEvent (releaseAt 10 10)
   let _ ← r.im.pointerEvent (pressAt 10 10 (clicks := 2))
@@ -293,11 +287,11 @@ still tap. -/
 private def secondaryTapGesture : IO Unit := do
   let taps ← IO.mkRef (0 : Nat)
   let secs ← IO.mkRef (#[] : Array (Int32 × Int32))
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectTapGestures
         (onTap := some fun _ => taps.modify (· + 1))
-        (onSecondaryTap := some fun p => secs.modify (·.push (p.x.toInt32, p.y.toInt32))))))
+        (onSecondaryTap := some fun p => secs.modify (·.push (p.x.toInt32, p.y.toInt32)))))
   let rightAt := fun (t : PointerEventType) (x y : Float32) =>
     ({ eventType := t, position := ⟨x, y⟩, button := some .right } : PointerEvent)
   let _ ← r.im.pointerEvent (rightAt .press 15 20)
@@ -322,7 +316,7 @@ private def longPressGesture : IO Unit := do
   let taps ← IO.mkRef (0 : Nat)
   let longs ← IO.mkRef (#[] : Array (Int32 × Int32))
   let pressed ← IO.mkRef (#[] : Array Bool)
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectTapGestures
         (onTap := some fun _ => taps.modify (· + 1))
@@ -330,7 +324,7 @@ private def longPressGesture : IO Unit := do
         (onPress := some fun ps => do
           pressed.modify (·.push true)
           let ok ← ps.tryAwaitRelease
-          pressed.modify (·.push ok)))))
+          pressed.modify (·.push ok))))
   let _ ← r.im.pointerEvent (pressAt 20 20)
   checkEq "long: nothing before the timeout" (← longs.get) (#[] : Array (Int32 × Int32))
   advance r.s r.clock (ms 600)
@@ -347,14 +341,14 @@ private def longPressGesture : IO Unit := do
 window leave. -/
 private def dragGesture : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     leaf (Modifier.size 50 50 |>.pointerInput 1
       (detectDragGestures
         (onDrag := fun p d =>
           log.modify (·.push s!"drag@{p.x.toInt32},{p.y.toInt32}Δ{d.x.toInt32},{d.y.toInt32}"))
         (onDragStart := fun p => log.modify (·.push s!"start@{p.x.toInt32},{p.y.toInt32}"))
         (onDragEnd := log.modify (·.push "end"))
-        (onDragCancel := log.modify (·.push "cancel")))))
+        (onDragCancel := log.modify (·.push "cancel"))))
   let _ ← r.im.pointerEvent (pressAt 10 10)
   let _ ← r.im.pointerEvent (moveTo 12 12)   -- ≈2.8 px, below the slop
   checkEq "drag: below the threshold nothing starts" (← log.get) (#[] : Array String)
@@ -397,10 +391,10 @@ private def focusTraversal : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
   let fc (tag : String) : Bool → IO Unit := fun b =>
     log.modify (·.push s!"{tag}{if b then "+" else "-"}")
-  let r ← rig <| Column {} (content := do
+  let r ← rig <| Column do
     leaf (Modifier.size 20 20 |>.focusable |>.onFocusChanged (fc "a"))
     leaf (Modifier.size 20 20 |>.focusable |>.onFocusChanged (fc "b"))
-    leaf (Modifier.size 20 20 |>.focusable |>.onFocusChanged (fc "c")))
+    leaf (Modifier.size 20 20 |>.focusable |>.onFocusChanged (fc "c"))
   let tab (shift : Bool := false) : IO Bool :=
     r.im.keyEvent { key := .tab, mods := if shift then .lShift else .none }
   check "focus: tab handled" (← tab)
@@ -440,10 +434,9 @@ private def keyRouting : IO Unit := do
     if ke.down then log.modify (·.push s!"{tag}:{ke.key.val}")
     pure (eats.contains ke.key)
   let r ← rig <|
-    Box (Modifier.size 100 100 |>.onKeyEvent (handler "anc" []))
-      (content := do
-        leaf (Modifier.size 20 20 |>.focusable |>.onKeyEvent (handler "leaf" [.a, .f]))
-        leaf (Modifier.size 20 20 |>.focusable |>.onKeyEvent (handler "leaf2" [.tab])))
+    Box (modifier := Modifier.size 100 100 |>.onKeyEvent (handler "anc" [])) do
+      leaf (Modifier.size 20 20 |>.focusable |>.onKeyEvent (handler "leaf" [.a, .f]))
+      leaf (Modifier.size 20 20 |>.focusable |>.onKeyEvent (handler "leaf2" [.tab]))
   check "route: unfocused key falls through" (!(← r.im.keyEvent { key := .a }))
   checkEq "route: no handlers ran unfocused" (← log.get) (#[] : Array String)
   let _ ← r.im.keyEvent { key := .tab }   -- focus the first leaf
@@ -466,11 +459,11 @@ private def keyRouting : IO Unit := do
 consuming stops). -/
 private def textRouting : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
-  let r ← rig <| Column {} (content := do
+  let r ← rig <| Column do
     leaf (Modifier.size 20 20 |>.focusable
       |>.onTextInput (fun t => do log.modify (·.push s!"a:{t}"); pure true))
     leaf (Modifier.size 20 20 |>.focusable
-      |>.onTextInput (fun t => do log.modify (·.push s!"b:{t}"); pure true)))
+      |>.onTextInput (fun t => do log.modify (·.push s!"b:{t}"); pure true))
   check "text: nothing focused, unhandled" (!(← r.im.textInput "x"))
   let _ ← r.im.keyEvent { key := .tab }
   check "text: focused node handles" (← r.im.textInput "hi")
@@ -482,8 +475,8 @@ private def modalPopDetached : IO Unit := do
   let show' ← mutableStateOf true
   let r ← rig <| Tests.restartable 1 do
     if ← show'.get then
-      withGroup 11 <| Column {} (content := do
-        leaf (Modifier.size 20 20 |>.focusable))
+      withGroup 11 <| Column do
+        leaf (Modifier.size 20 20 |>.focusable)
     else
       withGroup 12 (pure ())
   let _ ← r.im.keyEvent { key := .tab }   -- focus the leaf
@@ -504,10 +497,10 @@ hovered. -/
 private def clickableBehavior : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
   let srcCell ← IO.mkRef (none : Option InteractionSource)
-  let r ← rig <| Box {} (content := do
+  let r ← rig <| Box do
     let src ← rememberInteractionSource
     SideEffect (srcCell.set (some src))
-    leaf (Modifier.size 40 40 |>.clickable (clicks.modify (· + 1)) (source := some src)))
+    leaf (Modifier.size 40 40 |>.clickable (clicks.modify (· + 1)) (source := some src))
   let some src ← srcCell.get | throw (IO.userError "interaction source not captured")
   -- Mouse click + pressed interaction during the hold.
   check "clickable: not pressed initially" (!(← src.pressed.get))
@@ -535,8 +528,8 @@ private def clickableBehavior : IO Unit := do
 /-- Disabled `clickable`: no clicks, no focus, no keyboard activation. -/
 private def clickableDisabled : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
-  let r ← rig <| Box {} (content := do
-    leaf (Modifier.size 40 40 |>.clickable (clicks.modify (· + 1)) (enabled := false)))
+  let r ← rig <| Box do
+    leaf (Modifier.size 40 40 |>.clickable (clicks.modify (· + 1)) (enabled := false))
   let _ ← r.im.pointerEvent (pressAt 10 10)
   let _ ← r.im.pointerEvent (releaseAt 10 10)
   checkEq "clickable: disabled ignores the mouse" (← clicks.get) 0
@@ -551,11 +544,11 @@ state layer on. -/
 private def clickableCancelResetsPressed : IO Unit := do
   let enabled ← mutableStateOf true
   let srcCell ← IO.mkRef (none : Option InteractionSource)
-  let r ← rig <| Tests.restartable 1 <| Box {} (content := do
+  let r ← rig <| Tests.restartable 1 <| Box do
     let src ← rememberInteractionSource
     SideEffect (srcCell.set (some src))
     leaf (Modifier.size 40 40
-      |>.clickable (pure ()) (enabled := (← enabled.get)) (source := some src)))
+      |>.clickable (pure ()) (enabled := (← enabled.get)) (source := some src))
   let some src ← srcCell.get | throw (IO.userError "interaction source not captured")
   let _ ← r.im.pointerEvent (pressAt 10 10)
   check "press-cancel: pressed while held" (← src.pressed.get)
@@ -570,12 +563,11 @@ private def clickableCancelMt : IO Unit := do
   let enabled ← mutableStateOf true
   let srcCell ← IO.mkRef (none : Option InteractionSource)
   runComposeTest
-    (content := Tests.restartable 1 do
+    (Tests.restartable 1 do
       let src ← rememberInteractionSource
       SideEffect (srcCell.set (some src))
       Box (modifier := Modifier.testTag "hold" |>.size 60 30
-        |>.clickable (pure ()) (enabled := (← enabled.get)) (source := some src)))
-    do
+        |>.clickable (pure ()) (enabled := (← enabled.get)) (source := some src))) do
       let some src ← srcCell.get | throw (IO.userError "interaction source not captured")
       mouseDown (← boundsOf (.tag "hold")).center
       check "press-cancel MT: pressed while held" (← src.pressed.get)
@@ -594,10 +586,10 @@ private def pointerInputLifecycle : IO Unit := do
   let show' ← mutableStateOf true
   let r ← rig <| Tests.restartable 1 do
     if ← show'.get then
-      withGroup 11 <| Box {} (content := do
+      withGroup 11 <| Box do
         let k ← liftM (m := IO) key.get
         leaf (Modifier.size 40 40 |>.pointerInput k
-          (logEvents log s!"h{k}" (only := [.press, .release]))))
+          (logEvents log s!"h{k}" (only := [.press, .release])))
     else
       withGroup 12 (pure ())
   let node ← (← r.root.child 0).child 0
@@ -662,11 +654,11 @@ private def sdlTranslation : IO Unit := do
   let texts ← IO.mkRef (#[] : Array String)
   let hook ← IO.mkRef (#[] : Array Bool)
   let ctx ← bootstrap "compose-input-test" 200 150
-    (Box {} (content := do
+    (Box do
       leaf (Modifier.size 50 50
         |>.clickable (clicks.modify (· + 1))
         |>.onScroll (fun d => do scrolls.modify (·.push d); pure d)
-        |>.onTextInput (fun t => do texts.modify (·.push t); pure true))))
+        |>.onTextInput (fun t => do texts.modify (·.push t); pure true)))
     cfg
   let cursors ← IO.mkRef (#[] : Array Sdl.SystemCursor)
   let im ← installInput ctx (cursor := some { set := fun c => cursors.modify (·.push c) })
@@ -721,11 +713,11 @@ private def focusDetachClears : IO Unit := do
   let ctx ← bootstrap "compose-focus-detach" 200 150
     (Tests.restartable 1 do
       if ← show'.get then
-        withGroup 11 <| Box {} (content := do
+        withGroup 11 <| Box do
           leaf (Modifier.size 40 40 |>.focusable
             |>.onFocusChanged (fun b => focusLog.modify (·.push b))
             |>.onKeyEvent (fun _ => do keys.modify (· + 1); pure false)
-            |>.onTextInput (fun _ => pure true)))
+            |>.onTextInput (fun _ => pure true))
       else
         withGroup 12 (pure ()))
     cfg
@@ -774,14 +766,13 @@ private def hoverAppearUnderCursor : IO Unit := do
   let srcCell ← IO.mkRef (none : Option InteractionSource)
   let show' ← mutableStateOf false
   Compose.Test.runComposeTest
-    (content := Tests.restartable 1 do
+    (Tests.restartable 1 do
       let src ← rememberInteractionSource
       SideEffect (srcCell.set (some src))
       if ← show'.get then
         withGroup 11 <| Box (modifier := Modifier.size 80 80 |>.hoverable src)
       else
-        withGroup 12 (pure ()))
-    do
+        withGroup 12 (pure ())) do
       Compose.Test.mouseMove ⟨40, 40⟩
       Compose.Test.awaitIdle
       let some src ← srcCell.get | throw (IO.userError "source not captured")
@@ -798,14 +789,13 @@ private def hoverDetachUnlatch : IO Unit := do
   let srcCell ← IO.mkRef (none : Option InteractionSource)
   let show' ← mutableStateOf true
   Compose.Test.runComposeTest
-    (content := Tests.restartable 1 do
+    (Tests.restartable 1 do
       let src ← rememberInteractionSource
       SideEffect (srcCell.set (some src))
       if ← show'.get then
         withGroup 11 <| Box (modifier := Modifier.size 80 80 |>.hoverable src)
       else
-        withGroup 12 (pure ()))
-    do
+        withGroup 12 (pure ())) do
       Compose.Test.mouseMove ⟨40, 40⟩
       Compose.Test.awaitIdle
       let some src ← srcCell.get | throw (IO.userError "source not captured")

@@ -80,8 +80,8 @@ private def sizeAndPadding : IO Unit := do
   -- nested padding through a parent/child tree
   do
     let (root, _) ← composeTree <|
-      Layout (Modifier.padding (all := 10)) .root (content := do
-        leaf (Modifier.padding (all := 5) |>.size 20 20))
+      Layout (Modifier.padding (all := 10)) .root do
+        leaf (Modifier.padding (all := 5) |>.size 20 20)
     let _ ← root.remeasure { maxWidth := 200, maxHeight := 200 }
     checkEq "nested padding: child outer" (← sizeAt root [0, 0]) (⟨30, 30⟩ : IntSize)
     checkEq "nested padding: parent outer" (← sizeAt root [0]) (⟨50, 50⟩ : IntSize)
@@ -109,8 +109,8 @@ private def fillOffsetSizeIn : IO Unit := do
   -- padding + fillMaxSize: fill the padded space
   do
     let (root, _) ← composeTree <|
-      Layout (Modifier.padding (all := 10)) .root (content := do
-        leaf (Modifier.fillMaxSize))
+      Layout (Modifier.padding (all := 10)) .root do
+        leaf (Modifier.fillMaxSize)
     let _ ← root.remeasure (.fixed 200 200)
     checkEq "padding+fill: parent fills incoming" (← sizeAt root [0]) (⟨200, 200⟩ : IntSize)
     checkEq "padding+fill: child fills padded space" (← sizeAt root [0, 0]) (⟨180, 180⟩ : IntSize)
@@ -148,10 +148,10 @@ private def fillOffsetSizeIn : IO Unit := do
 
 private def rowArrangements : IO Unit := do
   let case' (arr : Arrangement) (expected : List Int32) (label : String) : IO Unit := do
-    let (root, _) ← composeTree <| Row (horizontalArrangement := arr) (content := do
+    let (root, _) ← composeTree <| Row (horizontalArrangement := arr) do
       leaf (Modifier.size 10 10)
       leaf (Modifier.size 10 10)
-      leaf (Modifier.size 10 10))
+      leaf (Modifier.size 10 10)
     let _ ← root.remeasure (.fixed 100 20)
     checkEq s!"row arrangement: {label} size" (← sizeAt root [0]) (⟨100, 20⟩ : IntSize)
     checkEq s!"row arrangement: {label}" (← childXs root) expected
@@ -165,9 +165,9 @@ private def rowArrangements : IO Unit := do
 
 private def rowCrossAlignment : IO Unit := do
   let case' (align : Alignment.Vertical) (expected : List Int32) (label : String) : IO Unit := do
-    let (root, _) ← composeTree <| Row (verticalAlignment := align) (content := do
+    let (root, _) ← composeTree <| Row (verticalAlignment := align) do
       leaf (Modifier.size 10 10)
-      leaf (Modifier.size 10 20))
+      leaf (Modifier.size 10 20)
     let _ ← root.remeasure (.fixed 100 20)
     checkEq s!"row cross-align: {label}" (← childYs root) expected
   case' .top [0, 0] "top"
@@ -177,10 +177,10 @@ private def rowCrossAlignment : IO Unit := do
 private def rowWeights : IO Unit := do
   -- 2:1 weights after a fixed sibling; exact division
   do
-    let (root, _) ← composeTree <| Row (content := do
+    let (root, _) ← composeTree <| Row do
       leaf (Modifier.weight 2 |>.height 10)
       leaf (Modifier.weight 1 |>.height 10)
-      leaf (Modifier.size 10 10))
+      leaf (Modifier.size 10 10)
     let _ ← root.remeasure (.fixed 100 20)
     checkEq "weights 2:1: first share" (← sizeAt root [0, 0]) (⟨60, 10⟩ : IntSize)
     checkEq "weights 2:1: second share" (← sizeAt root [0, 1]) (⟨30, 10⟩ : IntSize)
@@ -188,10 +188,10 @@ private def rowWeights : IO Unit := do
     checkEq "weights 2:1: positions" (← childXs root) [0, 60, 90]
   -- remainder pixels distributed round-robin so totals are exact
   do
-    let (root, _) ← composeTree <| Row (content := do
+    let (root, _) ← composeTree <| Row do
       leaf (Modifier.weight 1 |>.height 10)
       leaf (Modifier.weight 1 |>.height 10)
-      leaf (Modifier.weight 1 |>.height 10))
+      leaf (Modifier.weight 1 |>.height 10)
     let _ ← root.remeasure (.fixed 100 20)
     checkEq "weights remainder: 100/3 = 34+33+33"
       [(← sizeAt root [0, 0]).width, (← sizeAt root [0, 1]).width, (← sizeAt root [0, 2]).width]
@@ -199,9 +199,9 @@ private def rowWeights : IO Unit := do
     checkEq "weights remainder: positions" (← childXs root) [0, 34, 67]
   -- fill := false leaves the share as an upper bound only
   do
-    let (root, _) ← composeTree <| Row (content := do
+    let (root, _) ← composeTree <| Row do
       leaf (Modifier.weight 1 (fill := false) |>.width 10 |>.height 10)
-      leaf (Modifier.size 20 10))
+      leaf (Modifier.size 20 10)
     let _ ← root.remeasure (.fixed 100 20)
     checkEq "weight no-fill: child keeps its own width" (← sizeAt root [0, 0]) (⟨10, 10⟩ : IntSize)
     checkEq "weight no-fill: row still fills min" (← sizeAt root [0]) (⟨100, 20⟩ : IntSize)
@@ -209,36 +209,36 @@ private def rowWeights : IO Unit := do
 
 private def columnBasics : IO Unit := do
   do
-    let (root, _) ← composeTree <| Column (verticalArrangement := .spaceEvenly) (content := do
+    let (root, _) ← composeTree <| Column (verticalArrangement := .spaceEvenly) do
       leaf (Modifier.size 10 10)
       leaf (Modifier.size 10 10)
-      leaf (Modifier.size 10 10))
+      leaf (Modifier.size 10 10)
     let _ ← root.remeasure (.fixed 20 100)
     checkEq "column spaceEvenly: y positions" (← childYs root) [18, 45, 73]
     checkEq "column spaceEvenly: x stays start" (← childXs root) [0, 0, 0]
   do
     let (root, _) ← composeTree <| Column (verticalArrangement := .spacedBy 4)
-      (horizontalAlignment := .«end») (content := do
-        leaf (Modifier.size 10 10)
-        leaf (Modifier.size 10 10))
+        (horizontalAlignment := .«end») do
+      leaf (Modifier.size 10 10)
+      leaf (Modifier.size 10 10)
     let _ ← root.remeasure (.fixed 20 100)
     checkEq "column spacedBy: y positions" (← childYs root) [0, 14]
     checkEq "column align end: x positions" (← childXs root) [10, 10]
   -- Column weight
   do
-    let (root, _) ← composeTree <| Column (content := do
+    let (root, _) ← composeTree <| Column do
       leaf (Modifier.size 10 10)
-      leaf (Modifier.weight 1 |>.width 10))
+      leaf (Modifier.weight 1 |>.width 10)
     let _ ← root.remeasure (.fixed 20 100)
     checkEq "column weight: fills the rest" (← sizeAt root [0, 1]) (⟨10, 90⟩ : IntSize)
     checkEq "column weight: position" (← childYs root) [0, 10]
 
 private def boxAndSpacer : IO Unit := do
   do
-    let (root, _) ← composeTree <| Box (contentAlignment := .center) (content := do
+    let (root, _) ← composeTree <| Box (contentAlignment := .center) do
       leaf (Modifier.size 20 20)
       leaf (Modifier.align .bottomEnd (m := Modifier.size 20 20))
-      leaf (Modifier.matchParentSize))
+      leaf (Modifier.matchParentSize)
     let _ ← root.remeasure (.fixed 100 100)
     checkEq "box: content-aligned child centers" (← posAt root [0, 0]) (⟨40, 40⟩ : IntOffset)
     checkEq "box: per-child align overrides" (← posAt root [0, 1]) (⟨80, 80⟩ : IntOffset)
@@ -246,9 +246,9 @@ private def boxAndSpacer : IO Unit := do
     checkEq "box: matchParentSize at origin" (← posAt root [0, 2]) (⟨0, 0⟩ : IntOffset)
   -- Box wraps its largest child under loose constraints
   do
-    let (root, _) ← composeTree <| Box (content := do
+    let (root, _) ← composeTree <| Box do
       leaf (Modifier.size 20 30)
-      leaf (Modifier.size 30 10))
+      leaf (Modifier.size 30 10)
     let _ ← root.remeasure { maxWidth := 200, maxHeight := 200 }
     checkEq "box: wraps the largest child" (← sizeAt root [0]) (⟨30, 30⟩ : IntSize)
   -- Spacer
@@ -266,10 +266,10 @@ private def boxAndSpacer : IO Unit := do
 private def intrinsicWidthBasics : IO Unit := do
   -- size to the widest child; fill-width children stretch to the winner
   do
-    let (root, _) ← composeTree <| Column (Modifier.widthIntrinsicMax) (content := do
+    let (root, _) ← composeTree <| Column (modifier := Modifier.widthIntrinsicMax) do
       leaf (Modifier.fillMaxWidth |>.height 10)
       leaf (Modifier.size 80 10)
-      leaf (Modifier.size 50 10))
+      leaf (Modifier.size 50 10)
     let _ ← root.remeasure { maxWidth := 400, maxHeight := 400 }
     checkEq "intrinsic: column sizes to widest child" (← sizeAt root [0]) (⟨80, 30⟩ : IntSize)
     checkEq "intrinsic: fill child stretches to the winner"
@@ -278,9 +278,9 @@ private def intrinsicWidthBasics : IO Unit := do
     checkEq "intrinsic: children stacked" (← childYs root) [0, 10, 20]
   -- the natural width clamps into a bounded incoming maximum
   do
-    let (root, _) ← composeTree <| Column (Modifier.widthIntrinsicMax) (content := do
+    let (root, _) ← composeTree <| Column (modifier := Modifier.widthIntrinsicMax) do
       leaf (Modifier.size 80 10)
-      leaf (Modifier.fillMaxWidth |>.height 10))
+      leaf (Modifier.fillMaxWidth |>.height 10)
     let _ ← root.remeasure { maxWidth := 60, maxHeight := 400 }
     checkEq "intrinsic: natural width clamps to max" (← sizeAt root [0]) (⟨60, 20⟩ : IntSize)
     checkEq "intrinsic: fill child gets the clamped width"
@@ -288,9 +288,9 @@ private def intrinsicWidthBasics : IO Unit := do
   -- an inner minimum (sizeIn) floors the probe result
   do
     let (root, _) ← composeTree <|
-      Column (Modifier.widthIntrinsicMax |>.sizeIn (minWidth := some 112)) (content := do
+      Column (modifier := Modifier.widthIntrinsicMax |>.sizeIn (minWidth := some 112)) do
         leaf (Modifier.size 50 10)
-        leaf (Modifier.fillMaxWidth |>.height 10))
+        leaf (Modifier.fillMaxWidth |>.height 10)
     let _ ← root.remeasure { maxWidth := 400, maxHeight := 400 }
     checkEq "intrinsic: inner minWidth floors the result"
       (← sizeAt root [0]) (⟨112, 20⟩ : IntSize)
@@ -309,9 +309,9 @@ private def intrinsicTwoPassSound : IO Unit := do
   let greedy : MeasurePolicy := fun _ _ c => do
     log.modify (·.push c)
     return { size := ⟨if c.hasBoundedWidth then c.maxWidth else 30, 10⟩ }
-  let (root, _) ← composeTree <| Column (Modifier.widthIntrinsicMax) (content := do
+  let (root, _) ← composeTree <| Column (modifier := Modifier.widthIntrinsicMax) do
     Layout {} greedy
-    leaf (Modifier.size 80 10))
+    leaf (Modifier.size 80 10)
   let c : Constraints := { maxWidth := 400, maxHeight := 400 }
   let _ ← root.remeasure c
   let cs ← log.get
@@ -366,9 +366,9 @@ private def measureStateTargeting : IO Unit := do
     cntA.modify (· + 1)
     let v ← s.get
     return { size := ⟨Int32.ofNat v, 10⟩ }
-  let (root, _) ← composeTree <| Layout {} (probed cntP .root) (content := do
+  let (root, _) ← composeTree <| Layout {} (probed cntP .root) do
     Layout {} policyA
-    Layout (Modifier.size 10 10) (probed cntB))
+    Layout (Modifier.size 10 10) (probed cntB)
   let c : Constraints := Constraints.fixed 100 100
   let _ ← root.remeasure c
   checkEq "measure-state: initial counts" ((← cntA.get), (← cntB.get), (← cntP.get)) (1, 1, 1)
@@ -395,8 +395,8 @@ private def survivingSizeStopsPropagation : IO Unit := do
     cntA.modify (· + 1)
     let _ ← s.get
     return { size := ⟨15, 15⟩ }
-  let (root, _) ← composeTree <| Layout {} (probed cntP .root) (content := do
-    Layout {} policyA)
+  let (root, _) ← composeTree <| Layout {} (probed cntP .root) do
+    Layout {} policyA
   let c : Constraints := Constraints.fixed 100 100
   let _ ← root.remeasure c
   checkEq "surviving-size: initial counts" ((← cntA.get), (← cntP.get)) (1, 1)
@@ -421,9 +421,9 @@ private def midPassDirtyOfVisitedSibling : IO Unit := do
   let policyB : MeasurePolicy := fun _ _ _ => do
     if (← trigger.get) == 1 then s.set 30
     return { size := ⟨10, 10⟩ }
-  let (root, _) ← composeTree <| Layout {} .root (content := do
+  let (root, _) ← composeTree <| Layout {} .root do
     Layout {} policyA
-    Layout {} policyB)
+    Layout {} policyB
   let hookFires ← IO.mkRef (0 : Nat)
   root.setOnRequestRemeasure (hookFires.modify (· + 1))
   let c : Constraints := Constraints.fixed 100 100
@@ -453,13 +453,12 @@ private def sharedScrollStickyHeader : IO Unit := do
   let s ← Compose.ScrollState.create
   let wide ← mutableStateOf true -- main content: 1000px wide, then 300px
   Compose.Test.runComposeTest (theme := false)
-    (content := Column {} (content := Tests.restartable 1 do
-      let w : Dp := if ← wide.get then 1000 else 300
-      Box (Modifier.width 200 |>.height 20 |>.horizontalScroll s) (content :=
-        Box (modifier := Modifier.testTag "header" |>.width 1000 |>.height 20))
-      Box (Modifier.width 200 |>.height 100 |>.horizontalScroll s) (content :=
-        Box (modifier := Modifier.testTag "main" |>.width w |>.height 100))))
-    do
+      (Column (Tests.restartable 1 do
+        let w : Dp := if ← wide.get then 1000 else 300
+        Box (modifier := Modifier.width 200 |>.height 20 |>.horizontalScroll s) do
+          Box (modifier := Modifier.testTag "header" |>.width 1000 |>.height 20)
+        Box (modifier := Modifier.width 200 |>.height 100 |>.horizontalScroll s) do
+          Box (modifier := Modifier.testTag "main" |>.width w |>.height 100))) do
       s.scrollTo 10000 -- clamps to maxValue = 1000 - 200 = 800
       Compose.Test.awaitIdle
       Compose.Test.assertThat (.tag "header") "scrolled to the end (x = -800)"
@@ -481,7 +480,7 @@ private def drawWalk : IO Unit := do
   let ren ← Sdl.createRenderer win (some Sdl.softwareRenderer)
   ren.setDrawColor 0 0 0 255
   ren.clear
-  let (root, _) ← composeTree <| Column (Modifier.fillMaxSize) (content := do
+  let (root, _) ← composeTree <| Column (modifier := Modifier.fillMaxSize) do
     -- y ∈ [0, 50): plain red background
     leaf (Modifier.size 50 50 |>.background .red)
     -- y ∈ [50, 100): left padding shifts the green fill to x ∈ [10, 60)
@@ -489,13 +488,13 @@ private def drawWalk : IO Unit := do
     -- y ∈ [100, 140): blue fill with a 4px white border just inside
     leaf (Modifier.size 40 40 |>.background .blue |>.border 4 .white)
     -- y ∈ [140, 160): stacking order — yellow drawn over red
-    Box (content := do
+    Box do
       leaf (Modifier.size 20 20 |>.background .red)
-      leaf (Modifier.size 20 20 |>.background .yellow))
+      leaf (Modifier.size 20 20 |>.background .yellow)
     -- y ∈ [160, 200): circle clip scopes the cyan fill
     leaf (Modifier.size 40 40 |>.clip .circle |>.background .cyan)
     -- y ∈ [200, 240): alpha scopes the white fill
-    leaf (Modifier.size 40 40 |>.alpha 0.5 |>.background .white))
+    leaf (Modifier.size 40 40 |>.alpha 0.5 |>.background .white)
   let _ ← root.remeasure (.fixed 200 300)
   Compose.Draw.DrawScope.run ren {} (root.drawTree)
   let shot ← ren.readPixels

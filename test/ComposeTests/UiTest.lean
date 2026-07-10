@@ -41,13 +41,13 @@ private def rw (r : Compose.Rect) : Float32 := r.right - r.left
 /-! ## Finders, merging, failure dumps -/
 
 private def findersAndFailures : IO Unit := runComposeTest
-  (content := Column {} (content := do
+  (Column do
     Text "alpha"
     Text "dup"
     Text "dup"
-    Button (pure ()) (modifier := Modifier.testTag "go-btn") (content := Text "go")
-    Button (pure ()) (enabled := false) (modifier := Modifier.testTag "no-btn")
-      (content := Text "nope")))
+    Button (pure ()) (Text "go") (modifier := Modifier.testTag "go-btn")
+    Button (pure ()) (Text "nope") (enabled := false)
+      (modifier := Modifier.testTag "no-btn"))
   do
     assertExists (.text "alpha")
     assertMissing (.text "gamma")
@@ -77,13 +77,12 @@ private def clickThroughRouter : IO Unit := do
   let offCalls ← IO.mkRef (0 : Nat)
   let count ← mutableStateOf (0 : Nat)
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
+    (Column (Tests.restartable 1 do
       Checkbox (← checked.get) checked.set (modifier := Modifier.testTag "cb")
       Checkbox false (fun _ => offCalls.modify (· + 1)) (enabled := false)
         (modifier := Modifier.testTag "cb-off")
-      Button (count.modify (· + 1)) (content := Text "+1")
-      Text s!"count: {← count.get}"))
-    do
+      Button (count.modify (· + 1)) (Text "+1")
+      Text s!"count: {← count.get}")) do
       assertUnchecked (.tag "cb")
       -- The click is a synthesized SDL press+release hitting the checkbox's
       -- real bounds — toggling proves hit test, capture, and tap detection.
@@ -109,12 +108,10 @@ private def keyboardFlow : IO Unit := do
   let checked ← mutableStateOf false
   let count ← mutableStateOf (0 : Nat)
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
+    (Column (Tests.restartable 1 do
       Checkbox (← checked.get) checked.set (modifier := Modifier.testTag "cb")
-      Button (count.modify (· + 1)) (modifier := Modifier.testTag "go")
-        (content := Text "go")
-      Text s!"count: {← count.get}"))
-    do
+      Button (count.modify (· + 1)) (Text "go") (modifier := Modifier.testTag "go")
+      Text s!"count: {← count.get}")) do
       assertNotFocused (.tag "cb")
       pressKey .tab
       assertFocused (.tag "cb")
@@ -133,10 +130,9 @@ private def keyboardFlow : IO Unit := do
 private def textFieldFlow : IO Unit := do
   let value ← mutableStateOf ""
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
+    (Column (Tests.restartable 1 do
       TextField (← value.get) value.set (modifier := Modifier.testTag "name")
-      Text s!"len: {(← value.get).length}"))
-    do
+      Text s!"len: {(← value.get).length}")) do
       assertTextEquals (.tag "name") ""
       -- typeText click-focuses first (real click-to-focus), then commits
       -- per-codepoint text events through the router.
@@ -159,14 +155,13 @@ private def widgetStates : IO Unit := do
   let on ← mutableStateOf false
   let choice ← mutableStateOf (0 : Nat)
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
+    (Column (Tests.restartable 1 do
       Switch (← on.get) on.set (modifier := Modifier.testTag "sw")
       RadioButton ((← choice.get) == 0) (choice.set 0)
         (modifier := Modifier.testTag "r0")
       RadioButton ((← choice.get) == 1) (choice.set 1)
         (modifier := Modifier.testTag "r1")
-      LinearProgressIndicator (some 0.3) (modifier := Modifier.testTag "prog")))
-    do
+      LinearProgressIndicator (some 0.3) (modifier := Modifier.testTag "prog"))) do
       assertUnchecked (.tag "sw")
       click (.tag "sw")
       assertChecked (.tag "sw")
@@ -183,9 +178,8 @@ private def widgetStates : IO Unit := do
 private def sliderDragAndKeys : IO Unit := do
   let value ← mutableStateOf (0.25 : Float32)
   runComposeTest
-    (content := Tests.restartable 1 do
-      Slider (← value.get) value.set (modifier := Modifier.testTag "sl"))
-    do
+    (Tests.restartable 1 do
+      Slider (← value.get) value.set (modifier := Modifier.testTag "sl")) do
       assertRangeValue (.tag "sl") 0.25
       -- Window is 480 wide; the slider fills it: track 12..468 (456 px).
       -- A click at the center seeks to 0.5 …
@@ -204,13 +198,13 @@ private def sliderDragAndKeys : IO Unit := do
 /-! ## Wheel scroll through the hit-tested onScroll path -/
 
 private def scrollFlow : IO Unit := runComposeTest
-  (content := do
+  (do
     let st ← rememberScrollState
-    Box (Modifier.testTag "scroller" |>.width 60 |>.height 100
-          |>.verticalScroll st)
-      (content := Column {} (content := do
+    Box (modifier := Modifier.testTag "scroller" |>.width 60 |>.height 100
+          |>.verticalScroll st) do
+      Column do
         Box (modifier := Modifier.size 60 80 |>.testTag "top")
-        Spacer (Modifier.size 60 400))))
+        Spacer (Modifier.size 60 400))
   do
     assertThat (.tag "top") "starts at the viewport top" (fun n => n.bounds.top == 0)
     -- Two wheel notches toward the content end: 2 × 50 px.
@@ -227,11 +221,10 @@ private def scrollFlow : IO Unit := runComposeTest
 private def animationClock : IO Unit := do
   let big ← mutableStateOf false
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
+    (Column (Tests.restartable 1 do
       let w ← animateDpAsState (if (← big.get) then 200 else 40) (.tween 200 0 .linear)
       Box (modifier := Modifier.testTag "box" |>.size (← w.get) 20)
-      Button (big.set true) (content := Text "grow")))
-    do
+      Button (big.set true) (Text "grow"))) do
       assertThat (.tag "box") "starts at 40" (fun n => rw n.bounds == 40)
       click (.text "grow")
       -- Time is frozen: the animation is launched but hasn't produced a
@@ -256,10 +249,9 @@ private def animationClock : IO Unit := do
 private def replaceAndFocusVerbs : IO Unit := do
   let value ← mutableStateOf "seed"
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
+    (Column (Tests.restartable 1 do
       TextField (← value.get) value.set (modifier := Modifier.testTag "tf")
-      Box (modifier := Modifier.testTag "target" |>.size 60 20 |>.focusable)))
-    do
+      Box (modifier := Modifier.testTag "target" |>.size 60 20 |>.focusable))) do
       assertTextEquals (.tag "tf") "seed"
       replaceText (.tag "tf") "fresh"          -- select-all + retype, not append
       assertTextEquals (.tag "tf") "fresh"
@@ -273,17 +265,15 @@ private def replaceAndFocusVerbs : IO Unit := do
 
 private def focusRequesterFlow : IO Unit := do
   runComposeTest
-    (content := do
+    (do
       let frA ← rememberFocusRequester
       let frB ← rememberFocusRequester
       -- An effect can grab initial focus before any user input.
       LaunchedEffect 0 frB.requestFocus
-      Column {} (content := do
+      Column do
         Box (modifier := Modifier.testTag "a" |>.size 60 20 |>.focusable |>.focusRequester frA)
         Box (modifier := Modifier.testTag "b" |>.size 60 20 |>.focusable |>.focusRequester frB)
-        Button frA.requestFocus (modifier := Modifier.testTag "grab")
-          (content := Text "focus a")))
-    do
+        Button frA.requestFocus (Text "focus a") (modifier := Modifier.testTag "grab")) do
       assertFocused (.tag "b")                -- the launch-time request landed
       -- A handler moves focus after its own click-to-focus ran.
       click (.tag "grab")
@@ -299,14 +289,13 @@ private def dialogFlow : IO Unit := do
   let open' ← mutableStateOf false
   let confirmed ← IO.mkRef false
   runComposeTest
-    (content := Tests.restartable 1 do
-      Button (open'.set true) (content := Text "open")
+    (Tests.restartable 1 do
+      Button (open'.set true) (Text "open")
       if ← open'.get then
         AlertDialog (onDismissRequest := open'.set false) (title := "Sure?")
           (text := "Really do it?")
           (confirmButton := TextButton
-            (do confirmed.set true; open'.set false) (content := Text "Yes")))
-    do
+            (do confirmed.set true; open'.set false) (Text "Yes"))) do
       assertMissing (.role .dialog)
       click (.text "open")
       assertExists (.role .dialog)
@@ -321,14 +310,13 @@ private def dialogFlow : IO Unit := do
 private def dialogFocusScope : IO Unit := do
   let open' ← mutableStateOf false
   runComposeTest
-    (content := Tests.restartable 1 do
-      Column {} (content := do
-        Button (open'.set true) (modifier := Modifier.testTag "bg") (content := Text "open")
+    (Tests.restartable 1 do
+      Column do
+        Button (open'.set true) (Text "open") (modifier := Modifier.testTag "bg")
         if ← open'.get then
           AlertDialog (onDismissRequest := open'.set false) (title := "T") (text := "B")
-            (confirmButton := TextButton (open'.set false)
-              (modifier := Modifier.testTag "ok") (content := Text "OK"))))
-    do
+            (confirmButton := TextButton (open'.set false) (Text "OK")
+              (modifier := Modifier.testTag "ok"))) do
       -- The opener is clicked (and focused) — then it opens the dialog.
       click (.tag "bg")
       settle
@@ -350,11 +338,8 @@ private def dialogFocusScope : IO Unit := do
 private def scrollAnimateInterrupt : IO Unit := do
   let st ← ScrollState.create
   runComposeTest
-    (content :=
-      Box (Modifier.testTag "sc" |>.width 60 |>.height 100 |>.verticalScroll st)
-        (content := Column {} (content :=
-          Spacer (Modifier.size 60 500))))
-    do
+    (Box (modifier := Modifier.testTag "sc" |>.width 60 |>.height 100 |>.verticalScroll st) do
+      Column (Spacer (Modifier.size 60 500))) do
       awaitIdle  -- measure runs: content 500, viewport 100 ⇒ maxValue 400
       let t ← uiTest
       -- A long scroll toward the end; let it get partway.
@@ -378,14 +363,12 @@ private def menuFlow : IO Unit := do
   let expanded ← mutableStateOf false
   let picked ← mutableStateOf "-"
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
-      Button (expanded.set true) (content := Text "menu")
-      DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false)
-        (content := do
-          DropdownMenuItem "One" (do picked.set "One"; expanded.set false)
-          DropdownMenuItem "Two" (do picked.set "Two"; expanded.set false))
-      Text s!"picked: {← picked.get}"))
-    do
+    (Column (Tests.restartable 1 do
+      Button (expanded.set true) (Text "menu")
+      DropdownMenu (← expanded.get) (onDismissRequest := expanded.set false) do
+        DropdownMenuItem "One" (do picked.set "One"; expanded.set false)
+        DropdownMenuItem "Two" (do picked.set "Two"; expanded.set false)
+      Text s!"picked: {← picked.get}")) do
       assertMissing (.role .menuItem)
       click (.text "menu")
       settle  -- let the enter transition finish so items reach full size

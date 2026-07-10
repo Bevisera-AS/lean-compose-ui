@@ -155,23 +155,25 @@ private partial def liveResizeWatchRenders : IO Unit := do
   let busy ← IO.mkRef false
   let last : IO.Ref (Option (Sdl.WindowId × Int32 × Int32)) ← IO.mkRef none
   let watchEvent := liveResizeWatchEvent lookup armed busy last
-  let resized : Sdl.Event := .windowResized ⟨0, wid, 300, 200⟩
+  let pixelChanged : Sdl.Event := .windowPixelSizeChanged ⟨0, wid, 300, 200⟩
   -- Unarmed (loop mid-drain or mid-render): must not render.
-  watchEvent resized
+  watchEvent pixelChanged
   checkEq "watch: unarmed event does not render" (← ctx.framesRendered.get) f0
   armed.set true
-  -- Armed resize: grow the window; the callback remeasures and presents
-  -- without any `step` — fill content covers the new geometry.
   ctx.window.setSize 300 200
-  watchEvent resized
-  checkEq "watch: armed resize renders synchronously" (← ctx.framesRendered.get) (f0 + 1)
+  -- `windowResized` precedes SDL's drawable-size update: never a trigger.
+  watchEvent (.windowResized ⟨0, wid, 300, 200⟩)
+  checkEq "watch: resized is ignored (stale drawable)" (← ctx.framesRendered.get) f0
+  -- Armed pixel-size change: the callback remeasures and presents without
+  -- any `step` — fill content covers the new geometry.
+  watchEvent pixelChanged
+  checkEq "watch: pixel-size change renders synchronously" (← ctx.framesRendered.get) (f0 + 1)
   check "watch: frame consumed (no pending dirty)" (!(← ctx.needsFrame.get))
   let (w1, h1) ← ctx.window.getSizeInPixels
   check "watch: fill covers the new geometry"
     (colorNear (← pixel ctx (w1 - 2) (h1 - 2)) 255 0 0)
-  -- The rest of the drag tick's burst (pixel-size-changed, exposed) at the
-  -- same size: deduped to the one render above.
-  watchEvent (.windowPixelSizeChanged ⟨0, wid, 300, 200⟩)
+  -- The rest of the drag tick's burst at the same size: deduped.
+  watchEvent pixelChanged
   watchEvent (.windowExposed ⟨0, wid, 0, 0⟩)
   checkEq "watch: same-size burst renders once" (← ctx.framesRendered.get) (f0 + 1)
   -- An otherwise-dirtied window re-renders even at an unchanged size.
@@ -179,11 +181,12 @@ private partial def liveResizeWatchRenders : IO Unit := do
   watchEvent (.windowExposed ⟨0, wid, 0, 0⟩)
   checkEq "watch: dirty window renders at unchanged size" (← ctx.framesRendered.get) (f0 + 2)
   -- Unknown window id: dropped.
-  watchEvent (.windowResized ⟨0, ⟨wid.val + 1⟩, 300, 200⟩)
+  watchEvent (.windowPixelSizeChanged ⟨0, ⟨wid.val + 1⟩, 300, 200⟩)
   checkEq "watch: unknown window dropped" (← ctx.framesRendered.get) (f0 + 2)
   -- Busy (re-entered during its own render): dropped.
   busy.set true
-  watchEvent resized
+  ctx.window.setSize 340 220
+  watchEvent (.windowPixelSizeChanged ⟨0, wid, 340, 220⟩)
   busy.set false
   checkEq "watch: re-entrant call dropped" (← ctx.framesRendered.get) (f0 + 2)
   -- Non-resize events: ignored.
@@ -205,7 +208,7 @@ private partial def liveResizeWatchRenders : IO Unit := do
   let last2 : IO.Ref (Option (Sdl.WindowId × Int32 × Int32)) ← IO.mkRef none
   let t0 ← ticks.get
   ctx2.window.setSize 320 240
-  liveResizeWatchEvent lookup2 armed2 busy2 last2 (.windowResized ⟨0, wid2, 320, 240⟩)
+  liveResizeWatchEvent lookup2 armed2 busy2 last2 (.windowPixelSizeChanged ⟨0, wid2, 320, 240⟩)
   checkEq "watch: size change ticks the frame clock" (← ticks.get) (t0 + 1)
   -- `step` arms the watch only across its wait/poll phase.
   let watch ← installLiveResizeWatch lookup

@@ -248,15 +248,20 @@ bars re-entry while the callback itself renders (a drained effect calling
 `setSize` would otherwise recurse). Off the main thread the callback does
 nothing — watches run on whatever thread posts the event.
 
-Each drag tick posts several events (`windowPixelSizeChanged`,
-`windowResized`, `windowExposed`); rendering every one means multiple vsynced
-presents per tick — visible stutter. `lastSize` dedupes: a size actually
-changing renders once (after running due coroutines and ticking the frame
-clock, so timers and animations advance mid-drag — the loop's phase 3 can't
-run while the OS holds the pump); repeat events at the same size render only
-if something else dirtied the window (`needsFrame`, e.g. a background task's
-state write). While the drag is held *motionless* no events arrive at all, so
-nothing can advance — timers catch up on the next tick or on release. -/
+Each drag tick posts several events; the render trigger is
+`windowPixelSizeChanged` — NOT `windowResized`. SDL dispatches `resized` to
+watches *before* its internal early watch updates the Metal layer's
+`drawableSize` (it sends `pixelSizeChanged` only afterwards, from
+`SDL_OnWindowResized`; verified in SDL 3.4.10 `SDL_windowevents.c`), so
+rendering on `resized` presents a stale-resolution frame the compositor then
+stretches — visible jitter. By `pixelSizeChanged` the drawable is fresh.
+`lastSize` dedupes the rest of the burst: a size actually changing renders
+once (after running due coroutines and ticking the frame clock, so timers and
+animations advance mid-drag — the loop's phase 3 can't run while the OS holds
+the pump); repeat events at the same size render only if something else
+dirtied the window (`needsFrame`, e.g. a background task's state write).
+While the drag is held *motionless* no events arrive at all, so nothing can
+advance — timers catch up on the next tick or on release. -/
 
 /-- An installed live-resize watch (`installLiveResizeWatch`): the SDL watch
 registration plus the flags the loop and the callback coordinate through. -/
@@ -274,20 +279,22 @@ structure LiveResizeWatch where
   lastSize : IO.Ref (Option (Sdl.WindowId × Int32 × Int32))
 
 /-- The live-resize callback body (factored out of `installLiveResizeWatch`
-so tests can drive it with synthetic events): for a resize-family event, if
-the loop is parked (`armed`), we're on the main thread, we're not already
-rendering (`busy`), and `lookup` knows the window — then, when the pixel size
-actually changed since the last watch render, advance the scheduler and frame
-clock once and render; at an unchanged size render only if the window is
-otherwise dirty. Anything else is ignored — the queued copy of the event
-still reaches the normal dispatch. -/
+so tests can drive it with synthetic events): for a `pixelSizeChanged`/
+`exposed` event, if the loop is parked (`armed`), we're on the main thread,
+we're not already rendering (`busy`), and `lookup` knows the window — then,
+when the pixel size actually changed since the last watch render, advance the
+scheduler and frame clock once and render; at an unchanged size render only
+if the window is otherwise dirty. `windowResized` is deliberately NOT a
+trigger (it precedes SDL's drawable-size update — see the section comment);
+everything else is ignored — the queued copy of the event still reaches the
+normal dispatch. -/
 def liveResizeWatchEvent
     (lookup : Sdl.WindowId → IO (Option (WindowContext × AppConfig)))
     (armed busy : IO.Ref Bool)
     (lastSize : IO.Ref (Option (Sdl.WindowId × Int32 × Int32)))
     (event : Sdl.Event) : IO Unit :=
   match event with
-  | .windowResized e | .windowPixelSizeChanged e => go true e.windowId
+  | .windowPixelSizeChanged e => go true e.windowId
   | .windowExposed e => go false e.windowId
   | _ => pure ()
 where

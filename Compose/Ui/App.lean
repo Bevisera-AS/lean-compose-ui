@@ -22,6 +22,11 @@ power-friendly event loop from DESIGN.md:
 4. If dirty: drain recompositions → remeasure with window-pixel constraints
    → clear + draw tree → present.
 
+During a live resize drag, macOS/Windows run a modal loop *inside* step 1;
+an SDL event watch (`installLiveResizeWatch`, armed only while the loop is
+parked in the pump) renders resized/exposed windows synchronously from within
+it, so content keeps reflowing mid-drag.
+
 State writes anywhere schedule frames through the M5 invalidation hooks
 (`Composition.setOnInvalidate`, `LayoutNode.setOnRequestRemeasure`) — the
 loop never polls for dirtiness. `COMPOSE_MAX_FRAMES=<n>` exits successfully
@@ -223,6 +228,81 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) : IO Unit := do
   ctx.renderer.present
   ctx.framesRendered.modify (· + 1)
 
+/-! ## Live-resize rendering
+
+During a live window-resize drag, macOS and Windows run a modal loop *inside*
+the event pump: `waitEventTimeout`/`pollEvent` don't return until the mouse is
+released, so the dirty-driven loop can't repaint and the content freezes or
+stretches mid-drag. SDL's designed escape is an event watch — the callback
+fires synchronously from inside the pump, on the thread running the modal
+loop, which is exactly the main thread that owns the renderer. The watch below
+remeasures and renders the affected window right there, so content keeps
+reflowing while the user drags.
+
+Two flags keep this safe. `armed` is true only while the loop is parked in its
+wait/poll phase — the one place a synchronous render can't interleave with a
+recomposition drain or another render (our own `setSize` calls can push resize
+events mid-drain on real drivers; those must wait for the normal pass). `busy`
+bars re-entry while the callback itself renders (a drained effect calling
+`setSize` would otherwise recurse). Off the main thread the callback does
+nothing — watches run on whatever thread posts the event. -/
+
+/-- An installed live-resize watch (`installLiveResizeWatch`): the SDL watch
+registration plus the flags the loop and the callback coordinate through. -/
+structure LiveResizeWatch where
+  /-- The registration, for removal on shutdown (`LiveResizeWatch.remove`). -/
+  id : Sdl.EventWatchId
+  /-- True while the loop is parked in SDL's event pump — the only time the
+  callback may render. `step`/`stepApplication` set it around their
+  wait/poll phase. -/
+  armed : IO.Ref Bool
+  /-- True while the callback itself is rendering (re-entry barrier). -/
+  busy : IO.Ref Bool
+
+/-- The live-resize callback body (factored out of `installLiveResizeWatch`
+so tests can drive it with synthetic events): for a `windowResized`/
+`windowExposed` event, if the loop is parked (`armed`), we're on the main
+thread, we're not already rendering (`busy`), and `lookup` knows the window,
+remeasure (resized only) and render it synchronously. Anything else is
+ignored — the queued copy of the event still reaches the normal dispatch,
+whose extra repaint draws the same pixels. -/
+def liveResizeWatchEvent
+    (lookup : Sdl.WindowId → IO (Option (WindowContext × AppConfig)))
+    (armed busy : IO.Ref Bool) (event : Sdl.Event) : IO Unit :=
+  match event with
+  | .windowResized e => go true e.windowId
+  | .windowExposed e => go false e.windowId
+  | _ => pure ()
+where
+  go (remeasure : Bool) (wid : Sdl.WindowId) : IO Unit := do
+    unless ← armed.get do return
+    unless ← Sdl.isMainThread do return
+    if ← busy.get then return
+    let some (ctx, config) ← lookup wid | return
+    busy.set true
+    try
+      if remeasure then ctx.root.markNeedsRemeasure
+      renderFrame ctx config
+    finally
+      busy.set false
+
+/-- Install the event watch that keeps windows rendering during a live resize
+drag. `lookup` routes a window id to its context and render config (`none`
+for windows we don't own). Installed by `runApp` and `Compose.application`;
+pass the result to the loop (which arms it around its event wait) and
+`remove` it before disposing the contexts it can reach. -/
+def installLiveResizeWatch
+    (lookup : Sdl.WindowId → IO (Option (WindowContext × AppConfig))) :
+    IO LiveResizeWatch := do
+  let armed ← IO.mkRef false
+  let busy ← IO.mkRef false
+  let id ← Sdl.addEventWatch (liveResizeWatchEvent lookup armed busy)
+  return { id, armed, busy }
+
+/-- Uninstall the watch (before disposing the contexts `lookup` reaches). -/
+def LiveResizeWatch.remove (w : LiveResizeWatch) : IO Unit := do
+  let _ ← Sdl.removeEventWatch w.id
+
 /-- Wait timeout for the next loop pass, in ms: `0` when a frame is pending
 (dirty window or live frame clock), else time to the scheduler's next
 deadline (rounded up), else `idleCapMs`. -/
@@ -242,17 +322,23 @@ computed deadline, dispatch them all, run due coroutines, tick the frame
 clock if subscribed, and render when dirty. Returns `true` iff a frame was
 presented. `idleCapMs` bounds the idle sleep (tests shorten it). -/
 def step (ctx : WindowContext) (config : AppConfig := {})
-    (idleCapMs : UInt32 := idleWaitMs) : IO Bool := do
-  -- 1+2: wait with deadline, then drain the whole queue.
+    (idleCapMs : UInt32 := idleWaitMs)
+    (watch : Option LiveResizeWatch := none) : IO Bool := do
+  -- 1+2: wait with deadline, then drain the whole queue. The live-resize
+  -- watch may render only while we're parked in here (see its section).
   let timeout ← wakeTimeoutMs ctx idleCapMs
-  if timeout == 0 then
-    pure ()
-  else if let some e ← Sdl.waitEventTimeout timeout then
-    dispatchEvent ctx config e
-  repeat
-    match ← Sdl.pollEvent with
-    | some e => dispatchEvent ctx config e
-    | none => break
+  if let some w := watch then w.armed.set true
+  try
+    if timeout == 0 then
+      pure ()
+    else if let some e ← Sdl.waitEventTimeout timeout then
+      dispatchEvent ctx config e
+    repeat
+      match ← Sdl.pollEvent with
+      | some e => dispatchEvent ctx config e
+      | none => break
+  finally
+    if let some w := watch then w.armed.set false
   if ← ctx.quitRequested.get then return false
   -- 3: coroutines due now; frame clock while subscribed.
   let now ← Sdl.getTicksNS
@@ -277,14 +363,15 @@ content — a settled screen presents nothing, but every pass still counts —
 and while capped the idle wait shrinks to `cappedIdleWaitMs` so those idle
 passes tick by promptly. -/
 partial def runLoop (ctx : WindowContext) (config : AppConfig := {})
-    (maxPasses : Option Nat := none) : IO Unit := do
+    (maxPasses : Option Nat := none)
+    (watch : Option LiveResizeWatch := none) : IO Unit := do
   let idleCap := if maxPasses.isSome then cappedIdleWaitMs else idleWaitMs
   go maxPasses idleCap
 where
   go (remaining : Option Nat) (idleCap : UInt32) : IO Unit := do
     if ← ctx.quitRequested.get then return
     if remaining == some 0 then return
-    let _ ← step ctx config idleCap
+    let _ ← step ctx config idleCap watch
     go (remaining.map (· - 1)) idleCap
 
 /-- Loop passes to run before grabbing a screenshot — enough for effects,
@@ -326,8 +413,12 @@ def runApp (title : String) (width height : Dp) (content : Composable Unit)
     captureScreenshot title width height content config path
     return 0
   let ctx ← bootstrap title width height content config
+  let wid ← ctx.window.id
+  let watch ← installLiveResizeWatch fun w =>
+    return if w == wid then some (ctx, config) else none
   let maxPasses := (← IO.getEnv "COMPOSE_MAX_FRAMES").bind (·.toNat?)
-  runLoop ctx config maxPasses
+  runLoop ctx config maxPasses (watch := some watch)
+  watch.remove
   (← ctx.composition).dispose
   return 0
 

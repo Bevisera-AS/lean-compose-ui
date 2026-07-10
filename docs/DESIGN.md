@@ -385,6 +385,11 @@ contexts). The loop (power-friendly, dirty-driven):
 5. Honor `COMPOSE_MAX_FRAMES` env var (headless CI smoke, mirroring
    lean-sdl3's `SDL_LEAN_MAX_FRAMES`).
 
+Live resize: macOS/Windows run a modal loop *inside* step 1's pump, freezing
+the app until mouse-up. An SDL event watch (armed only while the loop is
+parked in the pump) renders resized/exposed windows synchronously from within
+it, so content reflows during the drag.
+
 **Overlays**: `Popup (anchor-relative positioning, onDismiss, focusable)` and
 `Dialog (scrim, Esc/click-outside dismiss)` compose their content into
 overlay entries on the `WindowContext` (a state list). Each overlay is an

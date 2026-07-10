@@ -55,8 +55,8 @@ private def twoWindowsComposeAndRoute : IO Unit := do
   let hitsA ← IO.mkRef (0 : Nat)
   let hitsB ← IO.mkRef (0 : Nat)
   let app ← bootstrapApplication do
-    Window "mw-a" 200 150 (config := cfg) (content := clickCounter hitsA .red)
-    Window "mw-b" 200 150 (config := cfg) (content := clickCounter hitsB .blue)
+    Window "mw-a" 200 150 (clickCounter hitsA .red) (config := cfg)
+    Window "mw-b" 200 150 (clickCounter hitsB .blue) (config := cfg)
   checkEq "two Windows register two live windows" (← app.windows.get).size 2
   check "a fresh application is not done" (!(← app.done))
   let _ ← stepApplication app (idleCapMs := 5)
@@ -113,11 +113,11 @@ by `bootstrapApplication`'s restartable root, the documented usage. -/
 private def stateDrivenCloseAndReopen : IO Unit := do
   let openB ← mutableStateOf true
   let app ← bootstrapApplication do
-    Window "sd-a" 120 100 (config := cfg)
-      (content := Box (modifier := Modifier.size 40 40 |>.background .green))
+    Window "sd-a" 120 100 (Box (modifier := Modifier.size 40 40 |>.background .green))
+      (config := cfg)
     if ← openB.get then
-      Window "sd-b" 120 100 (config := cfg)
-        (content := Box (modifier := Modifier.size 40 40 |>.background .blue))
+      Window "sd-b" 120 100 (Box (modifier := Modifier.size 40 40 |>.background .blue))
+        (config := cfg)
   let _ ← stepApplication app (idleCapMs := 5)
   checkEq "both windows open" (← app.windows.get).size 2
   openB.set false
@@ -168,9 +168,9 @@ window and marked modal (both asserted only where the driver supports them;
 the dummy driver on some platforms may not). -/
 private def dialogParentAndModal : IO Unit := do
   let app ← bootstrapApplication do
-    Window "dlg-owner" 200 150 (config := cfg) (content := do
-      DialogWindow "dlg" 100 80 (config := cfg)
-        (content := Box (modifier := Modifier.size 20 20 |>.background .red)))
+    Window "dlg-owner" 200 150 (config := cfg) do
+      DialogWindow "dlg" 100 80 (Box (modifier := Modifier.size 20 20 |>.background .red))
+        (config := cfg)
   let _ ← stepApplication app (idleCapMs := 5)
   checkEq "dialog registers as a live window" (← app.windows.get).size 2
   let owner ← entryTitled! app "dlg-owner"
@@ -217,9 +217,9 @@ private def appLocalsFlowIntoWindows : IO Unit := do
   let hadWindowCtx ← IO.mkRef false
   let app ← bootstrapApplication <|
     CompositionLocalProvider flavor "themed" <|
-      Window "loc" 120 100 (config := cfg) (content := do
+      Window "loc" 120 100 (config := cfg) do
         seen.set (← flavor.current)
-        hadWindowCtx.set (← LocalWindowContext.current).isSome)
+        hadWindowCtx.set (← LocalWindowContext.current).isSome
   let _ ← stepApplication app (idleCapMs := 5)
   checkEq "app-level provider reaches window content" (← seen.get) "themed"
   check "window content still sees its own WindowContext" (← hadWindowCtx.get)

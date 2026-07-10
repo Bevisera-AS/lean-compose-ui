@@ -19,7 +19,7 @@ open Compose Compose.Test Tests.Harness Demos.Timer
 private def ticksAndStops : IO Unit := do
   let elapsed ← mutableStateOf (0.0 : Float32)
   let duration ← mutableStateOf (1000.0 : Float32)
-  runComposeTest (content := timerBody elapsed duration) do
+  runComposeTest (timerBody elapsed duration) do
     checkEq "starts at 0" (← elapsed.get) 0.0
     assertRangeValue (.tag "gauge") 0.0
     -- Half a second of fake time: elapsed grows but is still below duration.
@@ -42,7 +42,7 @@ it run again. -/
 private def resumeClampReset : IO Unit := do
   let elapsed ← mutableStateOf (0.0 : Float32)
   let duration ← mutableStateOf (1000.0 : Float32)
-  runComposeTest (content := timerBody elapsed duration) do
+  runComposeTest (timerBody elapsed duration) do
     -- Run to completion.
     advanceTimeBy 1500
     checkEq "finished at duration" (← elapsed.get) 1000.0
@@ -69,7 +69,7 @@ router). -/
 private def sliderDrivesDuration : IO Unit := do
   let elapsed ← mutableStateOf (0.0 : Float32)
   let duration ← mutableStateOf (0.0 : Float32)
-  runComposeTest (content := timerBody elapsed duration) do
+  runComposeTest (timerBody elapsed duration) do
     checkEq "duration starts at 0" (← duration.get) 0.0
     -- A rightward drag raises the duration off zero.
     drag (.tag "duration") ⟨80, 0⟩

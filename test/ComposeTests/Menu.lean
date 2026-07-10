@@ -21,18 +21,18 @@ open Compose Compose.Test Tests.Harness
 private def dropdownUi (expanded : MutableState Bool) : Composable Unit :=
   Tests.restartable 1 do
     let isOpen ← expanded.get
-    Column (Modifier.fillMaxSize) (content := do
-      Button (expanded.set true) (content := Text "Open")
-      DropdownMenu isOpen (onDismissRequest := expanded.set false) (content := do
+    Column (modifier := Modifier.fillMaxSize) do
+      Button (expanded.set true) (Text "Open")
+      DropdownMenu isOpen (onDismissRequest := expanded.set false) do
         DropdownMenuItem "Cut" (onClick := expanded.set false)
         DropdownMenuItem "Copy" (onClick := expanded.set false)
-        DropdownMenuItem "Select all" (onClick := expanded.set false)))
+        DropdownMenuItem "Select all" (onClick := expanded.set false)
 
 /-- An open menu is as wide as its widest item (112dp floor), never the
 window. -/
 private def dropdownWrapsWidestItem : IO Unit := do
   let expanded ← mutableStateOf false
-  runComposeTest (content := dropdownUi expanded) do
+  runComposeTest (dropdownUi expanded) do
     click (.text "Open")
     settle
     let b ← boundsOf (.text "Copy")
@@ -49,23 +49,23 @@ private def exposedUi (expanded : MutableState Bool) (sel : MutableState String)
     Composable Unit :=
   Tests.restartable 1 do
     let isOpen ← expanded.get
-    Box (Modifier.fillMaxSize |>.padding (all := 8)) (content :=
-      ExposedDropdownMenuBox isOpen expanded.set (content := fun scope => do
+    Box (modifier := Modifier.fillMaxSize |>.padding (all := 8)) do
+      ExposedDropdownMenuBox isOpen expanded.set fun scope => do
         ExposedDropdownMenuField scope (← sel.get) (expanded := isOpen)
           (modifier := Modifier.testTag "field" |>.width 200)
         let anchor ← scope.anchor
         DropdownMenu isOpen (onDismissRequest := expanded.set false)
-          (anchor := anchor) (matchAnchorWidth := true) (content := do
-            for name in ["Alpha", "Beta"] do
-              keyed name <| DropdownMenuItem name
-                (onClick := do sel.set name; expanded.set false))))
+          (anchor := anchor) (matchAnchorWidth := true) do
+          for name in ["Alpha", "Beta"] do
+            keyed name <| DropdownMenuItem name
+              (onClick := do sel.set name; expanded.set false)
 
 /-- An exposed dropdown's menu matches the field's width — not the widest
 item, not the window (Material's `ExposedDropdownMenuBox` convention). -/
 private def exposedMatchesFieldWidth : IO Unit := do
   let expanded ← mutableStateOf false
   let sel ← mutableStateOf "Alpha"
-  runComposeTest (content := exposedUi expanded sel) do
+  runComposeTest (exposedUi expanded sel) do
     click (.tag "field")
     settle
     let fb ← boundsOf (.tag "field")

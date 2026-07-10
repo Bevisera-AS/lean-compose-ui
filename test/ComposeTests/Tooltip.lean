@@ -16,14 +16,14 @@ open Compose Compose.Test Tests.Harness
 /-- A `Tooltip` over a small target, with empty space below to hover away to.
 `delayMs` is short so the frozen clock only has to step a little. -/
 private def content : Composable Unit :=
-  Column {} (content := do
+  Column do
     Tooltip "Help text" (delayMs := 300) (modifier := Modifier.testTag "target")
-      (content := Box (modifier := Modifier.size 60 30))
-    Spacer (Modifier.size 120 120 |>.testTag "empty"))
+      (Box (modifier := Modifier.size 60 30))
+    Spacer (Modifier.size 120 120 |>.testTag "empty")
 
 /-! ## Delay: nothing until the timer elapses, then the tooltip shows -/
 
-private def delayThenShow : IO Unit := runComposeTest (content := content) do
+private def delayThenShow : IO Unit := runComposeTest content do
   assertMissing (.text "Help text")
   moveTo (.tag "target")
   -- Timer armed on enter, but the clock is frozen: still hidden.
@@ -35,7 +35,7 @@ private def delayThenShow : IO Unit := runComposeTest (content := content) do
 
 /-! ## Exit hides immediately -/
 
-private def exitHides : IO Unit := runComposeTest (content := content) do
+private def exitHides : IO Unit := runComposeTest content do
   moveTo (.tag "target")
   advanceTimeBy 400
   assertExists (.text "Help text")
@@ -45,7 +45,7 @@ private def exitHides : IO Unit := runComposeTest (content := content) do
 
 /-! ## A press hides it -/
 
-private def pressHides : IO Unit := runComposeTest (content := content) do
+private def pressHides : IO Unit := runComposeTest content do
   moveTo (.tag "target")
   advanceTimeBy 400
   assertExists (.text "Help text")
@@ -54,7 +54,7 @@ private def pressHides : IO Unit := runComposeTest (content := content) do
 
 /-! ## A pending timer is cancelled by exit; re-entering restarts the delay -/
 
-private def reEnterRestarts : IO Unit := runComposeTest (content := content) do
+private def reEnterRestarts : IO Unit := runComposeTest content do
   moveTo (.tag "target")
   advanceTimeBy 200                     -- partway into the delay
   assertMissing (.text "Help text")

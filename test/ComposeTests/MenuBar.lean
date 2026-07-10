@@ -46,7 +46,7 @@ private def fixture : IO Fixture := do
 to it while open; clicking the open label closes it. -/
 private def openHoverSwitch : IO Unit := do
   let f ← fixture
-  runComposeTest (content := MenuBar f.menus) do
+  runComposeTest (MenuBar f.menus) do
     assertMissing (.role .menuItem)
     click (.text "File")
     settle
@@ -70,7 +70,7 @@ private def openHoverSwitch : IO Unit := do
 inert and leaves the menu open. -/
 private def activateAndDisabled : IO Unit := do
   let f ← fixture
-  runComposeTest (content := MenuBar f.menus) do
+  runComposeTest (MenuBar f.menus) do
     click (.text "File")
     settle
     click (.text "New")
@@ -93,7 +93,7 @@ private def activateAndDisabled : IO Unit := do
 /-- Esc closes; an outside (empty-space) click closes. -/
 private def dismiss : IO Unit := do
   let f ← fixture
-  runComposeTest (content := MenuBar f.menus) do
+  runComposeTest (MenuBar f.menus) do
     click (.text "File")
     settle
     pressKey .escape
@@ -111,7 +111,7 @@ private def dismiss : IO Unit := do
 Right switches to the next top-level menu (wrapping). -/
 private def keyboardNav : IO Unit := do
   let f ← fixture
-  runComposeTest (content := MenuBar f.menus) do
+  runComposeTest (MenuBar f.menus) do
     click (.text "File")
     settle
     pressKey .down            -- highlight "New" (first item; separator skipped)
@@ -138,7 +138,7 @@ item's merged semantics row is the full hover row, so its bounds are the
 menu's inner width. -/
 private def dropdownWidth : IO Unit := do
   let f ← fixture
-  runComposeTest (content := MenuBar f.menus) do
+  runComposeTest (MenuBar f.menus) do
     click (.text "File")
     settle
     let b ← boundsOf (.text "New")

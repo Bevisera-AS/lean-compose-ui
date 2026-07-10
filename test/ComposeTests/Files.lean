@@ -119,7 +119,7 @@ private def pureCore : IO Unit := do
 
 private def initialListing : IO Unit := do
   let st ← fresh
-  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fakeFs st) (width := 640) (height := 480) do
     settleLoad st
     -- Directories (shown with a trailing slash) and files are all present.
     assertExists (.tag "row:Documents")
@@ -146,7 +146,7 @@ private def initialListing : IO Unit := do
 
 private def enterDirectory : IO Unit := do
   let st ← fresh
-  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fakeFs st) (width := 640) (height := 480) do
     settleLoad st
     navClick st (.tag "row:Documents")
     checkEq "cwd moved into Documents" (← st.cwd.get) "/home/user/Documents"
@@ -161,7 +161,7 @@ private def enterDirectory : IO Unit := do
 
 private def breadcrumbUp : IO Unit := do
   let st ← fresh
-  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fakeFs st) (width := 640) (height := 480) do
     settleLoad st
     navClick st (.tag "row:Documents")
     checkEq "descended into Documents" (← st.cwd.get) "/home/user/Documents"
@@ -179,7 +179,7 @@ private def breadcrumbUp : IO Unit := do
 
 private def fileInfo : IO Unit := do
   let st ← fresh
-  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fakeFs st) (width := 640) (height := 480) do
     settleLoad st
     -- Nothing selected initially → the hint is shown.
     assertExists (.text "Select a file to see its details.")
@@ -199,7 +199,7 @@ private def fileInfo : IO Unit := do
 
 private def permissionDenied : IO Unit := do
   let st ← fresh
-  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fakeFs st) (width := 640) (height := 480) do
     settleLoad st
     navClick st (.tag "row:secret")
     checkEq "cwd moved into secret" (← st.cwd.get) "/home/user/secret"
@@ -218,7 +218,7 @@ private def permissionDenied : IO Unit := do
 
 private def hiddenToggle : IO Unit := do
   let st ← fresh
-  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fakeFs st) (width := 640) (height := 480) do
     settleLoad st
     -- Off by default: the dotfile row is absent, visible rows are unaffected.
     assertMissing (.tag "row:.hidden")
@@ -246,7 +246,7 @@ private def hiddenToggle : IO Unit := do
 
 private def selectionHighlight : IO Unit := do
   let st ← fresh
-  runComposeTest (content := filesBody fakeFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fakeFs st) (width := 640) (height := 480) do
     settleLoad st
     -- Nothing selected: no row reports selected semantics.
     assertSelected (.tag "row:notes.txt") (expected := false)
@@ -269,7 +269,7 @@ tap coroutine retained) across the navigation. Clicking it must open the *curren
 directory's child, not the one captured when the row was first composed. -/
 private def sameNameDir : IO Unit := do
   let st ← FilesState.init "/home/user"
-  runComposeTest (content := filesBody dupFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody dupFs st) (width := 640) (height := 480) do
     settleLoad st
     navClick st (.tag "row:Docs")
     checkEq "in Docs" (← st.cwd.get) "/home/user/Docs"
@@ -285,7 +285,7 @@ same index in both, so its row is reused. Selecting it after navigating must sho
 the *current* directory's file (222 B), not the stale captured entry (111 B). -/
 private def sameNameFile : IO Unit := do
   let st ← FilesState.init "/home/user"
-  runComposeTest (content := filesBody dupFs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody dupFs st) (width := 640) (height := 480) do
     settleLoad st
     click (.tag "row:dup.txt")
     assertExists (.text "111 bytes (111 B)")
@@ -308,7 +308,7 @@ private def asyncCompletes : IO Unit := do
     | "/root/sub" => IO.wait gate.result!
     | _ => return .ok #[]
   let st ← FilesState.init "/root"
-  runComposeTest (content := filesBody fs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fs st) (width := 640) (height := 480) do
     settleLoad st
     assertExists (.tag "row:sub")
     -- Navigate into the gated directory: the click returns immediately.
@@ -334,7 +334,7 @@ private def asyncStaleResult : IO Unit := do
     | "/root/slow" => IO.wait gate.result!
     | _ => return .ok #[]
   let st ← FilesState.init "/root"
-  runComposeTest (content := filesBody fs st) (width := 640) (height := 480) do
+  runComposeTest (filesBody fs st) (width := 640) (height := 480) do
     settleLoad st
     -- Navigate into the slow directory (generation 1); its read is still pending.
     click (.tag "row:slow")

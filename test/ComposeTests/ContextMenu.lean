@@ -18,21 +18,21 @@ open Compose Compose.Test Tests.Harness
 private def tree (picked : MutableState String) (disabledFired : IO.Ref Bool) :
     Composable Unit :=
   Tests.restartable 1 do
-    Column {} (content := do
+    Column do
       ContextMenuArea
         #[{ label := "Cut", onClick := picked.set "Cut" },
           { label := "Copy", onClick := picked.set "Copy" },
           { label := "Paste", enabled := false, onClick := disabledFired.set true }]
+        (Box (modifier := Modifier.size 80 40))
         (modifier := Modifier.testTag "area")
-        (content := Box (modifier := Modifier.size 80 40))
-      Text s!"picked: {← picked.get}")
+      Text s!"picked: {← picked.get}"
 
 /-! ## Right-click opens; choosing an entry runs it and closes -/
 
 private def openSelectClose : IO Unit := do
   let picked ← mutableStateOf "-"
   let disabledFired ← IO.mkRef false
-  runComposeTest (content := tree picked disabledFired) do
+  runComposeTest (tree picked disabledFired) do
     assertMissing (.role .menuItem)
     rightClick (.tag "area")
     settle                                -- let the enter transition finish
@@ -48,7 +48,7 @@ private def openSelectClose : IO Unit := do
 private def disabledDoesNotFire : IO Unit := do
   let picked ← mutableStateOf "-"
   let disabledFired ← IO.mkRef false
-  runComposeTest (content := tree picked disabledFired) do
+  runComposeTest (tree picked disabledFired) do
     rightClick (.tag "area")
     settle
     assertDisabled ((Matcher.text "Paste").and (.role .menuItem))
@@ -62,7 +62,7 @@ private def disabledDoesNotFire : IO Unit := do
 private def escDismiss : IO Unit := do
   let picked ← mutableStateOf "-"
   let disabledFired ← IO.mkRef false
-  runComposeTest (content := tree picked disabledFired) do
+  runComposeTest (tree picked disabledFired) do
     rightClick (.tag "area")
     settle
     assertExists (.role .menuItem)
@@ -75,7 +75,7 @@ private def escDismiss : IO Unit := do
 private def clickAwayDismiss : IO Unit := do
   let picked ← mutableStateOf "-"
   let disabledFired ← IO.mkRef false
-  runComposeTest (content := tree picked disabledFired) do
+  runComposeTest (tree picked disabledFired) do
     rightClick (.tag "area")
     settle
     assertExists (.role .menuItem)
@@ -89,15 +89,13 @@ private def clickAwayDismiss : IO Unit := do
 private def leftClickBubbles : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
   runComposeTest
-    (content :=
-      -- The clickable *wraps* the context-menu area: a left click on the area
-      -- must bubble out (the detector claims only right-button presses). The
-      -- clickable merges descendant semantics, so the click targets the outer
-      -- tag — its center is inside the area, which fills it.
-      Box (Modifier.clickable (clicks.modify (· + 1)) |>.testTag "outer")
-        (content :=
-          ContextMenuArea #[{ label := "Cut", onClick := pure () }]
-            (content := Box (modifier := Modifier.size 80 40))))
+    -- The clickable *wraps* the context-menu area: a left click on the area
+    -- must bubble out (the detector claims only right-button presses). The
+    -- clickable merges descendant semantics, so the click targets the outer
+    -- tag — its center is inside the area, which fills it.
+    (Box (modifier := Modifier.clickable (clicks.modify (· + 1)) |>.testTag "outer") do
+      ContextMenuArea #[{ label := "Cut", onClick := pure () }]
+        (Box (modifier := Modifier.size 80 40)))
     do
       click (.tag "outer")
       checkEq "left click reached the ancestor clickable" (← clicks.get) 1

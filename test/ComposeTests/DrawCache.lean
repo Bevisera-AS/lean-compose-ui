@@ -20,7 +20,7 @@ private def staticShapeAcrossAnimation : IO Unit := do
   let target ← mutableStateOf (0 : Dp)   -- the neighbor's animated offset
   let side ← mutableStateOf (40 : Dp)    -- the static box's side length
   runComposeTest
-    (content := Column {} (content := Tests.restartable 1 do
+    (Column (Tests.restartable 1 do
       -- The static shape: rounded background + rounded border = two meshes.
       Box (modifier := Modifier.testTag "static" |>.size (← side.get) (← side.get)
             |>.background Color.red (.rounded 8)

@@ -349,7 +349,7 @@ private def composeVisibility (s : Scheduler) (visible : MutableState Bool) :
       AnimatedVisibility vis
         (enter := fadeIn ++ expandVertically (spec := visSpec))
         (exit := fadeOut ++ shrinkVertically (spec := visSpec))
-        (content := Layout (Modifier.size 50 40) .leaf)
+        (Layout (Modifier.size 50 40) .leaf)
   return (root, comp)
 
 private def rootChildCount (root : LayoutNode) : IO Nat :=

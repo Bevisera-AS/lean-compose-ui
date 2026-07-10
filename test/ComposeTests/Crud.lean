@@ -26,7 +26,7 @@ private def freshState : IO (MutableState Db × MutableState String ×
 underlying entry (by id). -/
 private def createSelect : IO Unit := do
   let (db, filter, nm, sn) ← freshState
-  runComposeTest (content := crudBody db filter nm sn) (width := 540) (height := 460) do
+  runComposeTest (crudBody db filter nm sn) (width := 540) (height := 460) do
     assertExists (.text "Emil, Hans")
     assertExists (.text "Mustermann, Max")
     assertExists (.text "Tisch, Roman")
@@ -50,7 +50,7 @@ private def createSelect : IO Unit := do
 the selection. -/
 private def updateDelete : IO Unit := do
   let (db, filter, nm, sn) ← freshState
-  runComposeTest (content := crudBody db filter nm sn) (width := 540) (height := 460) do
+  runComposeTest (crudBody db filter nm sn) (width := 540) (height := 460) do
     click (.tag "row-2")                     -- select "Tisch, Roman"
     typeText (.tag "name") "Romana"
     typeText (.tag "surname") "Tischler"
@@ -68,7 +68,7 @@ private def updateDelete : IO Unit := do
 selected: the selection is by id, so it survives even when its row is hidden. -/
 private def filterSelectionSurvival : IO Unit := do
   let (db, filter, nm, sn) ← freshState
-  runComposeTest (content := crudBody db filter nm sn) (width := 540) (height := 460) do
+  runComposeTest (crudBody db filter nm sn) (width := 540) (height := 460) do
     click (.tag "row-0")                     -- select "Emil, Hans"
     checkEq "selected id 0" (← db.get).selected (some 0)
     -- Narrow by surname prefix so the selected row is hidden.
@@ -85,7 +85,7 @@ private def filterSelectionSurvival : IO Unit := do
 selected, and disabled again after Delete clears it. -/
 private def disabledButtons : IO Unit := do
   let (db, filter, nm, sn) ← freshState
-  runComposeTest (content := crudBody db filter nm sn) (width := 540) (height := 460) do
+  runComposeTest (crudBody db filter nm sn) (width := 540) (height := 460) do
     assertDisabled (.tag "update")
     assertDisabled (.tag "delete")
     assertEnabled (.tag "create")            -- Create never needs a selection

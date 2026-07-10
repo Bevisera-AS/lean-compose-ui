@@ -50,14 +50,13 @@ private def themeLocals : IO Unit := do
   let darkCap ← IO.mkRef (none : Option (ColorScheme × TextStyle × Compose.Color))
   let afterCap ← IO.mkRef (none : Option ColorScheme)
   let _ ← Composition.create t.applier <| MaterialTheme
-    (typography := { bodyMedium := { fontSize := 16 } })
-    (content := do
-      lightCap.set (some (← MaterialTheme.colorScheme, ← LocalTextStyle.current,
-        ← LocalContentColor.current, ← MaterialTheme.shapes))
-      MaterialTheme (colors := .dark) (content := do
-        darkCap.set (some (← MaterialTheme.colorScheme, ← LocalTextStyle.current,
-          ← LocalContentColor.current)))
-      afterCap.set (some (← MaterialTheme.colorScheme)))
+    (typography := { bodyMedium := { fontSize := 16 } }) do
+    lightCap.set (some (← MaterialTheme.colorScheme, ← LocalTextStyle.current,
+      ← LocalContentColor.current, ← MaterialTheme.shapes))
+    MaterialTheme (colors := .dark) do
+      darkCap.set (some (← MaterialTheme.colorScheme, ← LocalTextStyle.current,
+        ← LocalContentColor.current))
+    afterCap.set (some (← MaterialTheme.colorScheme))
   let some (cs, ts, cc, sh) ← lightCap.get | throw (IO.userError "light capture missing")
   check "theme: colorScheme is the light baseline" (cs == .light)
   check "theme: LocalTextStyle takes the custom bodyMedium size" (ts.fontSize == (16 : Sp))
@@ -80,11 +79,11 @@ private def surfaceContentColor : IO Unit := do
   let root ← LayoutNode.create
   let primaryCap ← IO.mkRef (none : Option (Compose.Color × Compose.Color))
   let unknownCap ← IO.mkRef (none : Option Compose.Color)
-  let _ ← Composition.create (LayoutNode.applier root) <| MaterialTheme (content := do
-    Surface (color := some L.primary) (content := do
-      primaryCap.set (some (← LocalContentColor.current, (← LocalTextStyle.current).color)))
-    Surface (color := some .magenta) (content := do
-      unknownCap.set (some (← LocalContentColor.current))))
+  let _ ← Composition.create (LayoutNode.applier root) <| MaterialTheme do
+    Surface (color := some L.primary) do
+      primaryCap.set (some (← LocalContentColor.current, (← LocalTextStyle.current).color))
+    Surface (color := some .magenta) do
+      unknownCap.set (some (← LocalContentColor.current))
   let some (cc, tc) ← primaryCap.get | throw (IO.userError "surface capture missing")
   check "surface: primary container gives onPrimary content" (cc == L.onPrimary)
   check "surface: text style recolored to the content color" (tc == L.onPrimary)
@@ -166,7 +165,7 @@ private def MRig.key (r : MRig) (k : Sdl.Keycode) : IO Unit :=
 /-- Wrap widget content in the theme (the widgets require it only for
 colors — defaults — but tests pin the light baseline). -/
 private def themed (content : Composable Unit) : Composable Unit :=
-  MaterialTheme (content := content)
+  MaterialTheme content
 
 /-! ## Button -/
 
@@ -174,7 +173,7 @@ private def themed (content : Composable Unit) : Composable Unit :=
 Enter/Space activation. -/
 private def buttonBasics : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
-  let r ← mboot <| themed <| Button (clicks.modify (· + 1)) (content := Text "OK")
+  let r ← mboot <| themed <| Button (clicks.modify (· + 1)) (Text "OK")
   let sz ← (← r.ctx.root.child 0).size
   check s!"button: sized to label + padding, min height ({sz.width}x{sz.height})"
     (sz.width ≥ 64 && sz.height == 40)
@@ -204,7 +203,7 @@ private def buttonBasics : IO Unit := do
 /-- Hovering animates the state layer: the container pixel brightens toward
 the 8 % onPrimary overlay. -/
 private def buttonHoverLayer : IO Unit := do
-  let r ← mboot <| themed <| Button (pure ()) (content := Text "OK")
+  let r ← mboot <| themed <| Button (pure ()) (Text "OK")
   let before ← r.pixel 12 20
   check "hover: starts at plain primary" (near before L.primary)
   r.move 20 20
@@ -225,8 +224,8 @@ the expanding circle is geometrically clipped. Releasing fades it back. -/
 private def buttonPressRipple : IO Unit := do
   -- Green backdrop behind the button: an *unclipped* white ripple would
   -- visibly whiten the corner pixel outside the rounded shape.
-  let r ← mboot <| themed <| Box (Modifier.fillMaxSize |>.background .green)
-    (content := Button (pure ()) (content := Text "OK"))
+  let r ← mboot <| themed <| Box (Button (pure ()) (Text "OK"))
+    (modifier := Modifier.fillMaxSize |>.background .green)
   let before ← r.pixel 40 20
   r.press 12 20
   r.settle    -- ripple expands to cover, alpha held while pressed
@@ -249,7 +248,7 @@ private def buttonPressRipple : IO Unit := do
 private def buttonDisabled : IO Unit := do
   let clicks ← IO.mkRef (0 : Nat)
   let r ← mboot <| themed <|
-    Button (clicks.modify (· + 1)) (enabled := false) (content := Text "OK")
+    Button (clicks.modify (· + 1)) (enabled := false) (Text "OK")
   let expected := overWhite (L.onSurface.withAlpha disabledContainerAlpha)
   let px ← r.pixel 12 20
   check s!"disabled button: container dimmed to onSurface@12% ({showColor px})"
@@ -304,11 +303,11 @@ not on the first); Enter when focused also selects. -/
 private def radioSelects : IO Unit := do
   let choice ← mutableStateOf (0 : Nat)
   let calls ← IO.mkRef (#[] : Array Nat)
-  let r ← mboot (h := 200) <| themed <| Column {} (content := do
+  let r ← mboot (h := 200) <| themed <| Column do
     Tests.restartable 1 do
       let sel ← choice.get
       RadioButton (sel == 0) (do calls.modify (·.push 0); choice.set 0)
-      RadioButton (sel == 1) (do calls.modify (·.push 1); choice.set 1))
+      RadioButton (sel == 1) (do calls.modify (·.push 1); choice.set 1)
   r.settle
   check "radio: first selected dot is primary" (near (← r.pixel 20 20) L.primary)
   check "radio: second dot absent" (near (← r.pixel 20 60) .white)
@@ -354,7 +353,7 @@ private def disabledControls : IO Unit := do
   let calls ← IO.mkRef (0 : Nat)
   let bump : IO Unit := calls.modify (· + 1)
   runComposeTest (height := 220)
-    (content := Column {} (content := do
+    (Column do
       Checkbox false (fun _ => bump) (enabled := false)
         (modifier := Modifier.testTag "cb")
       Switch false (fun _ => bump) (enabled := false)
@@ -362,7 +361,7 @@ private def disabledControls : IO Unit := do
       RadioButton false bump (enabled := false)
         (modifier := Modifier.testTag "rb")
       Slider 0.5 (fun _ => bump) (enabled := false)
-        (modifier := Modifier.testTag "sl")))
+        (modifier := Modifier.testTag "sl"))
     do
       assertDisabled (.tag "cb")
       assertDisabled (.tag "sw")
@@ -473,9 +472,9 @@ private def sliderStepsAndRange : IO Unit := do
 /-- Determinate indicators: the linear bar fills exactly its fraction; the
 circular arc covers the swept half only. -/
 private def determinateProgress : IO Unit := do
-  let r ← mboot <| themed <| Column {} (content := do
+  let r ← mboot <| themed <| Column do
     LinearProgressIndicator (some 0.5)
-    CircularProgressIndicator (some 0.5))
+    CircularProgressIndicator (some 0.5)
   -- Linear: 240 wide, 4 tall at y 0..4.
   check "linear 0.5: left half is primary" (near (← r.pixel 60 2) L.primary)
   check "linear 0.5: right half is the track" (near (← r.pixel 180 2) L.surfaceVariant)
@@ -486,9 +485,9 @@ private def determinateProgress : IO Unit := do
 
 /-- Indeterminate indicators keep changing across ticked frames. -/
 private def indeterminateProgress : IO Unit := do
-  let r ← mboot <| themed <| Column {} (content := do
+  let r ← mboot <| themed <| Column do
     LinearProgressIndicator
-    CircularProgressIndicator)
+    CircularProgressIndicator
   check "indeterminate: infinite transitions subscribed" (← r.s.hasFrameWork)
   -- Signature: which sample points read as primary (bar row + ring points).
   let signature : IO String := do

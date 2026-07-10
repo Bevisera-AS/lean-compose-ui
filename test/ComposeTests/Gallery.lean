@@ -18,7 +18,7 @@ is present. -/
 private def rowsExist : IO Unit := do
   let launched ← IO.mkRef (#[] : Array String)
   runComposeTest
-    (content := Demos.Gallery.galleryUi (fun exe => launched.modify (·.push exe)))
+    (Demos.Gallery.galleryUi (fun exe => launched.modify (·.push exe)))
     (theme := false) (width := 520) (height := 640)
     do
       assertExists (.text "compose-ui demos")
@@ -30,7 +30,7 @@ demo's exe name (and nothing else). -/
 private def clickLaunches : IO Unit := do
   let launched ← IO.mkRef (#[] : Array String)
   runComposeTest
-    (content := Demos.Gallery.galleryUi (fun exe => launched.modify (·.push exe)))
+    (Demos.Gallery.galleryUi (fun exe => launched.modify (·.push exe)))
     (theme := false) (width := 520) (height := 640)
     do
       -- The first rows sit inside the viewport (later rows scroll off and are

@@ -56,7 +56,7 @@ private def tboot (content : Composable Unit) (w : Dp := 240) (h : Dp := 160) :
   let s ← Scheduler.create (clock := clock.get)
   let ctx ← bootstrap "compose-textfield-test" w h
     (CompositionLocalProvider LocalScheduler (some s)
-      (MaterialTheme (content := content))) cfg
+      (MaterialTheme content)) cfg
   let _ ← step ctx cfg
   s.runDue 0
   return { ctx, s, clock }
@@ -240,8 +240,8 @@ private def minWidthOverflow : IO Unit := do
   -- height). The Row keeps a real, non-zero height.
   let v1 ← mutableStateOf ({} : TextFieldValue)
   runComposeTest (width := 400)
-    (content := Row (Modifier.width 120 |>.testTag "row") (content :=
-      Tests.restartable 1 do ValueTextField (← v1.get) v1.set (modifier := Modifier.testTag "tf")))
+    (Row (modifier := Modifier.width 120 |>.testTag "row") do
+      Tests.restartable 1 do ValueTextField (← v1.get) v1.set (modifier := Modifier.testTag "tf"))
     do
       let tf ← boundsOf (.tag "tf")
       let row ← boundsOf (.tag "row")
@@ -254,11 +254,11 @@ private def minWidthOverflow : IO Unit := do
   -- 280 would report 280 there.
   let v2 ← mutableStateOf ({} : TextFieldValue)
   runComposeTest (width := 400)
-    (content := do
+    (do
       let sc ← rememberScrollState
-      Row (Modifier.horizontalScroll sc) (content :=
+      Row (modifier := Modifier.horizontalScroll sc) do
         Tests.restartable 1 do
-          ValueTextField (← v2.get) v2.set (minWidth := 60) (modifier := Modifier.testTag "tf2")))
+          ValueTextField (← v2.get) v2.set (minWidth := 60) (modifier := Modifier.testTag "tf2"))
     do
       let tf ← boundsOf (.tag "tf2")
       check s!"minWidth knob: unbounded field honors the 60 dp floor (w={tf.right - tf.left})"
@@ -594,7 +594,7 @@ private def stringOverload : IO Unit := do
   let value ← mutableStateOf ""
   let calls ← IO.mkRef (#[] : Array String)
   runComposeTest
-    (content := Tests.restartable 1 do
+    (Tests.restartable 1 do
       TextField (← value.get) (fun s => do calls.modify (·.push s); value.set s)
         (modifier := Modifier.testTag "field"))
     do

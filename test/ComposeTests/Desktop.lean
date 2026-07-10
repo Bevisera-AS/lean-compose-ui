@@ -46,7 +46,7 @@ private def item (label : String) : Matcher := (Matcher.text label).and (.role .
 
 private def menuActions : IO Unit := do
   let r ← rig
-  runComposeTest (content := body r) (width := 640) (height := 480) do
+  runComposeTest (body r) (width := 640) (height := 480) do
     assertMissing (.role .menuItem)
     -- File ▸ New Window: logs a line *and* fires the window hook.
     click (.text "File"); settle
@@ -67,7 +67,7 @@ private def menuActions : IO Unit := do
 
 private def disabledAndEdit : IO Unit := do
   let r ← rig
-  runComposeTest (content := body r) (width := 640) (height := 480) do
+  runComposeTest (body r) (width := 640) (height := 480) do
     click (.text "Edit"); settle
     assertDisabled (item "Cut")
     click (item "Cut"); settle
@@ -84,7 +84,7 @@ private def disabledAndEdit : IO Unit := do
 
 private def toolbar : IO Unit := do
   let r ← rig
-  runComposeTest (content := body r) (width := 640) (height := 480) do
+  runComposeTest (body r) (width := 640) (height := 480) do
     click (.tag "btn-new")
     checkEq "toolbar New Window logged" (← r.log.get) #["New window opened"]
     checkEq "toolbar New Window fired hook" (← r.newWin.get) 1
@@ -95,7 +95,7 @@ private def toolbar : IO Unit := do
 
 private def tooltip : IO Unit := do
   let r ← rig
-  runComposeTest (content := body r) (width := 640) (height := 480) do
+  runComposeTest (body r) (width := 640) (height := 480) do
     assertMissing (.text "Open another window")
     moveTo (.tag "btn-new")
     advanceTimeBy 300                               -- short of the 500 ms delay
@@ -107,7 +107,7 @@ private def tooltip : IO Unit := do
 
 private def contextMenu : IO Unit := do
   let r ← rig
-  runComposeTest (content := body r) (width := 640) (height := 480) do
+  runComposeTest (body r) (width := 640) (height := 480) do
     assertExists (.text "Right-click me — accent: Blue")
     rightClick (.tag "canvas"); settle
     assertExists (.role .menuItem)

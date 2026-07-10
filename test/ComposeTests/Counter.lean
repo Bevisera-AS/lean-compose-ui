@@ -16,7 +16,7 @@ open Compose Compose.Test Tests.Harness
 
 /-- Clicking "Count" increments the read-only field. -/
 private def increment : IO Unit := runComposeTest
-  (content := Demos.Counter.counterUi) (theme := false)
+  Demos.Counter.counterUi (theme := false)
   (width := 360) (height := 280)
   do
     assertTextEquals (.tag "count") "0"

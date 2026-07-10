@@ -157,8 +157,8 @@ past two line heights. -/
 private def wrapsInNarrowBox : IO Unit := do
   let long := "the quick brown fox jumps over the lazy dog"
   let ctx ← boot <|
-    Box (Modifier.width 70) (content :=
-      Text long (style := { fontSize := 14, color := .black }))
+    Box (Text long (style := { fontSize := 14, color := .black }))
+      (modifier := Modifier.width 70)
   let _ ← step ctx cfg
   -- Navigate root → Box → Text and read the measured height.
   let boxNode ← ctx.root.child 0

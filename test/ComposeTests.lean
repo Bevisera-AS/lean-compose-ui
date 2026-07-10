@@ -1,4 +1,5 @@
 import Compose
+import ComposeTests.ApiLint
 import ComposeTests.Harness
 import ComposeTests.Runtime
 import ComposeTests.MacroSuite

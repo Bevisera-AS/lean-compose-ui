@@ -302,18 +302,18 @@ composable def breadcrumbBar (scope : LaunchScope) (fs : FsSource) (st : FilesSt
   let colors ← MaterialTheme.colorScheme
   let path ← st.cwd.get
   let scroll ← rememberScrollState
-  Row ((Modifier.testTag "breadcrumb" |>.fillMaxWidth).horizontalScroll scroll
+  Row (modifier := (Modifier.testTag "breadcrumb" |>.fillMaxWidth).horizontalScroll scroll
         |>.padding (horizontal := some 12) (vertical := some 8))
-    (verticalAlignment := .centerVertically) (content := do
-      let segs := breadcrumbs path
-      for h : i in [0:segs.size] do
-        let (label, target) := segs[i]
-        if i > 0 then
-          Text " › " (color := some colors.onSurfaceVariant)
-        Text label (modifier := Modifier.testTag s!"crumb:{target}"
-              |>.clickable (navigate scope fs st target)
-              |>.padding (horizontal := some 4) (vertical := some 2))
-          (color := some colors.primary))
+      (verticalAlignment := .centerVertically) do
+    let segs := breadcrumbs path
+    for h : i in [0:segs.size] do
+      let (label, target) := segs[i]
+      if i > 0 then
+        Text " › " (color := some colors.onSurfaceVariant)
+      Text label (modifier := Modifier.testTag s!"crumb:{target}"
+            |>.clickable (navigate scope fs st target)
+            |>.padding (horizontal := some 4) (vertical := some 2))
+        (color := some colors.primary)
 
 /-- One listing row: a drawn folder/file glyph, the name, and (for files) a
 human-readable size. Clicking a directory navigates in; clicking a file selects
@@ -343,35 +343,33 @@ composable def fileRow (scope : LaunchScope) (fs : FsSource) (st : FilesState)
         | some cur => st.selected.set (some cur)
         | none => pure ()
       | .error _ => pure ()
-  Row (Modifier.testTag s!"row:{e.name}"
+  Row (modifier := Modifier.testTag s!"row:{e.name}"
         |>.semantics (selected := some isSelected)
         |>.clickable onClick
         |>.fillMaxWidth
         |>.background (if isSelected then colors.primaryContainer else colors.surface)
         |>.padding (horizontal := some 12) (vertical := some 6))
-    (verticalAlignment := .centerVertically)
-    (horizontalArrangement := .spacedBy 10) (content := do
-      -- A simple drawn glyph: a filled square (accent for dirs, muted for files).
-      Box (modifier := Modifier.width 14 |>.height 14
-            |>.background (if e.isDir then colors.primary else colors.outline)
-              (shape := .rounded 3))
-      Text (if e.isDir then e.name ++ "/" else e.name) (modifier := Modifier.weight 1)
-      match e.size with
-      | some n => Text (humanSize n.toNat) (color := some colors.onSurfaceVariant)
-      | none => pure ())
+      (verticalAlignment := .centerVertically)
+      (horizontalArrangement := .spacedBy 10) do
+    -- A simple drawn glyph: a filled square (accent for dirs, muted for files).
+    Box (modifier := Modifier.width 14 |>.height 14
+          |>.background (if e.isDir then colors.primary else colors.outline)
+            (shape := .rounded 3))
+    Text (if e.isDir then e.name ++ "/" else e.name) (modifier := Modifier.weight 1)
+    match e.size with
+    | some n => Text (humanSize n.toNat) (color := some colors.onSurfaceVariant)
+    | none => pure ()
 
 /-- The info panel (bottom strip): the selected file's name, full path, exact +
 human size, and modified time; a hint when nothing is selected. -/
 composable def infoPanel (st : FilesState) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let cwd ← st.cwd.get
-  Surface (Modifier.testTag "info" |>.fillMaxWidth) (color := colors.surfaceVariant)
-    (content :=
-    Column (Modifier.padding (all := 12)) (verticalArrangement := .spacedBy 2)
-      (content :=
+  Surface (modifier := Modifier.testTag "info" |>.fillMaxWidth) (color := colors.surfaceVariant) do
+    Column (modifier := Modifier.padding (all := 12)) (verticalArrangement := .spacedBy 2) do
       match ← st.selected.get with
-      | none => Text "Select a file to see its details."
-          (color := some colors.onSurfaceVariant)
+      | none =>
+        Text "Select a file to see its details." (color := some colors.onSurfaceVariant)
       | some e => do
         Text e.name (style := { fontSize := 15, weight := .bold })
         Text (childPath cwd e.name) (color := some colors.onSurfaceVariant)
@@ -380,7 +378,7 @@ composable def infoPanel (st : FilesState) : Composable Unit := do
         | none => Text "size: unknown"
         match e.modified with
         | some sec => Text s!"modified: {formatEpoch sec}"
-        | none => pure ()))
+        | none => pure ()
 
 /-- The listing area: the sorted rows in a virtualized `LazyColumn` with a
 `VerticalScrollbar`, or an inline error / empty state. -/
@@ -389,18 +387,17 @@ composable def listingArea (scope : LaunchScope) (fs : FsSource) (st : FilesStat
   let colors ← MaterialTheme.colorScheme
   let showHidden ← st.showHidden.get
   let scroll ← rememberScrollState
-  Box (Modifier.fillMaxWidth |>.fillMaxHeight |>.background colors.surface)
-    (content := do
+  Box (modifier := Modifier.fillMaxWidth |>.fillMaxHeight |>.background colors.surface) do
     match ← st.listing.get with
     | .error msg =>
-      Box (Modifier.testTag "error" |>.fillMaxSize |>.padding (all := 16))
+      Box (modifier := Modifier.testTag "error" |>.fillMaxSize |>.padding (all := 16))
         (contentAlignment := .topStart)
-        (content := Text s!"Cannot open this folder: {msg}" (color := some colors.error))
+        (Text s!"Cannot open this folder: {msg}" (color := some colors.error))
     | .ok entries =>
       let sorted := sortEntries (visibleEntries showHidden entries)
       if sorted.isEmpty then
-        Box (Modifier.fillMaxSize |>.padding (all := 16)) (content :=
-          Text "(empty folder)" (color := some colors.onSurfaceVariant))
+        Box (modifier := Modifier.fillMaxSize |>.padding (all := 16))
+          (Text "(empty folder)" (color := some colors.onSurfaceVariant))
       else do
         -- Key rows by entry identity (name + kind), not index: a `LazyColumn`
         -- item skips recomposition while its *index* is unchanged, so a plain
@@ -410,25 +407,24 @@ composable def listingArea (scope : LaunchScope) (fs : FsSource) (st : FilesStat
           (key := fun i => mixKeys (stringKey sorted[i]!.name)
             (if sorted[i]!.isDir then 1 else 0))
           (modifier := Modifier.fillMaxSize)
-          (itemContent := fun i => fileRow scope fs st sorted[i]!)
+          fun i => fileRow scope fs st sorted[i]!
         VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
     -- A subtle in-flight hint, shown over the (still-visible) previous listing.
     if ← st.loading.get then
       Text "Loading…" (modifier := Modifier.testTag "loading"
           |>.align .bottomStart |>.padding (all := 8))
-        (color := some colors.onSurfaceVariant))
+        (color := some colors.onSurfaceVariant)
 
 /-- The header's hidden-files toggle: a labeled `Switch` (a standalone,
 immediate-effect option — Material's switch case, not a checkbox's). -/
 composable def showHiddenToggle (st : FilesState) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Row (Modifier.padding (horizontal := some 12))
-    (verticalAlignment := .centerVertically) (horizontalArrangement := .spacedBy 6)
-    (content := do
-      Text "Show hidden" (style := { fontSize := 13 })
-        (color := some colors.onSurfaceVariant)
-      Switch (← st.showHidden.get) st.setShowHidden
-        (modifier := Modifier.testTag "show-hidden"))
+  Row (modifier := Modifier.padding (horizontal := some 12))
+      (verticalAlignment := .centerVertically) (horizontalArrangement := .spacedBy 6) do
+    Text "Show hidden" (style := { fontSize := 13 })
+      (color := some colors.onSurfaceVariant)
+    Switch (← st.showHidden.get) st.setShowHidden
+      (modifier := Modifier.testTag "show-hidden")
 
 /-- The whole browser: header (breadcrumb + hidden-files switch), listing, and
 info panel. Factored on the injected `FsSource` + `FilesState` so the MT suite
@@ -440,13 +436,12 @@ composable def filesBody (fs : FsSource) (st : FilesState) : Composable Unit := 
   -- Kick off the initial listing load exactly once (async, like every other
   -- navigation), so a slow home directory never blocks first composition.
   let _ ← remember (do navigate scope fs st (← st.cwd.get); pure true)
-  Column (Modifier.fillMaxSize) (content := do
-    Row (Modifier.fillMaxWidth) (verticalAlignment := .centerVertically)
-      (content := do
-        Box (Modifier.weight 1) (content := breadcrumbBar scope fs st)
-        showHiddenToggle st)
-    Box (Modifier.weight 1 |>.fillMaxWidth) (content := listingArea scope fs st)
-    infoPanel st)
+  Column (modifier := Modifier.fillMaxSize) do
+    Row (modifier := Modifier.fillMaxWidth) (verticalAlignment := .centerVertically) do
+      Box (modifier := Modifier.weight 1) (breadcrumbBar scope fs st)
+      showHiddenToggle st
+    Box (modifier := Modifier.weight 1 |>.fillMaxWidth) (listingArea scope fs st)
+    infoPanel st
 
 /-- The file-manager screen: remembers the state and mounts `filesBody` (which
 kicks off the initial `home` load). `home` is `$HOME` in production; a fake root
@@ -459,7 +454,7 @@ composable def filesUi (fs : FsSource) (home : String) : Composable Unit := do
   let loading ← remember (mutableStateOf false)
   let generation ← remember (IO.mkRef 0)
   let st : FilesState := { cwd, listing, selected, showHidden, loading, generation }
-  MaterialTheme (content := filesBody fs st)
+  MaterialTheme (filesBody fs st)
 
 /-- The real app: browse the actual filesystem starting at `$HOME` (or `/`). -/
 def filesApp : Composable Unit := do

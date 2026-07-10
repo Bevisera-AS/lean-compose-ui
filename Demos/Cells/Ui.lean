@@ -235,14 +235,13 @@ column/row holds the selection. -/
 composable def headerCell (tag label : String) (highlight : Bool) :
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Box (Modifier.semantics (testTag := some tag) (mergeDescendants := true)
+  Box (modifier := Modifier.semantics (testTag := some tag) (mergeDescendants := true)
         |>.background (if highlight then colors.primaryContainer
                        else colors.surfaceVariant)
         |>.drawBehind (gridLineDraw colors.outlineVariant))
     (contentAlignment := .center)
-    (content :=
-      Text label (style := { fontSize := 12 })
-        (color := some colors.onSurfaceVariant))
+    (Text label (style := { fontSize := 12 })
+      (color := some colors.onSurfaceVariant))
 
 /-- The pinned column-header row (`A`–`Z`): a 1-row `LazyGrid` sharing the
 grid's horizontal scroll state, so it follows the grid exactly while staying
@@ -253,8 +252,8 @@ composable def columnHeaders (st : CellsState) (hs : ScrollState) :
   LazyGrid (columns := colCount) (rows := 1)
     (cellWidth := cellW) (cellHeight := headerH) (hState := some hs)
     (modifier := Modifier.height headerH)
-    (itemContent := fun ci _ =>
-      headerCell s!"colh-{colLabel ci}" (colLabel ci) (ci == selCol))
+    fun ci _ =>
+      headerCell s!"colh-{colLabel ci}" (colLabel ci) (ci == selCol)
 
 /-- The pinned row-header column (`1`–`99`): the vertical counterpart of
 `columnHeaders`, a 1-column `LazyGrid` sharing the grid's vertical scroll
@@ -265,8 +264,8 @@ composable def rowHeaders (st : CellsState) (vs : ScrollState)
   LazyGrid (columns := 1) (rows := rowCount)
     (cellWidth := headerW) (cellHeight := cellH) (vState := some vs)
     (modifier := modifier)
-    (itemContent := fun _ ri =>
-      headerCell s!"rowh-{ri + 1}" s!"{ri + 1}" (ri + 1 == selRow))
+    fun _ ri =>
+      headerCell s!"rowh-{ri + 1}" s!"{ri + 1}" (ri + 1 == selRow)
 
 /-- One grid cell. Editing cells host the editor (`TextField` over the
 shared draft, tagged `cell-editor`); resting cells render `Sheet.displayOf`
@@ -288,12 +287,11 @@ composable def cellView (st : CellsState) (ref : CellRef) : Composable Unit := d
         (selected := some isSel) (mergeDescendants := true)
       |>.background (if isSel then colors.primaryContainer else colors.surface)
       |>.drawBehind (gridLineDraw colors.outlineVariant)
-    Box (if isSel then base.border 2 colors.primary else base)
+    Box (modifier := if isSel then base.border 2 colors.primary else base)
       (contentAlignment := .centerStart)
-      (content :=
-        Text value.display (modifier := Modifier.padding (horizontal := some 6))
-          (style := { fontSize := 12 })
-          (color := some (if isErr then colors.error else colors.onSurface)))
+      (Text value.display (modifier := Modifier.padding (horizontal := some 6))
+        (style := { fontSize := 12 })
+        (color := some (if isErr then colors.error else colors.onSurface)))
 
 /-- The scrolling cell area: a `LazyGrid` on both scroll states, composing
 only the visible cell window while reporting the full sheet extent. One
@@ -321,7 +319,7 @@ composable def gridCells (st : CellsState) (hs vs : ScrollState) :
         (onTap := some fun p => st.select (refAt p cwF chF))
         (onDoubleTap := some fun p => st.openEditor (refAt p cwF chF))))
     (key := fun ci ri => ((ri + 1) * 26 + ci).toUInt64)
-    (itemContent := fun ci ri => cellView st ⟨ci, ri + 1⟩)
+    fun ci ri => cellView st ⟨ci, ri + 1⟩
 
 /-! ## The screen -/
 
@@ -335,15 +333,14 @@ composable def formulaBar (st : CellsState) : Composable Unit := do
   let src ← match ed with
     | some _ => st.draft.get
     | none => do pure ((← st.sheet.get).sourceOf sel)
-  Row (Modifier.fillMaxWidth |>.background colors.surfaceVariant
+  Row (modifier := Modifier.fillMaxWidth |>.background colors.surfaceVariant
         |>.padding (horizontal := some 8) (vertical := some 5))
-    (horizontalArrangement := .spacedBy 8)
-    (verticalAlignment := .centerVertically)
-    (content := do
-      Text (toString sel) (modifier := Modifier.testTag "formula-ref" |>.width 32)
-        (style := { fontSize := 12 }) (color := some colors.primary)
-      Text src (modifier := Modifier.testTag "formula-src")
-        (style := { fontSize := 12 }))
+      (horizontalArrangement := .spacedBy 8)
+      (verticalAlignment := .centerVertically) do
+    Text (toString sel) (modifier := Modifier.testTag "formula-ref" |>.width 32)
+      (style := { fontSize := 12 }) (color := some colors.primary)
+    Text src (modifier := Modifier.testTag "formula-src")
+      (style := { fontSize := 12 })
 
 /-- The assembled screen: formula bar on top; below it the pinned corner +
 column headers, the pinned row headers, and the scrolling cell grid with
@@ -351,23 +348,22 @@ both scrollbars overlaid. -/
 composable def cellsScreen (st : CellsState) (hs vs : ScrollState) :
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Column (Modifier.fillMaxSize |>.background colors.background)
-    (content := do
-      formulaBar st
-      Row (Modifier.weight 1 |>.fillMaxWidth) (content := do
-        Column (Modifier.width headerW) (content := do
-          Box (modifier := Modifier.size headerW headerH |>.testTag "corner"
-                |>.background colors.surfaceVariant
-                |>.drawBehind (gridLineDraw colors.outlineVariant))
-          rowHeaders st vs (Modifier.weight 1 |>.fillMaxWidth))
-        Column (Modifier.weight 1 |>.fillMaxHeight) (content := do
-          columnHeaders st hs
-          Box (Modifier.weight 1 |>.fillMaxWidth) (content := do
-            gridCells st hs vs
-            VerticalScrollbar vs
-              (Modifier.align .centerEnd |>.fillMaxHeight |>.testTag "vscrollbar")
-            HorizontalScrollbar hs
-              (Modifier.align .bottomCenter |>.fillMaxWidth |>.testTag "hscrollbar")))))
+  Column (modifier := Modifier.fillMaxSize |>.background colors.background) do
+    formulaBar st
+    Row (modifier := Modifier.weight 1 |>.fillMaxWidth) do
+      Column (modifier := Modifier.width headerW) do
+        Box (modifier := Modifier.size headerW headerH |>.testTag "corner"
+              |>.background colors.surfaceVariant
+              |>.drawBehind (gridLineDraw colors.outlineVariant))
+        rowHeaders st vs (Modifier.weight 1 |>.fillMaxWidth)
+      Column (modifier := Modifier.weight 1 |>.fillMaxHeight) do
+        columnHeaders st hs
+        Box (modifier := Modifier.weight 1 |>.fillMaxWidth) do
+          gridCells st hs vs
+          VerticalScrollbar vs
+            (Modifier.align .centerEnd |>.fillMaxHeight |>.testTag "vscrollbar")
+          HorizontalScrollbar hs
+            (Modifier.align .bottomCenter |>.fillMaxWidth |>.testTag "hscrollbar")
 
 /-- The Cells demo UI (see the module docstring). `initial` seeds the sheet
 (tests boot it empty). -/
@@ -375,6 +371,6 @@ composable def cellsUi (initial : Sheet := seedSheet) : Composable Unit := do
   let st ← remember (CellsState.create initial)
   let hs ← rememberScrollState
   let vs ← rememberScrollState
-  MaterialTheme (content := cellsScreen st hs vs)
+  MaterialTheme (cellsScreen st hs vs)
 
 end Demos.Cells

@@ -16,15 +16,15 @@ open Compose
 /-- The scrollable list + scrollbar strip. -/
 composable def listSection (scroll : ScrollState) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Box (Modifier.fillMaxWidth |>.height 240
+  Box (modifier := Modifier.fillMaxWidth |>.height 240
         |>.border 1 colors.outlineVariant
-        |>.background colors.surface) (content := do
+        |>.background colors.surface) do
     LazyColumn scroll (itemHeight := 28) (count := 100)
       (modifier := Modifier.fillMaxWidth)
-      (itemContent := fun i =>
-        Row (Modifier.padding (horizontal := some 12) (vertical := some 4)) (content :=
-          Text s!"Item {i}"))
-    VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight))
+      fun i =>
+        Row (modifier := Modifier.padding (horizontal := some 12) (vertical := some 4)) do
+          Text s!"Item {i}"
+    VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
 
 /-- The flavor combobox: `ExposedDropdownMenuBox` + `DropdownMenu`. -/
 composable def flavorPicker (choice : MutableState String)
@@ -32,24 +32,24 @@ composable def flavorPicker (choice : MutableState String)
   let flavors := ["Vanilla", "Chocolate", "Pistachio", "Stracciatella"]
   let sel ← choice.get
   let open' ← expanded.get
-  ExposedDropdownMenuBox open' expanded.set (content := fun scope => do
+  ExposedDropdownMenuBox open' expanded.set fun scope => do
     ExposedDropdownMenuField scope sel (expanded := open')
     let anchor ← scope.anchor
     DropdownMenu open' (onDismissRequest := expanded.set false) (anchor := anchor)
-      (matchAnchorWidth := true) (content := do
-        for f in flavors do
-          keyed f (DropdownMenuItem f (onClick := do choice.set f; expanded.set false))))
+        (matchAnchorWidth := true) do
+      for f in flavors do
+        keyed f (DropdownMenuItem f (onClick := do choice.set f; expanded.set false))
 
 /-- The dialog trigger + the dialog itself. -/
 composable def dialogSection (dialogOpen : MutableState Bool) : Composable Unit := do
   let open' ← dialogOpen.get
-  Button (dialogOpen.set true) (content := Text "Open dialog")
+  Button (dialogOpen.set true) (Text "Open dialog")
   if open' then
     AlertDialog (onDismissRequest := dialogOpen.set false)
       (title := "Discard draft?")
       (text := "The draft and its 100 lazily composed items will be lost.")
-      (confirmButton := TextButton (dialogOpen.set false) (content := Text "Discard"))
-      (dismissButton := some (TextButton (dialogOpen.set false) (content := Text "Keep")))
+      (confirmButton := TextButton (dialogOpen.set false) (Text "Discard"))
+      (dismissButton := some (TextButton (dialogOpen.set false) (Text "Keep")))
 
 /-- The gallery screen (see the module docstring). -/
 composable def overlaysUi : Composable Unit := do
@@ -57,15 +57,14 @@ composable def overlaysUi : Composable Unit := do
   let choice ← remember (mutableStateOf "Vanilla")
   let menuOpen ← remember (mutableStateOf false)
   let dialogOpen ← remember (mutableStateOf false)
-  MaterialTheme (content :=
-    Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := do
-        Text "Scroll, menus, dialogs" (style := { fontSize := 22 })
-        listSection scroll
-        Row {} (horizontalArrangement := .spacedBy 12)
-          (verticalAlignment := .centerVertically) (content := do
-            flavorPicker choice menuOpen
-            dialogSection dialogOpen)))
+  MaterialTheme do
+    Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+      Text "Scroll, menus, dialogs" (style := { fontSize := 22 })
+      listSection scroll
+      Row (horizontalArrangement := .spacedBy 12)
+          (verticalAlignment := .centerVertically) do
+        flavorPicker choice menuOpen
+        dialogSection dialogOpen
 
 end Demos.Overlays
 

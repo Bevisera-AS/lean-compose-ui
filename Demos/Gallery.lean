@@ -62,29 +62,27 @@ the right that fires `launch entry.exe`. -/
 composable def demoRow (launch : String → IO Unit) (entry : DemoEntry) :
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Surface (Modifier.fillMaxWidth) (shape := .rounded 12)
-    (color := colors.surfaceVariant) (content :=
-    Row (Modifier.padding (all := 12)) (verticalAlignment := .centerVertically)
-      (content := do
-        Column (Modifier.weight 1) (verticalArrangement := .spacedBy 2)
-          (content := do
-            Text entry.title (style := { fontSize := 16, weight := .medium })
-            Text entry.desc (style := { fontSize := 13 }))
-        Button (launch entry.exe) (modifier := Modifier.testTag s!"launch-{entry.exe}")
-          (content := Text "Launch")))
+  Surface (modifier := Modifier.fillMaxWidth) (shape := .rounded 12)
+      (color := colors.surfaceVariant) do
+    Row (modifier := Modifier.padding (all := 12)) (verticalAlignment := .centerVertically) do
+      Column (modifier := Modifier.weight 1) (verticalArrangement := .spacedBy 2) do
+        Text entry.title (style := { fontSize := 16, weight := .medium })
+        Text entry.desc (style := { fontSize := 13 })
+      Button (launch entry.exe) (Text "Launch")
+        (modifier := Modifier.testTag s!"launch-{entry.exe}")
 
 /-- The gallery screen: a scrollable, titled list of `demoRow`s with a
 desktop scrollbar (auto-hides when idle). `launch` is the per-row spawn
 action (production: fork the demo exe; tests: record it). -/
 composable def galleryUi (launch : String → IO Unit) : Composable Unit := do
   let scroll ← rememberScrollState
-  MaterialTheme (content :=
-    Box (Modifier.fillMaxSize) (content := do
-      Column ((Modifier.fillMaxSize).padding (all := 16) |>.verticalScroll scroll)
-        (verticalArrangement := .spacedBy 10) (content := do
-          Text "compose-ui demos" (style := { fontSize := 24, weight := .bold })
-          Text "Pick a demo to launch." (style := { fontSize := 14 })
-          demos.forM (demoRow launch))
-      VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)))
+  MaterialTheme do
+    Box (modifier := Modifier.fillMaxSize) do
+      Column (modifier := (Modifier.fillMaxSize).padding (all := 16) |>.verticalScroll scroll)
+          (verticalArrangement := .spacedBy 10) do
+        Text "compose-ui demos" (style := { fontSize := 24, weight := .bold })
+        Text "Pick a demo to launch." (style := { fontSize := 14 })
+        demos.forM (demoRow launch)
+      VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
 
 end Demos.Gallery

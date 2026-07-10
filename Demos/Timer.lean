@@ -80,24 +80,22 @@ composable def timerBody (elapsed duration : MutableState Float32) :
     if running then
       let t0 ← UiTask.awaitFrame
       runTicks elapsed duration t0
-  Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-    (content := do
-      Text "Timer" (style := { fontSize := 22 })
-      Text "Elapsed time"
-      LinearProgressIndicator (some (gaugeFraction e d))
-        (modifier := Modifier.testTag "gauge" |>.fillMaxWidth)
-      Text (formatSeconds e.toUInt32.toNat)
-        (modifier := Modifier.testTag "elapsed-label")
-      Text s!"Duration: {formatSeconds d.toUInt32.toNat}"
-      Slider d duration.set (valueRange := (0, maxDurationMs))
-        (modifier := Modifier.testTag "duration" |>.fillMaxWidth)
-      Button (elapsed.set 0) (modifier := Modifier.testTag "reset")
-        (content := Text "Reset"))
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+    Text "Timer" (style := { fontSize := 22 })
+    Text "Elapsed time"
+    LinearProgressIndicator (some (gaugeFraction e d))
+      (modifier := Modifier.testTag "gauge" |>.fillMaxWidth)
+    Text (formatSeconds e.toUInt32.toNat)
+      (modifier := Modifier.testTag "elapsed-label")
+    Text s!"Duration: {formatSeconds d.toUInt32.toNat}"
+    Slider d duration.set (valueRange := (0, maxDurationMs))
+      (modifier := Modifier.testTag "duration" |>.fillMaxWidth)
+    Button (elapsed.set 0) (modifier := Modifier.testTag "reset") (Text "Reset")
 
 /-- The Timer demo screen (see the module docstring). -/
 composable def timerUi : Composable Unit := do
   let elapsed ← remember (mutableStateOf (0.0 : Float32))
   let duration ← remember (mutableStateOf (15000.0 : Float32))
-  MaterialTheme (content := timerBody elapsed duration)
+  MaterialTheme (timerBody elapsed duration)
 
 end Demos.Timer

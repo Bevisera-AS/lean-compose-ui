@@ -110,28 +110,27 @@ composable def tempConverterUi : Composable Unit := do
   let fahrenheit ← remember (mutableStateOf "")
   let c ← celsius.get
   let f ← fahrenheit.get
-  MaterialTheme (content :=
-    Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := do
-        Text "Temperature Converter" (style := { fontSize := 22 })
-        TextField c
-          (fun t => do
-            celsius.set t
-            match parseNumber t with
-            | some v => fahrenheit.set (fmtTemp (cToF v))
-            | none => pure ())
-          (label := some "Celsius")
-          (isError := !c.trimAscii.toString.isEmpty && (parseNumber c).isNone)
-          (modifier := Modifier.testTag "celsius")
-        Text "="
-        TextField f
-          (fun t => do
-            fahrenheit.set t
-            match parseNumber t with
-            | some v => celsius.set (fmtTemp (fToC v))
-            | none => pure ())
-          (label := some "Fahrenheit")
-          (isError := !f.trimAscii.toString.isEmpty && (parseNumber f).isNone)
-          (modifier := Modifier.testTag "fahrenheit")))
+  MaterialTheme do
+    Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+      Text "Temperature Converter" (style := { fontSize := 22 })
+      TextField c
+        (fun t => do
+          celsius.set t
+          match parseNumber t with
+          | some v => fahrenheit.set (fmtTemp (cToF v))
+          | none => pure ())
+        (label := some "Celsius")
+        (isError := !c.trimAscii.toString.isEmpty && (parseNumber c).isNone)
+        (modifier := Modifier.testTag "celsius")
+      Text "="
+      TextField f
+        (fun t => do
+          fahrenheit.set t
+          match parseNumber t with
+          | some v => celsius.set (fmtTemp (fToC v))
+          | none => pure ())
+        (label := some "Fahrenheit")
+        (isError := !f.trimAscii.toString.isEmpty && (parseNumber f).isNone)
+        (modifier := Modifier.testTag "fahrenheit")
 
 end Demos.TempConverter

@@ -134,13 +134,13 @@ publishing its `selected` semantics so the MT suite can assert on it. -/
 composable def nameRow (id : Nat) (e : Entry) (selected : Bool)
     (onSelect : IO Unit) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Box (Modifier.testTag s!"row-{id}"
+  Box (modifier := Modifier.testTag s!"row-{id}"
         |>.semantics (selected := some selected)
         |>.clickable onSelect
         |>.fillMaxWidth
         |>.background (if selected then colors.primaryContainer else colors.surface)
         |>.padding (horizontal := some 8) (vertical := some 4))
-    (content := Text e.display)
+    (Text e.display)
 
 /-- The CRUD screen, factored on injected state so the MT suite can drive and
 inspect it directly. -/
@@ -150,28 +150,26 @@ composable def crudBody (db : MutableState Db)
   let f ← filter.get
   let visible := d.filtered f
   let sel := d.selected
-  Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-    (content := do
-      Text "CRUD" (style := { fontSize := 22 })
-      TextField f filter.set (modifier := Modifier.testTag "filter")
-        (label := some "Filter prefix")
-      Row {} (horizontalArrangement := .spacedBy 16) (content := do
-        Column (Modifier.testTag "list" |>.width 220) (content :=
-          for (id, e) in visible do
-            keyed (toString id) (nameRow id e (sel == some id) (db.modify (·.select id))))
-        Column {} (verticalArrangement := .spacedBy 8) (content := do
-          TextField (← «name».get) «name».set (modifier := Modifier.testTag "name")
-            (label := some "Name")
-          TextField (← surname.get) surname.set (modifier := Modifier.testTag "surname")
-            (label := some "Surname")))
-      Row {} (horizontalArrangement := .spacedBy 8) (content := do
-        Button (do db.modify (·.create (← «name».get) (← surname.get)))
-          (modifier := Modifier.testTag "create") (content := Text "Create")
-        Button (do db.modify (·.update (← «name».get) (← surname.get)))
-          (enabled := sel.isSome) (modifier := Modifier.testTag "update")
-          (content := Text "Update")
-        Button (db.modify (·.delete)) (enabled := sel.isSome)
-          (modifier := Modifier.testTag "delete") (content := Text "Delete")))
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+    Text "CRUD" (style := { fontSize := 22 })
+    TextField f filter.set (modifier := Modifier.testTag "filter")
+      (label := some "Filter prefix")
+    Row (horizontalArrangement := .spacedBy 16) do
+      Column (modifier := Modifier.testTag "list" |>.width 220) do
+        for (id, e) in visible do
+          keyed (toString id) (nameRow id e (sel == some id) (db.modify (·.select id)))
+      Column (verticalArrangement := .spacedBy 8) do
+        TextField (← «name».get) «name».set (modifier := Modifier.testTag "name")
+          (label := some "Name")
+        TextField (← surname.get) surname.set (modifier := Modifier.testTag "surname")
+          (label := some "Surname")
+    Row (horizontalArrangement := .spacedBy 8) do
+      Button (do db.modify (·.create (← «name».get) (← surname.get))) (Text "Create")
+        (modifier := Modifier.testTag "create")
+      Button (do db.modify (·.update (← «name».get) (← surname.get))) (Text "Update")
+        (enabled := sel.isSome) (modifier := Modifier.testTag "update")
+      Button (db.modify (·.delete)) (Text "Delete") (enabled := sel.isSome)
+        (modifier := Modifier.testTag "delete")
 
 /-- The CRUD demo screen (see the module docstring). -/
 composable def crudUi : Composable Unit := do
@@ -179,6 +177,6 @@ composable def crudUi : Composable Unit := do
   let filter ← remember (mutableStateOf "")
   let «name» ← remember (mutableStateOf "")
   let surname ← remember (mutableStateOf "")
-  MaterialTheme (content := crudBody db filter «name» surname)
+  MaterialTheme (crudBody db filter «name» surname)
 
 end Demos.Crud

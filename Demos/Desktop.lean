@@ -53,7 +53,7 @@ composable def desktopBody
   let entries ← log.get
   let (accentName, accentColor) := accentAt (← accent.get)
   let newWindow : IO Unit := do log.modify (·.push "New window opened"); onNewWindow
-  Column Modifier.fillMaxSize (content := do
+  Column (modifier := Modifier.fillMaxSize) do
     MenuBar #[
       { label := "File", items := #[
           .item "New Window" newWindow,
@@ -66,39 +66,35 @@ composable def desktopBody
           .item "Clear Log" (log.set #[]) ] },
       { label := "Help", items := #[
           .item "About" onAbout ] } ]
-    Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-      (content := do
-        Text "Desktop components" (style := { fontSize := 20, weight := .bold })
-        -- Tooltip'd toolbar buttons (duplicating two menu actions).
-        Row {} (horizontalArrangement := .spacedBy 12) (content := do
-          Tooltip "Open another window" (modifier := Modifier.testTag "tt-new")
-            (content := Button newWindow (modifier := Modifier.testTag "btn-new")
-              (content := Text "New Window"))
-          Tooltip "Show the about dialog" (modifier := Modifier.testTag "tt-about")
-            (content := Button onAbout (modifier := Modifier.testTag "btn-about")
-              (content := Text "About")))
-        -- Right-click canvas: recolor the accent or append to the log.
-        ContextMenuArea
-          #[{ label := "Blue accent",  onClick := accent.set 0 },
-            { label := "Green accent", onClick := accent.set 1 },
-            { label := "Amber accent", onClick := accent.set 2 },
-            { label := "Red accent",   onClick := accent.set 3 },
-            { label := "Add log entry", onClick := log.modify (·.push "Context action") }]
-          (modifier := Modifier.testTag "canvas")
-          (content :=
-            Surface (Modifier.fillMaxWidth |>.height 84) (shape := .rounded 12)
-              (color := some accentColor) (content :=
-              Box (Modifier.padding (all := 14)) (content :=
-                Text s!"Right-click me — accent: {accentName}"
-                  (color := some .white))))
-        -- Shared activity log.
-        Text "Activity log" (style := { fontSize := 14, weight := .medium })
-        Column (Modifier.testTag "log" |>.fillMaxWidth)
-          (verticalArrangement := .spacedBy 2) (content :=
-            if entries.isEmpty then
-              Text "(empty)" (color := some colors.onSurfaceVariant)
-            else
-              entries.forM (fun line => Text s!"• {line}"))))
+    Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+      Text "Desktop components" (style := { fontSize := 20, weight := .bold })
+      -- Tooltip'd toolbar buttons (duplicating two menu actions).
+      Row (horizontalArrangement := .spacedBy 12) do
+        Tooltip "Open another window" (modifier := Modifier.testTag "tt-new") do
+          Button newWindow (Text "New Window") (modifier := Modifier.testTag "btn-new")
+        Tooltip "Show the about dialog" (modifier := Modifier.testTag "tt-about") do
+          Button onAbout (Text "About") (modifier := Modifier.testTag "btn-about")
+      -- Right-click canvas: recolor the accent or append to the log.
+      ContextMenuArea
+        #[{ label := "Blue accent",  onClick := accent.set 0 },
+          { label := "Green accent", onClick := accent.set 1 },
+          { label := "Amber accent", onClick := accent.set 2 },
+          { label := "Red accent",   onClick := accent.set 3 },
+          { label := "Add log entry", onClick := log.modify (·.push "Context action") }]
+        (modifier := Modifier.testTag "canvas") do
+        Surface (modifier := Modifier.fillMaxWidth |>.height 84) (shape := .rounded 12)
+            (color := some accentColor) do
+          Box (modifier := Modifier.padding (all := 14)) do
+            Text s!"Right-click me — accent: {accentName}"
+              (color := some .white)
+      -- Shared activity log.
+      Text "Activity log" (style := { fontSize := 14, weight := .medium })
+      Column (modifier := Modifier.testTag "log" |>.fillMaxWidth)
+          (verticalArrangement := .spacedBy 2) do
+        if entries.isEmpty then
+          Text "(empty)" (color := some colors.onSurfaceVariant)
+        else
+          entries.forM (fun line => Text s!"• {line}")
 
 /-! ## Extra windows + about dialog + the application shell -/
 
@@ -106,22 +102,19 @@ composable def desktopBody
 button here shows cross-window shared state. -/
 composable def extraWindowBody (id : Nat) (log : MutableState (Array String)) :
     Composable Unit :=
-  Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 10)
-    (content := do
-      Text s!"Extra window #{id}" (style := { fontSize := 16, weight := .medium })
-      Text "Closing me closes just this window."
-      Button (log.modify (·.push s!"Note from window #{id}"))
-        (content := Text "Log a note"))
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 10) do
+    Text s!"Extra window #{id}" (style := { fontSize := 16, weight := .medium })
+    Text "Closing me closes just this window."
+    Button (log.modify (·.push s!"Note from window #{id}")) (Text "Log a note")
 
 /-- The About dialog body: a line of text and an OK button that runs `onOk`
 (which closes the dialog and logs the dismissal). -/
 composable def aboutBody (onOk : IO Unit) : Composable Unit :=
-  Column (Modifier.padding (all := 20)) (verticalArrangement := .spacedBy 16)
-    (content := do
-      Text "compose-ui desktop demo" (style := { fontSize := 16, weight := .bold })
-      Text "Multi-window, menu bar, context menu, tooltips, and a system tray."
-      Row (Modifier.fillMaxWidth) (horizontalArrangement := .end)
-        (content := Button onOk (content := Text "OK")))
+  Column (modifier := Modifier.padding (all := 20)) (verticalArrangement := .spacedBy 16) do
+    Text "compose-ui desktop demo" (style := { fontSize := 16, weight := .bold })
+    Text "Multi-window, menu bar, context menu, tooltips, and a system tray."
+    Row (modifier := Modifier.fillMaxWidth) (horizontalArrangement := .end) do
+      Button onOk (Text "OK")
 
 /-- The application shell: owns the shared state, declares the main `Window`,
 the state-driven array of extra `Window`s, the About `DialogWindow`, and a
@@ -143,17 +136,16 @@ def desktopApp : Composable Unit := do
     log.modify (·.push "About dismissed")
   -- Main window: closing it exits the whole application.
   Window "Desktop" 640 480 (onCloseRequest := do quit; pure true)
-    (content := MaterialTheme (content :=
-      desktopBody log accent onNewWindow (aboutOpen.set true) quit))
+    (MaterialTheme (desktopBody log accent onNewWindow (aboutOpen.set true) quit))
   -- Extra windows, each independently closable.
   for id in ← windows.get do
     keyed id (Window s!"Window #{id}" 340 220
       (onCloseRequest := do windows.modify (·.filter (· != id)); pure true)
-      (content := MaterialTheme (content := extraWindowBody id log)))
+      (MaterialTheme (extraWindowBody id log)))
   -- About: a modal dialog of the main window.
   if ← aboutOpen.get then
     DialogWindow "About" 360 200 (onCloseRequest := do closeAbout; pure true)
-      (content := MaterialTheme (content := aboutBody closeAbout))
+      (MaterialTheme (aboutBody closeAbout))
   -- System tray (best-effort; absent under headless drivers).
   Tray (tooltip := some "compose-ui desktop") (menu := #[
     .item "Add log entry" (log.modify (·.push "Tray action")),

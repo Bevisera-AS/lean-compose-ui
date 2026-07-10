@@ -43,13 +43,12 @@ composable def smokeUi : Composable Unit := do
   let width ← remember (mutableStateOf (40 : Dp))
   LaunchedEffect 0 (cyclePalette phase)
   LaunchedEffect 1 (animateWidth width)
-  Column (Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-    (content := do
-      let p ← phase.get
-      for i in [0:3] do
-        paletteBox p i
-      let w ← width.get
-      Box (modifier := Modifier.size w 24 |>.background .darkGray))
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+    let p ← phase.get
+    for i in [0:3] do
+      paletteBox p i
+    let w ← width.get
+    Box (modifier := Modifier.size w 24 |>.background .darkGray)
 
 end Demos.Smoke
 

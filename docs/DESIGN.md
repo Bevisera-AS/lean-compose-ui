@@ -133,8 +133,8 @@ explicit escape hatch):
 ```lean
 withGroup     (key : UInt64) (body : Composable α) : Composable α
 keyed         [Hashable κ] (k : κ) (body : Composable α) : Composable α
-remember      (init : IO α) : Composable α
-rememberKeyed [BEq κ] (k : κ) (init : IO α) : Composable α  -- re-init when k changes
+remember      (init : StateInit α) : Composable α           -- IO initializers lift in
+rememberKeyed [BEq κ] (k : κ) (init : StateInit α) : Composable α  -- re-init when k changes
 emitNode      (create : IO N) (update : N → Composable Unit)
               (content : Composable Unit) : Composable Unit
 ```

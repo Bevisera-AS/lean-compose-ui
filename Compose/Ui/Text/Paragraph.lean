@@ -99,15 +99,12 @@ def measure (tl : TextLayout) (maxWidth : Option Int32) : IO IntSize := do
   let (w, h) ← tl.text.size
   return ⟨w, h⟩
 
-/-- Draw the text with its top-left at `topLeft` (local coordinates), honoring
-the ambient `DrawContext` translation and alpha. Mirrors `DrawScope.drawText`. -/
+/-- Record the text with its top-left at `topLeft` (local coordinates) into
+the pass's display list; the executing backend honors the recorded translation
+and alpha. Mirrors `DrawScope.drawText`. -/
 def draw (tl : TextLayout) (topLeft : Offset) : Draw.DrawM Unit := do
-  let ctx ← read
   let st ← tl.state.get
-  let c := st.style.color
-  tl.text.setColorFloat ⟨c.r, c.g, c.b, c.a * ctx.alpha⟩
-  let p := topLeft + ctx.translation
-  tl.text.drawRenderer p.x p.y
+  Draw.DrawScope.drawText { text := tl.text, string := st.string, color := st.style.color } topLeft
 
 /-- The line height in px: the style's explicit `lineHeight` if set, else the
 font's natural line spacing. Mirrors `TextLayoutResult` line metrics. -/

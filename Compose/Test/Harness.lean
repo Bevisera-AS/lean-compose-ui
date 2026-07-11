@@ -46,10 +46,12 @@ structure UiTest where
 /-- The UI-test monad: `IO` with the ambient `UiTest`. -/
 abbrev TestM := ReaderT UiTest IO
 
-/-- Renderer/window config for tests: software renderer (stable
-`readPixels`), no vsync, white clear color. -/
+/-- Renderer/window config for tests: SDL backend on the software renderer
+(stable `readPixels`, immune to a stray `COMPOSE_BACKEND` in the
+environment), no vsync, white clear color. -/
 def testConfig : AppConfig :=
-  { vsync := false, rendererName := some Sdl.softwareRenderer, clearColor := .white }
+  { vsync := false, rendererName := some Sdl.softwareRenderer, clearColor := .white
+    backend := some .sdlRenderer }
 
 /-- The ambient `UiTest` (escape hatch to the raw window/renderer for pixel
 probes and window-state checks). -/
@@ -120,7 +122,7 @@ def settle (capMs : UInt64 := 4000) (frameMs : UInt64 := 8) : TestM Unit := do
 pixel output is itself the property under test. -/
 def pixel (x y : Int32) : TestM Sdl.Color := do
   let t ← read
-  (← t.ctx.renderer.readPixels).readPixel x y
+  (← (← t.ctx.sdlRenderer).readPixels).readPixel x y
 
 /-! ## Event synthesis (the real input path) -/
 
@@ -133,7 +135,7 @@ def sendEvent (e : Sdl.Event) : TestM Unit := do
 /-- Map a render-coordinate point (semantics bounds live there) to window
 coordinates (synthetic mouse events carry those). -/
 private def toWindow (pos : Offset) : TestM (Float32 × Float32) := do
-  (← read).ctx.renderer.coordinatesToWindow pos.x pos.y
+  (← (← read).ctx.sdlRenderer).coordinatesToWindow pos.x pos.y
 
 /-- Synthesize a mouse press at `pos` (render coordinates). -/
 def mouseDown (pos : Offset) (button : Sdl.MouseButton := .left)

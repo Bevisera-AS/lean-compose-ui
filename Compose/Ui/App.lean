@@ -3,6 +3,7 @@ import Compose.Ui.Layout
 import Compose.Ui.Overlay
 import Compose.Ui.Input.Router
 import Compose.Ui.Draw.Scope
+import Compose.Ui.Draw.SdlBackend
 
 namespace Compose
 
@@ -55,8 +56,13 @@ structure AppConfig where
   Mirrors `onCloseRequest`. -/
   onCloseRequest : IO Bool := pure true
   /-- SDL renderer backend name (`none` = SDL's choice; tests pass
-  `"software"` for stable readbacks). -/
+  `"software"` for stable readbacks). Applies to the `.sdlRenderer` backend
+  only. -/
   rendererName : Option String := none
+  /-- Rendering backend (`none` = honor `COMPOSE_BACKEND=gpu|sdl`, defaulting
+  to `.sdlRenderer`). Tests pin `some .sdlRenderer` — the GPU backend needs a
+  real (non-dummy) video driver. -/
+  backend : Option RenderBackendKind := none
 
 /-- Milliseconds the idle loop sleeps per wait when nothing is scheduled (an
 "∞-ish" cap: rewaiting is cheap and a finite bound is robust against missed
@@ -90,6 +96,25 @@ def windowCoordSize (dp : Dp) (displayScale pixelDensity : Float32) : Int32 :=
 -- Unreported metrics fall back to the density-1 estimate.
 #guard windowCoordSize 400 0 0 == 400
 
+/-- Resolve and build the window's rendering backend: an explicit
+`config.backend` wins, else the `COMPOSE_BACKEND` env var (`gpu`/`sdl`), else
+`.sdlRenderer`. The GPU backend arm lands in milestone M-b — selecting it
+throws a clear error for now. -/
+def makeBackend (window : Sdl.Window) (config : AppConfig) : IO Draw.RenderBackend := do
+  let kind ← match config.backend with
+    | some k => pure k
+    | none =>
+      match ← IO.getEnv "COMPOSE_BACKEND" with
+      | some "gpu" => pure RenderBackendKind.gpu
+      | _ => pure RenderBackendKind.sdlRenderer
+  match kind with
+  | .sdlRenderer =>
+    return Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
+  | .gpu =>
+    throw (IO.userError
+      "Compose: the GPU backend lands in a later milestone — unset COMPOSE_BACKEND \
+       or pass backend := some .sdlRenderer")
+
 /-- Build the per-window half of `bootstrap` on an *existing* scheduler and
 wake event (`Compose.application` shares one pair across all its windows):
 SDL window/renderer, text stack, root node, composition for `content`, and
@@ -115,16 +140,17 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
                    windowCoordSize height scale pixelDensity)
   let (cw, ch) ← window.getSize
   unless cw == ww && ch == wh do window.setSize ww wh
-  let renderer ← Sdl.createRenderer window config.rendererName
+  let backend ← makeBackend window config
   if config.vsync then
-    try renderer.setVSync 1 catch _ => pure ()
-  -- Text stack: bundled fonts + renderer text engine (M7), shared per window.
+    try backend.setVSync 1 catch _ => pure ()
+  -- Text stack: bundled fonts + the backend's text engine (M7), shared per
+  -- window (renderer engine on SDL, GPU text engine on the GPU backend).
   let textContext : TextContext :=
     { fontStore := ← FontStore.create
-      textEngine := ← Sdl.Ttf.createRendererTextEngine renderer }
+      textEngine := ← backend.createTextEngine }
   let densityState ← MutableState.create ({ density := if scale > 0 then scale else 1 } : Density)
   let ctx : WindowContext :=
-    { window, renderer, densityState, scheduler, wakeEvent, textContext
+    { window, backend, densityState, scheduler, wakeEvent, textContext
       root := ← LayoutNode.create
       compositionCell := ← IO.mkRef none
       needsFrame := ← IO.mkRef true
@@ -211,10 +237,15 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     let _ ← (← ctx.inputSink.get) event
 
 /-- Render one frame (step 4): drain recompositions, remeasure the tree with
-window-pixel constraints at the current density, clear, draw, present. The
-`needsFrame` flag is consumed *before* draining so writes raised by effects
-during the drain schedule the next frame instead of being lost. -/
-def renderFrame (ctx : WindowContext) (config : AppConfig) : IO Unit := do
+window-pixel constraints at the current density, record the draw walk into a
+display list, and hand it to the window's backend (clear → execute →
+present). The `needsFrame` flag is consumed *before* draining so writes
+raised by effects during the drain schedule the next frame instead of being
+lost. `mayBlock := false` (the live-resize watch's fallback) forbids the
+backend from waiting on swapchain availability; a skipped frame re-arms
+`needsFrame`. -/
+def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := true) :
+    IO Unit := do
   ctx.needsFrame.set false
   (← ctx.composition).drain
   let density ← ctx.density
@@ -222,12 +253,12 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) : IO Unit := do
   -- Root constraints are the window pixels as maxima with zero minima —
   -- content wraps unless it fills (Compose's `ComposeScene` constraints).
   let _ ← ctx.root.remeasure { maxWidth := pw, maxHeight := ph } density
-  let (r, g, b, a) := config.clearColor.toBytes
-  ctx.renderer.setDrawColor r g b a
-  ctx.renderer.clear
-  DrawScope.run ctx.renderer density ctx.root.drawTree
-  ctx.renderer.present
-  ctx.framesRendered.modify (· + 1)
+  let (list, _) ← DrawScope.record density ctx.root.drawTree
+  let presented ← ctx.backend.render config.clearColor list mayBlock
+  if presented then
+    ctx.framesRendered.modify (· + 1)
+  else
+    ctx.requestFrame
 
 /-! ## Live-resize rendering
 
@@ -425,7 +456,8 @@ Convert BMP→PNG afterward (`sips -s format png in.bmp --out out.png`). Main
 thread only. -/
 def captureScreenshot (title : String) (width height : Dp)
     (content : Composable Unit) (config : AppConfig) (path : String) : IO Unit := do
-  let capCfg := { config with rendererName := some Sdl.softwareRenderer, vsync := false }
+  let capCfg := { config with rendererName := some Sdl.softwareRenderer, vsync := false
+                              backend := some .sdlRenderer }
   let ctx ← bootstrap title width height content capCfg
   for _ in [0:screenshotSettlePasses] do
     let _ ← step ctx capCfg cappedIdleWaitMs
@@ -433,7 +465,7 @@ def captureScreenshot (title : String) (width height : Dp)
   -- read it straight back (software target persists after `present`).
   ctx.requestFrame
   renderFrame ctx capCfg
-  (← ctx.renderer.readPixels).saveBMP path
+  (← (← ctx.sdlRenderer).readPixels).saveBMP path
   (← ctx.composition).dispose
 
 /-- Run a Compose application: create the window (`width`/`height` in `Dp`),
@@ -457,6 +489,7 @@ def runApp (title : String) (width height : Dp) (content : Composable Unit)
   runLoop ctx config maxPasses (watch := some watch)
   watch.remove
   (← ctx.composition).dispose
+  ctx.backend.dispose
   return 0
 
 end Compose

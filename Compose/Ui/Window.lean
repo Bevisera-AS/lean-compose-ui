@@ -6,6 +6,7 @@ import Compose.Ui.Node
 import Compose.Ui.Input.Focus
 import Compose.Ui.Text.Fonts
 import Compose.Ui.Text.Paragraph
+import Compose.Ui.Draw.Backend
 
 namespace Compose
 
@@ -92,8 +93,9 @@ should prefer the dedicated locals (`LocalDensity`, `LocalScheduler`). -/
 structure WindowContext where
   /-- The SDL window. -/
   window : Sdl.Window
-  /-- The renderer all drawing targets. -/
-  renderer : Sdl.Renderer
+  /-- The rendering backend all drawing targets (`SdlBackend` by default; the
+  GPU backend on real drivers when selected — see `AppConfig.backend`). -/
+  backend : Draw.RenderBackend
   /-- Density derived from `Window.displayScale`; a `MutableState` so the
   root provider recomposes when the scale changes. -/
   densityState : MutableState Density
@@ -160,6 +162,15 @@ def composition (ctx : WindowContext) : IO Composition := do
 /-- The current density. -/
 def density (ctx : WindowContext) : IO Density :=
   ctx.densityState.get
+
+/-- The raw SDL renderer of an `.sdlRenderer`-backed window — the test and
+screenshot escape hatch (`readPixels`, `coordinatesToWindow`). Throws for a
+GPU-backed window. -/
+def sdlRenderer (ctx : WindowContext) : IO Sdl.Renderer := do
+  match ctx.backend.sdlRenderer? with
+  | some r => return r
+  | none => throw (IO.userError
+      "Compose: window is not backed by an SDL renderer (GPU backend has no readback path)")
 
 /-- Schedule a frame: the next loop pass recomposes/remeasures/redraws.
 Idempotent. Mirrors `Owner.onRequestMeasure`/`invalidate` scheduling. -/

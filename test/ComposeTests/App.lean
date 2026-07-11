@@ -26,7 +26,7 @@ private def boot (content : Composable Unit) : IO WindowContext :=
 
 /-- Probe the renderer's current output at `(x, y)`. -/
 private def pixel (ctx : WindowContext) (x y : Int32) : IO Sdl.Color := do
-  (← ctx.renderer.readPixels).readPixel x y
+  (← (← ctx.sdlRenderer).readPixels).readPixel x y
 
 /-- First step renders the composition; probes hit content and clear color. -/
 private def rendersComposition : IO Unit := do

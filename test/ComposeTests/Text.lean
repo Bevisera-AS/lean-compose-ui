@@ -128,7 +128,7 @@ outside it. -/
 private def rendersGlyphs : IO Unit := do
   let ctx ← boot <| Text "Hello" (style := { fontSize := 24, color := .black })
   check "text: first step renders" (← step ctx cfg)
-  let surf ← ctx.renderer.readPixels
+  let surf ← (← ctx.sdlRenderer).readPixels
   -- The Text node sits at the origin; its glyphs fall in the top-left band.
   let dark ← countDark surf 0 90 0 34
   check s!"text: dark glyph pixels in the text band ({dark})" (dark > 0)
@@ -143,13 +143,13 @@ private def stateChangeRerenders : IO Unit := do
     let t ← textState.get
     Text t (style := { fontSize := 24, color := .black })
   let _ ← step ctx cfg
-  let n1 ← countDark (← ctx.renderer.readPixels) 0 200 0 34
+  let n1 ← countDark (← (← ctx.sdlRenderer).readPixels) 0 200 0 34
   check s!"text: initial string drew glyphs ({n1})" (n1 > 0)
   check "text: clean step renders nothing" (!(← step ctx cfg (idleCapMs := 10)))
   textState.set "Hello world wide"
   check "text: state write marks the frame dirty" (← ctx.needsFrame.get)
   check "text: dirty step re-renders" (← step ctx cfg)
-  let n2 ← countDark (← ctx.renderer.readPixels) 0 200 0 34
+  let n2 ← countDark (← (← ctx.sdlRenderer).readPixels) 0 200 0 34
   check s!"text: wider string changed the coverage ({n1} → {n2})" (n2 > n1)
 
 /-- A long string in a narrow box wraps to multiple lines: the Text node grows
@@ -178,7 +178,7 @@ private def centerAlignment : IO Unit := do
     Text "Hi" (modifier := Modifier.fillMaxWidth)
       (style := { fontSize := 24, color := .black, align := .center })
   let _ ← step ctx cfg
-  let surf ← ctx.renderer.readPixels
+  let surf ← (← ctx.sdlRenderer).readPixels
   let leftDark ← countDark surf 0 40 0 34
   let rightDark ← countDark surf 160 200 0 34
   let centerDark ← countDark surf 80 120 0 34

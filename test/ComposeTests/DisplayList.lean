@@ -1,0 +1,126 @@
+import Compose
+import ComposeTests.Harness
+
+/-!
+# DisplayList group (`test/ComposeTests/DisplayList.lean`)
+
+The rendering IR: `DrawScope.record` runs a draw block with no backend and
+returns the recorded `DisplayList`. Goldens over `Prim.brief` pin what each
+draw op records and how ambient state (translation, clip intersection, rounded
+clip, alpha) resolves onto primitives; well-formedness checks the invariants
+every backend relies on; a composed-scene recording pins what the draw walk
+emits (crisp rect fast path, cached shape specs, text runs). This group is the
+GPU backend's headless coverage — both backends consume the identical list by
+construction.
+-/
+
+namespace Tests.DisplayList
+open Compose Compose.Draw Compose.Test Tests.Harness
+
+/-- Record a draw block at density 1 and return the list. -/
+private def rec (body : Draw.DrawM Unit) : IO Draw.DisplayList := do
+  let (list, _) ← DrawScope.record {} body
+  return list
+
+/-- Golden-compare a recorded list's `brief` lines. -/
+private def checkBriefs (name : String) (list : Draw.DisplayList) (want : List String) : IO Unit := do
+  checkEq s!"{name}: prim count" list.size want.length
+  for (p, w) in list.toList.zip want do
+    checkEq s!"{name}: {w}" p.brief w
+
+private def basicOps : IO Unit := do
+  -- Solid fill records the crisp rect fast path; gradients and strokes record
+  -- shape specs (tessellated by the executing backend).
+  let l ← rec do
+    DrawScope.drawRect (.solid .red) ⟨2, 3⟩ ⟨10, 20⟩
+    DrawScope.drawRect (.solid .blue) ⟨0, 0⟩ ⟨5, 5⟩ (.stroke 2)
+    DrawScope.drawCircle (.solid .green) ⟨50, 50⟩ 20
+    DrawScope.drawLine (.solid .black) ⟨0, 0⟩ ⟨10, 10⟩ 2
+  checkBriefs "basic ops" l
+    [ "rect @(0,0) #ff0000ff tl=(2,3) sz=10x20"
+    , "shape @(0,0) rrStroke rr(0,0,5,5)r0 w=2 #0000ffff"
+    , "shape @(0,0) circleFill c=(50,50) r=20 #00ff00ff"
+    , "shape @(0,0) line (0,0)→(10,10) w=2 #000000ff" ]
+  -- drawRect on a solid brush must NOT tessellate; the others must.
+  let c0 ← Draw.tessellationCount.get
+  let _ ← rec (DrawScope.drawRect (.solid .red) ⟨0, 0⟩ ⟨10, 10⟩)
+  checkEq "solid rect does not count a tessellation" (← Draw.tessellationCount.get) c0
+  let _ ← rec (DrawScope.drawRoundRect (.solid .red) (RoundRect.circular ⟨0, 0, 10, 10⟩ 2))
+  checkEq "shape draw counts one tessellation" (← Draw.tessellationCount.get) (c0 + 1)
+
+private def ambientState : IO Unit := do
+  -- Translation accumulates into origins; alpha multiplies; clips intersect
+  -- in render-target coordinates.
+  let l ← rec do
+    DrawScope.translate ⟨10, 10⟩ do
+      DrawScope.withAlpha 0.5 do
+        DrawScope.clipRect ⟨0, 0, 30, 30⟩ do
+          DrawScope.translate ⟨5, 0⟩ do
+            DrawScope.clipRect ⟨0, 0, 100, 10⟩ do
+              DrawScope.drawRect (.solid .red) ⟨1, 1⟩ ⟨4, 4⟩
+  checkBriefs "nested state" l
+    [ s!"rect @(15,10) clip=(15,10,40,20) a={Draw.fmtF 0.5} #ff0000ff tl=(1,1) sz=4x4" ]
+  -- Rounded clip: rect clip to bounds + the rounded shape stamped in
+  -- render-target coordinates on everything inside.
+  let l ← rec do
+    DrawScope.translate ⟨100, 0⟩ do
+      DrawScope.clipRoundRect (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) do
+        DrawScope.drawRect (.solid .blue) ⟨0, 0⟩ ⟨40, 40⟩
+        DrawScope.drawCircle (.solid .red) ⟨20, 20⟩ 30
+  checkBriefs "rounded clip" l
+    [ "rect @(100,0) clip=(100,0,140,40) rounded=rr(100,0,140,40)r8 #0000ffff tl=(0,0) sz=40x40"
+    , "shape @(100,0) clip=(100,0,140,40) rounded=rr(100,0,140,40)r8 \
+       circleFillClipped c=(20,20) r=30 rr(0,0,40,40)r8 #ff0000ff" ]
+
+private def wellFormedness : IO Unit := do
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawRoundRect (.solid .red) (RoundRect.circular ⟨0, 0, 40, 40⟩ 8)
+    DrawScope.drawArc (.solid .blue) ⟨50, 50⟩ 20 0 3 4
+    DrawScope.withAlpha 0.25 (DrawScope.drawMesh (Draw.roundRectFill (.circular ⟨0, 0, 9, 9⟩ 2) .red))
+    DrawScope.drawMesh .empty   -- dropped, not recorded
+  checkEq "empty meshes are not recorded" list.size 3
+  let ok := list.all fun p => p.allWellFormed fun q =>
+    let st := q.state
+    (0 ≤ st.alpha && st.alpha ≤ 1)
+    && (match st.clip with | some c => c.left ≤ c.right && c.top ≤ c.bottom | none => true)
+    && (match q with
+        | .shape _ spec cached => (cached.getD spec.tessellate).indicesInRange
+        | .mesh _ m => m.indicesInRange
+        | _ => true)
+  check "recorded prims are well-formed (alpha in range, clips normalized, indices in range)" ok
+
+private def composedScene : IO Unit := do
+  -- Record what the real draw walk emits for a small composed tree: a crisp
+  -- rect for a plain background, a cached rrFill spec for a rounded one, and
+  -- a text run.
+  runComposeTest
+    (Column do
+      Box (modifier := Modifier.size 40 20 |>.background Color.red)
+      Box (modifier := Modifier.size 40 40 |>.background Color.blue (.rounded 8))
+      Text "hi" (color := some .black))
+    do
+      awaitIdle
+      let t ← uiTest
+      let density ← t.ctx.density
+      let (list, _) ← DrawScope.record density t.ctx.root.drawTree
+      let briefs := list.map (·.brief)
+      check "plain background records the crisp rect fast path"
+        (briefs.any (· == "rect @(0,0) #ff0000ff tl=(0,0) sz=40x20"))
+      check "rounded background records a cached rrFill shape"
+        (briefs.any (· == "shape @(0,20) rrFill rr(0,0,40,40)r8 #0000ffff cached"))
+      check "text records a run with its resolved color"
+        (briefs.any fun b => (b.startsWith "text @(0,60)") && b.endsWith "#000000ff \"hi\"")
+      -- Recording is pure w.r.t. the backend: two records of the same tree
+      -- yield the same briefs (cached meshes and all).
+      let (list2, _) ← DrawScope.record density t.ctx.root.drawTree
+      checkEq "re-recording the unchanged tree is stable"
+        (list2.map (·.brief)).toList briefs.toList
+
+/-- The DisplayList group. -/
+def run : IO Unit := do
+  scenario "record: basic ops and the crisp-rect fast path" basicOps
+  scenario "record: translation/clip/alpha resolve onto prims" ambientState
+  scenario "record: well-formedness invariants" wellFormedness
+  scenario "record: composed scene emits rects, cached shapes, text" composedScene
+
+end Tests.DisplayList

@@ -86,7 +86,7 @@ structure ResolvedDraw where
   deriving Repr, BEq, Inhabited
 
 /-- One entry of a node's tessellation cache: the mesh a `background`/`border`
-draw element last tessellated, with the `Draw.MeshKey` it was built from. The
+draw element last tessellated, with the `Draw.ShapeSpec` it was built from. The
 draw walk (`LayoutNode.cachedMesh`) reuses the mesh while the key — the fully
 resolved tessellation inputs — is unchanged, so static shapes are not
 re-triangulated on every rendered frame. Compose analog: `Modifier.background`
@@ -97,7 +97,7 @@ structure MeshCacheEntry where
   `ResolvedDraw.elemIdx`). -/
   elemIdx : Nat
   /-- The tessellation inputs `mesh` was built from (validity check). -/
-  key : Draw.MeshKey
+  key : Draw.ShapeSpec
   /-- The cached mesh, in the wrapper's local coordinates. -/
   mesh : Draw.Mesh
   deriving Inhabited

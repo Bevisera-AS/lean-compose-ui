@@ -81,7 +81,7 @@ private def TRig.pump (r : TRig) : IO Unit := do
   for _ in [0:3] do r.tick 8
 
 private def TRig.pixel (r : TRig) (x y : Int32) : IO Sdl.Color := do
-  (← r.ctx.renderer.readPixels).readPixel x y
+  (← (← r.ctx.sdlRenderer).readPixels).readPixel x y
 
 private def TRig.send (r : TRig) (e : Sdl.Event) : IO Unit :=
   dispatchEvent r.ctx cfg e
@@ -467,7 +467,7 @@ private def imeSession : IO Unit := do
 /-- Leftmost pixel near `color` in `[x0, x1) × {y}`. -/
 private def findColorX (r : TRig) (y : Int32) (x0 x1 : Int32) (color : Compose.Color)
     (tol : Nat := 40) : IO (Option Int32) := do
-  let surf ← r.ctx.renderer.readPixels
+  let surf ← (← r.ctx.sdlRenderer).readPixels
   for x in [x0.toNatClampNeg : x1.toNatClampNeg] do
     if near (← surf.readPixel (Int32.ofNat x) y) color tol then
       return some (Int32.ofNat x)
@@ -553,7 +553,7 @@ private def placeholderAndLabel : IO Unit := do
   -- Placeholder glyphs only while empty.
   let (r, _, _) ← fieldRig (placeholder := "MMMMM")
   let countDark (r : TRig) (x0 x1 : Nat) : IO Nat := do
-    let surf ← r.ctx.renderer.readPixels
+    let surf ← (← r.ctx.sdlRenderer).readPixels
     let mut n := 0
     for y in [12:28] do
       for x in [x0:x1] do
@@ -580,7 +580,7 @@ private def placeholderAndLabel : IO Unit := do
   rl.click 100 34
   for _ in [0:30] do rl.tick 8   -- let the float animation settle
   -- Floating label: primary-ish glyphs in the strip.
-  let surf ← rl.ctx.renderer.readPixels
+  let surf ← (← rl.ctx.sdlRenderer).readPixels
   let mut floatPix := 0
   for y in [0:13] do
     for x in [12:70] do

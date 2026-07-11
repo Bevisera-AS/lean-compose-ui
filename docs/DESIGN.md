@@ -291,38 +291,58 @@ remaining space; `fill` flag controls min constraints.
 
 ### Drawing (`Compose/Ui/Draw/*.lean`)
 
-Immediate mode per dirty frame: walk the tree once, emit into the SDL
-renderer. No damage regions initially (full redraw when dirty; the tree is
-small — revisit only if profiling says so).
+Immediate mode per dirty frame, split **record → execute**: the draw walk
+runs once through `DrawScope` (a reader over transform/clip/alpha state) and
+*records* a flat, backend-neutral **display list** (`DisplayList.lean` — the
+role Skia's `Picture` plays for Compose); the window's **`RenderBackend`**
+(`Backend.lean`) then executes it. No damage regions initially (full redraw
+when dirty; each recorded prim carries its resolved state, so damage tracking
+has a natural seed — revisit only if profiling says so).
 
-`DrawScope` (a reader over renderer + transform/clip stacks):
+`DrawScope` ops (signatures unchanged by the split):
 
 ```lean
 drawRect / drawRoundRect / drawCircle / drawLine / drawArc
   (brush : Brush) (style : Fill | Stroke width) …
-drawText (layout : TextLayout) (topLeft) (color)
+drawText (run : TextRun) (topLeft)          -- via TextLayout.draw
 clipRect (r : Rect) (body) ; clipRoundRect (rr) (body)
 translate (o : Offset) (body) ; withAlpha (a) (body)
 ```
 
 `Brush` = `solid Color` | `linearGradient` (vertex colors make gradients free).
 
-**Anti-aliasing strategy** (SDL's 2D renderer has none): all curved/rounded
-shapes are tessellated to triangle meshes with a **1 px feathered edge ring**
-(outer ring vertices share position direction but alpha 0), drawn via
-`Renderer.geometry`. Axis-aligned crisp rects use `fillRect` directly.
-`Compose/Ui/Draw/Tessellate.lean` is **pure** (`Array Vertex × Array Int32`
-out) and heavily `#guard`-tested: rounded-rect fill, rounded-rect stroke,
-circle fill/stroke, arc stroke (for circular progress), line with width,
-polygon clip of a circle against a round-rect (for bounded ripples).
-Adaptive segment count: `⌈π/2 · r / 2px⌉` segments per corner, min 4.
+**The IR**: each `Prim` (crisp `rect` / `shape` with a `ShapeSpec` +
+optional cached mesh / raw `mesh` / `text` run / `layer`) is stamped with a
+`PrimState` — accumulated translation, resolved rect-clip intersection, the
+innermost rounded clip, folded alpha — so executors need no stacks.
+`ShapeSpec` holds the fully resolved tessellation inputs and doubles as the
+per-node mesh-cache key (`LayoutNode.cachedMesh`).
 
-**Clip stack**: rectangular clips compose by intersection onto SDL's single
-clip rect (push/pop in `DrawScope`). `clipRoundRect` sets the rect clip of
-the bounds AND passes the rrect down so tessellated draws inside can
-geometrically clip (covers ripple-in-button; arbitrary content under rounded
-clip degrades to rect clip — documented limitation, revisit with
-render-to-texture masking only if a real use appears).
+**Backends** (selected per window via `AppConfig.backend` /
+`COMPOSE_BACKEND=gpu|sdl`, default SDL):
+
+- **`SdlBackend.lean`** — SDL_Renderer + CPU tessellation; works headless
+  under the dummy video driver (all CI/tests run here). Anti-aliasing (SDL's
+  2D renderer has none): curved/rounded shapes tessellate to triangle meshes
+  with a **1 px feathered edge ring** (outer ring vertices alpha 0), drawn
+  via `Renderer.geometry`; axis-aligned solid rects use `fillRect` directly.
+  `Tessellate.lean` is **pure** and heavily `#guard`-tested (rounded-rect
+  fill/stroke, circle fill/stroke, arc stroke, line, polygon clip of a circle
+  against a round-rect for bounded ripples; adaptive `⌈π/2 · r / 2px⌉`
+  segments per corner, min 4). Layers flatten by folding alpha (documented
+  double-blend approximation).
+- **GPU backend** (SDL_GPU, GPUI-style SDF instancing) — lands per the
+  renderer plan (milestone M-b): renders `ShapeSpec`s analytically, honors
+  `PrimState.rounded` on all content, real offscreen layers and shadows.
+  No dummy-driver support, so it is never the test backend.
+
+**Clip stack**: rectangular clips compose by pure intersection at record
+time. `clipRoundRect` records the bounds clip AND (a) passes the rrect down
+in local coordinates so shape-aware draws geometrically clip at record time
+(covers ripple-in-button), and (b) stamps it in target coordinates on every
+prim (`PrimState.rounded`) so the GPU backend clips arbitrary content
+exactly. On the SDL backend arbitrary content under a rounded clip degrades
+to the rect clip — documented limitation.
 
 Draw order: node's draw modifiers (outer→inner: background under border
 under content), then children in order (later = on top). Hit testing uses
@@ -541,9 +561,9 @@ place; text layouts diff-update and fonts memoize; scroll offsets re-measure
 only the scrolled node; lazy windows recompose only on window shifts. The
 audit's one gap is closed: the tessellation cache above is implemented —
 each node's `background`/`border` mesh is cached in `LayoutNodeData.meshCache`
-keyed by a `Draw.MeshKey` holding the tessellation's fully resolved inputs
-(shape × size px × density fold into the `RoundRect`, brush into the color,
-border width × density into the stroke px), so size/shape/brush/density
+keyed by a `Draw.ShapeSpec` holding the tessellation's fully resolved inputs
+(shape × size px × density fold into the `RoundRect`, the paint into the
+`Brush`, border width × density into the stroke px), so size/shape/brush/density
 changes invalidate by key inequality and static shapes tessellate once, not
 per frame (`LayoutNode.cachedMesh`; asserted by the DrawCache test group via
 the debug `Draw.tessellationCount`). Meshes store `Int32` indices — the form

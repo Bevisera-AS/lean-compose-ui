@@ -152,7 +152,7 @@ production multi-window input path. -/
 private def clickIn (app : ApplicationScope) (e : WindowEntry) (m : Matcher) :
     IO Unit := do
   let c := (← boundsIn e m).center
-  let (x, y) ← e.ctx.renderer.coordinatesToWindow c.x c.y
+  let (x, y) ← (← e.ctx.sdlRenderer).coordinatesToWindow c.x c.y
   dispatchApplicationEvent app (.mouseButtonDown ⟨0, e.id, ⟨0⟩, .left, true, 1, x, y⟩)
   dispatchApplicationEvent app (.mouseButtonUp ⟨0, e.id, ⟨0⟩, .left, false, 1, x, y⟩)
 

@@ -26,7 +26,7 @@ inductive Brush where
   `[0, 1]`, ascending) sampled along the segment from `start` to `stop`.
   Mirrors `Brush.linearGradient`. -/
   | linearGradient (stops : Array (Float32 × Color)) (start stop : Offset)
-  deriving Repr, Inhabited
+  deriving Repr, BEq, Inhabited
 
 namespace Brush
 

@@ -1,0 +1,53 @@
+import Compose.Ui.Draw.DisplayList
+import Sdl.Render
+import Sdl.Ttf.Text
+
+/-!
+# Render backend (`Compose/Ui/Draw/Backend.lean`)
+
+The seam between the recorded `DisplayList` and whatever rasterizes it. A
+window owns one `RenderBackend` — a bundle of first-class IO ops, so the app
+shell never matches on the kind. Create via `SdlBackend.create`
+(SDL_Renderer + CPU tessellation, headless-capable, the default) or
+`GpuBackend.create` (SDL_GPU SDF shading; real drivers only — lands in
+milestone M-b). No direct Compose analog: this is the `Canvas`-provider role
+the Android/Desktop `Owner` plays around Skia.
+-/
+
+namespace Compose.Draw
+
+/-- Which rendering backend a window uses. -/
+inductive RenderBackendKind where
+  /-- SDL_Renderer + CPU tessellation (the default; works headless under the
+  dummy video driver — all CI runs on it). -/
+  | sdlRenderer
+  /-- SDL_GPU (GPUI-style SDF shading; real drivers only — SDL_GPU has no
+  dummy-driver backend). -/
+  | gpu
+  deriving Repr, BEq, Inhabited
+
+/-- A per-window rendering backend. -/
+structure RenderBackend where
+  /-- The backend kind (diagnostics; the ops below are already bound). -/
+  kind : RenderBackendKind
+  /-- Create the text engine this window's `TextLayout`s shape through
+  (`createRendererTextEngine` / `createGpuTextEngine`). -/
+  createTextEngine : IO Sdl.Ttf.TextEngine
+  /-- Render one frame: clear to `clear`, execute `list`, present. When
+  `mayBlock` is `false` the backend must not wait for swapchain availability
+  (the live-resize watch's constraint). Returns whether a frame was actually
+  presented; `false` re-arms the caller's dirty flag. -/
+  render : (clear : Color) → (list : DisplayList) → (mayBlock : Bool) → IO Bool
+  /-- Window coordinates → render-target (layout-pixel) coordinates. -/
+  coordinatesFromWindow : Float32 → Float32 → IO (Float32 × Float32)
+  /-- Best-effort vsync control (the multi-window single-pacer election);
+  throws where unsupported — callers `try`/`catch`. -/
+  setVSync : Int32 → IO Unit
+  /-- The raw SDL renderer when `kind = .sdlRenderer` (the test/screenshot
+  escape hatch: `readPixels`, `getVSync`, `coordinatesToWindow`). -/
+  sdlRenderer? : Option Sdl.Renderer := none
+  /-- Release backend resources (GPU: the swapchain claim). Call on window
+  teardown, after the composition is disposed. -/
+  dispose : IO Unit := pure ()
+
+end Compose.Draw

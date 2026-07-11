@@ -141,7 +141,7 @@ def electVSyncPacer (app : ApplicationScope) : IO Unit := do
   let ws ← app.windows.get
   for (e, t) in ws.zip (vsyncTargets (ws.map (·.config.vsync))) do
     if let some target := t then
-      try e.ctx.renderer.setVSync target catch _ => pure ()
+      try e.ctx.backend.setVSync target catch _ => pure ()
 
 /-- The action that exits the enclosing `Compose.application` (safe to call
 from handlers/effects). Throws when composed outside one. Mirrors
@@ -413,6 +413,7 @@ composable def windowImpl (dialog : Bool) (title : String) (width height : Dp)
           app.windows.modify (·.filter (·.id != wid))
           electVSyncPacer app -- closing the pacer re-elects a survivor
           (← ctx.composition).dispose
+          ctx.backend.dispose
           ctx.window.hide -- SDL windows are finalizer-destroyed; vanish now
       DisposableEffect title do -- retitle on change (first run is a no-op)
         if let some ctx ← node.ctxCell.get then

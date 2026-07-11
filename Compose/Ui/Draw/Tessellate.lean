@@ -1,4 +1,5 @@
 import Compose.Ui.Draw.Mesh
+import Compose.Ui.Draw.Brush
 
 /-!
 # Tessellation (`Compose/Ui/Draw/Tessellate.lean`)
@@ -300,41 +301,94 @@ future work in DESIGN.md); the ripple path uses `circleFillClippedToRoundRect`
 and `DrawScope.clipRoundRect`'s geometric clip instead. Returns `m` unchanged. -/
 def clipMeshToRoundRect (m : Mesh) (_rr : RoundRect) : Mesh := m
 
-/-! ## Mesh cache keys -/
+/-! ## Brush painting -/
 
-/-- The complete inputs of one cacheable shape tessellation, in local (wrapper)
-coordinates. Everything the mesh depends on folds into the key: shape × size ×
-density resolve into the `RoundRect`, the brush into the `color`, and a border's
-`Dp` width × density into the pixel `width` — so key equality is exactly "the
-cached mesh is still valid". Used by the draw walk's per-node mesh cache
-(`LayoutNode.cachedMesh`); Compose analog: the `Outline`/`Path` that
+/-- Recolor a mesh's vertices from `brush`, evaluated at each vertex's local
+position; solid brushes are returned unchanged. Feather vertices (alpha `0`)
+stay transparent. -/
+def paintMesh (m : Mesh) (brush : Brush) : Mesh :=
+  match brush with
+  | .solid _ => m
+  | .linearGradient .. =>
+    { m with vertices := m.vertices.map fun v =>
+        let c := brush.colorAt v.pos
+        { v with color := if v.color.a == 0 then c.withAlpha 0 else c } }
+
+/-- Build a shape mesh from a tessellator that takes a single fill color: for a
+solid brush the color is used directly; for a gradient the shape is tessellated
+opaque then repainted per vertex (the tessellator emits a vertex per silhouette
+point, so the rasterizer interpolates the gradient across the triangles). -/
+def shapeMesh (brush : Brush) (mk : Color → Mesh) : Mesh :=
+  match brush with
+  | .solid c => mk c
+  | .linearGradient .. => paintMesh (mk Color.white) brush
+
+/-! ## Shape specs -/
+
+/-- The complete inputs of one anti-aliased shape draw, in local (wrapper)
+coordinates — the shape-level primitive a `DisplayList` carries: the SDL
+backend tessellates it (`ShapeSpec.tessellate`), a GPU backend renders it
+directly (SDF instancing). Everything the mesh depends on folds in: shape ×
+size × density resolve into the `RoundRect`/geometry, a border's `Dp` width ×
+density into the pixel `width` — so spec equality is exactly "the cached mesh
+is still valid", which also makes it the draw walk's per-node mesh-cache key
+(`LayoutNode.cachedMesh`). Compose analog: the `Outline`/`Path` that
 `Modifier.background`/`Modifier.border` cache in `drawWithCache` until size or
 shape changes. -/
-inductive MeshKey where
-  /-- A filled rounded rect (`roundRectFill rr color`). -/
-  | rrFill (rr : RoundRect) (color : Color)
-  /-- A stroked rounded rect of pixel `width` (`roundRectStroke rr width color`). -/
-  | rrStroke (rr : RoundRect) (width : Float32) (color : Color)
+inductive ShapeSpec where
+  /-- A filled rounded rect (`roundRectFill`). -/
+  | rrFill (rr : RoundRect) (brush : Brush)
+  /-- A stroked rounded rect of pixel `width`, centered on the boundary
+  (`roundRectStroke`). -/
+  | rrStroke (rr : RoundRect) (width : Float32) (brush : Brush)
+  /-- A filled circle (`circleFill`). -/
+  | circleFill (center : Offset) (radius : Float32) (brush : Brush)
+  /-- A filled circle geometrically clipped to a rounded rect — the bounded
+  Material ripple (`circleFillClippedToRoundRect`). `rr` is in the same local
+  coordinates as `center` (the recorder captures the ambient
+  `clipRoundRect` shape). -/
+  | circleFillClipped (center : Offset) (radius : Float32) (rr : RoundRect) (brush : Brush)
+  /-- A stroked circle of pixel `width` (`circleStroke`). -/
+  | circleStroke (center : Offset) (radius width : Float32) (brush : Brush)
+  /-- A stroked circular arc, butt caps, radians (`arcStroke`). -/
+  | arcStroke (center : Offset) (radius startRad sweepRad width : Float32) (brush : Brush)
+  /-- A straight line of pixel `width` (`line`). -/
+  | line (p0 p1 : Offset) (width : Float32) (brush : Brush)
   deriving Repr, BEq, Inhabited
 
-/-- Tessellate the mesh a `MeshKey` describes (a pure function — the key *is*
-the tessellation's full input). -/
-def MeshKey.tessellate : MeshKey → Mesh
-  | .rrFill rr color => roundRectFill rr color
-  | .rrStroke rr width color => roundRectStroke rr width color
+/-- Tessellate the mesh a `ShapeSpec` describes (a pure function — the spec
+*is* the tessellation's full input). -/
+def ShapeSpec.tessellate : ShapeSpec → Mesh
+  | .rrFill rr brush => shapeMesh brush (roundRectFill rr)
+  | .rrStroke rr width brush => shapeMesh brush (roundRectStroke rr width)
+  | .circleFill center radius brush => shapeMesh brush (Compose.Draw.circleFill center radius)
+  | .circleFillClipped center radius rr brush =>
+    shapeMesh brush (circleFillClippedToRoundRect center radius rr)
+  | .circleStroke center radius width brush =>
+    shapeMesh brush (Compose.Draw.circleStroke center radius width)
+  | .arcStroke center radius startRad sweepRad width brush =>
+    shapeMesh brush (Compose.Draw.arcStroke center radius startRad sweepRad width)
+  | .line p0 p1 width brush => shapeMesh brush (Compose.Draw.line p0 p1 width)
 
-#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
-        == MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
-#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
-        != MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 41⟩ 8) .red   -- size change
-#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
-        != MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .blue  -- brush change
-#guard MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
-        != MeshKey.rrStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 2 .red
-#guard (MeshKey.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red).tessellate
+#guard ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
+        == ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
+#guard ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
+        != ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 41⟩ 8) (.solid .red)  -- size change
+#guard ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
+        != ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .blue) -- brush change
+#guard ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
+        != ShapeSpec.rrStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 2 (.solid .red)
+#guard (ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)).tessellate
         == roundRectFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red
-#guard (MeshKey.rrStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 3 .blue).tessellate
+#guard (ShapeSpec.rrStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 3 (.solid .blue)).tessellate
         == roundRectStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 3 .blue
+#guard (ShapeSpec.circleFill ⟨50, 50⟩ 20 (.solid .green)).tessellate == circleFill ⟨50, 50⟩ 20 .green
+#guard (ShapeSpec.line ⟨0, 0⟩ ⟨10, 10⟩ 2 (.solid .black)).tessellate == line ⟨0, 0⟩ ⟨10, 10⟩ 2 .black
+-- Gradient specs tessellate opaque then repaint per vertex.
+#guard (ShapeSpec.rrFill (RoundRect.ofRect ⟨0, 0, 10, 10⟩)
+          (.linearGradient #[(0, .red), (1, .blue)] ⟨0, 0⟩ ⟨10, 0⟩)).tessellate
+        == paintMesh (roundRectFill (RoundRect.ofRect ⟨0, 0, 10, 10⟩) .white)
+             (.linearGradient #[(0, .red), (1, .blue)] ⟨0, 0⟩ ⟨10, 0⟩)
 
 /-! ## `#guard` tests -/
 

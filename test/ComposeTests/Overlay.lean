@@ -92,7 +92,7 @@ private def ORig.settle (r : ORig) : IO Unit := do
   r.render
 
 private def ORig.pixel (r : ORig) (x y : Int32) : IO Sdl.Color := do
-  (← r.ctx.renderer.readPixels).readPixel x y
+  (← (← r.ctx.sdlRenderer).readPixels).readPixel x y
 
 private def ORig.send (r : ORig) (e : Sdl.Event) : IO Unit :=
   dispatchEvent r.ctx cfg e
@@ -518,7 +518,7 @@ private def alertDialogBasics : IO Unit := do
   check "alert: scrim outside" (near (← r.pixel 20 280) (overWhite dialogScrimColor) 6)
   -- Find the confirm button by probing for primary-colored label pixels is
   -- brittle; click via the surface's bottom-right action row instead.
-  let surf ← r.ctx.renderer.readPixels
+  let surf ← (← r.ctx.sdlRenderer).readPixels
   let mut hit : Option (Int32 × Int32) := none
   for y in [100:220] do
     for x in [60:260] do

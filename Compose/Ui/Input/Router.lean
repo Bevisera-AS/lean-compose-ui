@@ -307,7 +307,7 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
       isClient.set now
       onTextClientFocused now)
   let conv := fun x y => do
-    let (rx, ry) ← ctx.renderer.coordinatesFromWindow x y
+    let (rx, ry) ← ctx.backend.coordinatesFromWindow x y
     pure (⟨rx, ry⟩ : Offset)
   -- Modal overlays (Dialog) scope Tab traversal to their subtree and restore
   -- prior focus on close, through the focus manager.

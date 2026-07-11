@@ -176,6 +176,13 @@ def circular (r : Rect) (radius : Float32) : RoundRect :=
   let c := CornerRadius.circular radius
   { rect := r, topLeft := c, topRight := c, bottomRight := c, bottomLeft := c }
 
+/-- Translate the rounded rect by `o` (radii unchanged). Mirrors
+`RoundRect.translate`. -/
+def translate (rr : RoundRect) (o : Offset) : RoundRect :=
+  { rr with rect := rr.rect.translate o }
+
+#guard (circular ⟨0, 0, 10, 10⟩ 2).translate ⟨5, 6⟩ == circular ⟨5, 6, 15, 16⟩ 2
+
 /-- Whether `p` lies inside the rounded rect: inside the bounding rect and, in
 each corner's radius box, inside that corner's ellipse. The exact geometric
 containment test pointer hit-testing uses for `Modifier.clip`ped nodes.

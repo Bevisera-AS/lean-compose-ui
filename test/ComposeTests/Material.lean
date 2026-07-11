@@ -141,7 +141,7 @@ private def MRig.settle (r : MRig) : IO Unit := do
   r.render
 
 private def MRig.pixel (r : MRig) (x y : Int32) : IO Sdl.Color := do
-  (← r.ctx.renderer.readPixels).readPixel x y
+  (← (← r.ctx.sdlRenderer).readPixels).readPixel x y
 
 private def MRig.send (r : MRig) (e : Sdl.Event) : IO Unit :=
   dispatchEvent r.ctx cfg e
@@ -182,7 +182,7 @@ private def buttonBasics : IO Unit := do
   let bg ← r.pixel 230 100
   check s!"button: outside is the clear color ({showColor bg})" (near bg .white)
   -- Label glyphs: onPrimary (white-ish) pixels inside the container.
-  let surf ← r.ctx.renderer.readPixels
+  let surf ← (← r.ctx.sdlRenderer).readPixels
   let mut glyph := 0
   for y in [10:30] do
     for x in [12:sz.width.toNatClampNeg - 12] do
@@ -278,7 +278,7 @@ private def checkboxToggles : IO Unit := do
   checkEq "checkbox: click reports the new value" (← calls.get) #[true]
   check "checkbox: checked fill settles to primary" (near (← r.pixel 15 15) L.primary)
   -- Checkmark: onPrimary (white-ish) pixels inside the box.
-  let surf ← r.ctx.renderer.readPixels
+  let surf ← (← r.ctx.sdlRenderer).readPixels
   let mut mark := 0
   for y in [13:28] do
     for x in [13:28] do
@@ -491,7 +491,7 @@ private def indeterminateProgress : IO Unit := do
   check "indeterminate: infinite transitions subscribed" (← r.s.hasFrameWork)
   -- Signature: which sample points read as primary (bar row + ring points).
   let signature : IO String := do
-    let surf ← r.ctx.renderer.readPixels
+    let surf ← (← r.ctx.sdlRenderer).readPixels
     let mut sig := ""
     for i in [0:29] do
       let c ← surf.readPixel (Int32.ofNat (4 + i * 8)) 2

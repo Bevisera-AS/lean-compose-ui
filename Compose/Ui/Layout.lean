@@ -46,13 +46,6 @@ def Layout (modifier : Modifier) (policy : MeasurePolicy)
 
 namespace LayoutNode
 
-/-- Translate a rounded rect by `o` (radii unchanged). -/
-private def rrTranslate (rr : RoundRect) (o : Offset) : RoundRect :=
-  { rr with rect := rr.rect.translate o }
-
-#guard rrTranslate (RoundRect.circular ⟨0, 0, 10, 10⟩ 2) ⟨5, 6⟩
-        == RoundRect.circular ⟨5, 6, 15, 16⟩ 2
-
 /-- Shrink a rounded rect by `d` px on all sides, radii clamped at zero — the
 centerline of a border stroke drawn just inside the bounds. -/
 private def rrInset (rr : RoundRect) (d : Float32) : RoundRect :=
@@ -73,7 +66,7 @@ into the pixel width), any size, shape, brush, or density change misses and
 re-tessellates — and nothing else does. Compose analog:
 `Modifier.background`/`Modifier.border` caching their `Outline`/`Path` in
 `drawWithCache` until size or shape changes. -/
-def cachedMesh (n : LayoutNode) (elemIdx : Nat) (key : Draw.MeshKey) : IO Draw.Mesh := do
+def cachedMesh (n : LayoutNode) (elemIdx : Nat) (key : Draw.ShapeSpec) : IO Draw.Mesh := do
   let d ← n.data
   if let some e := d.meshCache.find? (·.elemIdx == elemIdx) then
     if e.key == key then
@@ -115,7 +108,8 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
             -- The `clip(shape).background(color)` idiom: fill the enclosing
             -- clip shape itself so the fill is geometrically clipped
             -- (`rr` is already in this node's coordinates).
-            DrawScope.drawMesh (← n.cachedMesh rd.elemIdx (.rrFill rr color))
+            let spec : Draw.ShapeSpec := .rrFill rr (.solid color)
+            DrawScope.drawShape spec (some (← n.cachedMesh rd.elemIdx spec))
           else
             -- Partial overlap degrades to the rectangular bounds clip
             -- (DESIGN.md's documented rounded-clip limitation).
@@ -125,19 +119,21 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
           DrawScope.drawRect (.solid color) off sz
         cont
       | .background color shape =>
-        let mesh ← n.cachedMesh rd.elemIdx (.rrFill (shape.toRoundRect sz ctx.density) color)
-        DrawScope.translate off (DrawScope.drawMesh mesh)
+        let spec : Draw.ShapeSpec := .rrFill (shape.toRoundRect sz ctx.density) (.solid color)
+        let mesh ← n.cachedMesh rd.elemIdx spec
+        DrawScope.translate off (DrawScope.drawShape spec (some mesh))
         cont
       | .border w color shape =>
         let wpx := ctx.density.dpToPx w
-        let mesh ← n.cachedMesh rd.elemIdx
-          (.rrStroke (rrInset (shape.toRoundRect sz ctx.density) (wpx / 2)) wpx color)
-        DrawScope.translate off (DrawScope.drawMesh mesh)
+        let spec : Draw.ShapeSpec :=
+          .rrStroke (rrInset (shape.toRoundRect sz ctx.density) (wpx / 2)) wpx (.solid color)
+        let mesh ← n.cachedMesh rd.elemIdx spec
+        DrawScope.translate off (DrawScope.drawShape spec (some mesh))
         cont
       | .clip .rectangle =>
         DrawScope.clipRect (Rect.ofOffsetSize off sz) cont
       | .clip shape =>
-        DrawScope.clipRoundRect (rrTranslate (shape.toRoundRect sz ctx.density) off) cont
+        DrawScope.clipRoundRect ((shape.toRoundRect sz ctx.density).translate off) cont
       | .alpha a =>
         DrawScope.withAlpha a cont
       | .drawBehind block =>

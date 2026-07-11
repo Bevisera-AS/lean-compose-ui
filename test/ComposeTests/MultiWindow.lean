@@ -35,7 +35,7 @@ private def entryTitled! (app : ApplicationScope) (t : String) : IO WindowEntry 
 
 /-- Probe a window's rendered output at `(x, y)`. -/
 private def pixel (e : WindowEntry) (x y : Int32) : IO Sdl.Color := do
-  (← e.ctx.renderer.readPixels).readPixel x y
+  (← (← e.ctx.sdlRenderer).readPixels).readPixel x y
 
 /-- A full-window click-counting region (bumps `hits` through the real
 pointer path). -/
@@ -247,7 +247,7 @@ private def vsyncEnabledCount (app : ApplicationScope) : IO (Option Nat) := do
   let mut n := 0
   for e in ← app.windows.get do
     try
-      let v ← e.ctx.renderer.getVSync
+      let v ← (← e.ctx.sdlRenderer).getVSync
       supported := true
       if v != 0 then n := n + 1
     catch _ => pure ()
@@ -270,7 +270,7 @@ private def singlePacerElection : IO Unit := do
   | some n =>
     checkEq "exactly one window paces vsync" n 1
     let a ← entryTitled! app "vs-a"
-    checkEq "the first vsync window is the pacer" (← a.ctx.renderer.getVSync) 1
+    checkEq "the first vsync window is the pacer" (← (← a.ctx.sdlRenderer).getVSync) 1
     -- Close the pacer; a survivor must take over pacing.
     keepA.set false
     let _ ← stepApplication app (idleCapMs := 5)

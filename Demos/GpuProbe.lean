@@ -41,6 +41,9 @@ Probed, in order:
    prerequisites, probed standalone before the blur pipeline was wired).
 13. Layer blur (M-i): separable Gaussian passes on a line impulse — spread,
    energy conservation, tails, near-identity at tiny σ, group alpha.
+14. Fractional-origin text (M-j): a run drawn at a fractional origin is
+   byte-identical to the same run drawn at the `snapTextOrigin`-snapped
+   integer origin.
 
 Exit code is the number of failed checks; informational verdicts (cycle
 semantics, y-convention, winding) print as notes for the M-b design.
@@ -707,6 +710,30 @@ private def probeBlur (r : Compose.Draw.Gpu.GpuRenderer)
   note s!"frame stats: {stats.brief}"
   check "frame stats: three layers" (stats.layers == 3)
 
+/-- ⑮ fractional-origin text (M-j): both backends snap run origins through
+the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
+byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
+private def probeFractionalText (r : Compose.Draw.Gpu.GpuRenderer)
+    (engine : Sdl.Ttf.TextEngine) (font : Sdl.Ttf.Font) : IO Unit := do
+  IO.println "⑮ fractional text origin snaps to the integer rendering"
+  let text ← engine.createText font "Hi jump!"
+  let render (origin : Offset) : IO ByteArray := do
+    let (list, _) ← DrawScope.record {} do
+      DrawScope.drawText { text, string := "Hi jump!", color := .white } origin
+    r.renderOffscreen ⟨0, 0, 0, 1⟩ list 120 90
+  let frac ← render ⟨10.4, 60.6⟩
+  let snapped ← render ⟨10, 61⟩
+  check "snapTextOrigin pins the probe's origins"
+    (snapTextOrigin ⟨10.4, 60.6⟩ .zero == (⟨10, 61⟩ : Offset))
+  let mut lit := 0
+  for i in [0:frac.size] do
+    -- color bytes only (alpha is last in both rgba8/bgra8 swapchain orders,
+    -- and is 255 everywhere on the opaque clear)
+    if i % 4 != 3 && frac.get! i > 100 then lit := lit + 1
+  check s!"fractional draw marked the target ({lit} lit color bytes)" (lit > 40)
+  check "fractional origin renders byte-identical to the snapped origin"
+    (frac.data == snapped.data)
+
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
@@ -761,6 +788,7 @@ def run : IO UInt32 := do
   probeGradients gpuRenderer swapchainFmt
   probeFragmentUniform dev
   probeBlur gpuRenderer swapchainFmt
+  probeFractionalText gpuRenderer engine font
   probePresentLoop dev window windowPipe ibuf
 
   dev.releaseWindow window

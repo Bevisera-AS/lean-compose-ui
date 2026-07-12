@@ -9,7 +9,9 @@ Executes a recorded `DisplayList` against an `SDL_Renderer` — the direct-SDL
 emission that used to live inside `DrawScope`, byte-for-byte: solid rects take
 the crisp `fillRect` fast path, shapes rasterize their cached mesh (tessellating
 on a cache miss) through `Renderer.geometry` with translation/alpha folded into
-the vertices, text runs draw through the renderer text engine, images draw
+the vertices, text runs draw through the renderer text engine at the shared
+snapped run origin (`snapTextOrigin` — byte-identical to the GPU backend at
+any origin, no fractional-origin shimmer), images draw
 through per-backend cached textures (`createTextureFromSurface` on first use of
 an `ImageBitmap.id`, never evicted — textures die with the renderer), and the
 resolved rect clip is applied to SDL's single render clip rect only when it
@@ -194,7 +196,10 @@ private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
     applyClip r applied (st.clip.map (·.translate shift))
     let c := run.color
     run.text.setColorFloat ⟨c.r, c.g, c.b, c.a * st.alpha * extraAlpha⟩
-    run.text.drawRenderer (st.origin.x + shift.x) (st.origin.y + shift.y)
+    -- Snap the run origin like the GPU backend (`snapTextOrigin`): fractional
+    -- origins rasterize identically across backends and never shimmer.
+    let o := snapTextOrigin st.origin shift
+    run.text.drawRenderer o.x o.y
   | .image st img src dst sampling => do
     applyClip r applied (st.clip.map (·.translate shift))
     let tex ← obtainTexture r caches img

@@ -333,6 +333,18 @@ def run : IO UInt32 := do
   compare "text" gpuR bgra ren ⟨0, 0, 0, 1⟩ gpuList sdlList
     (meanTol := 0.5) (grossTol := 0.005)
 
+  -- Text at a fractional origin: both backends snap the run origin through
+  -- the shared `snapTextOrigin` (⟨15.4, 40.6⟩ → ⟨15, 41⟩), so the same tight
+  -- tolerances hold as for integer origins. (Before M-j the SDL backend drew
+  -- fractional origins unsnapped and this scene would have failed.)
+  let textBodyFrac (t : Sdl.Ttf.Text) : DrawM Unit :=
+    DrawScope.drawText { text := t, string := "The quick brown fox 0123", color := .white }
+      ⟨15.4, 40.6⟩
+  let (gpuListF, _) ← DrawScope.record {} (textBodyFrac gpuText)
+  let (sdlListF, _) ← DrawScope.record {} (textBodyFrac sdlText)
+  compare "text fractional" gpuR bgra ren ⟨0, 0, 0, 1⟩ gpuListF sdlListF
+    (meanTol := 0.5) (grossTol := 0.005)
+
   let stats ← Compose.Draw.Gpu.frameStats.get
   IO.println s!"  last frame stats: {stats.brief}"
   check "frame stats populated" (stats.drawCalls > 0)

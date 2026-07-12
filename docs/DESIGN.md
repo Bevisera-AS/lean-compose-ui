@@ -448,6 +448,21 @@ the GPU probe doesn't). Backdrop blur (sampling behind the layer) is out of
 scope. Verified by `gpu-probe` ⑭ (impulse response, energy conservation,
 near-identity at tiny σ); excluded from `gpu-parity` (GPU-only by design).
 
+**Text positioning**: layout produces integer run origins (measure/place
+round up through constraints), and scroll offsets stay integer — text is
+crisp by construction in the static case. For everything else, **both
+backends snap each run's draw origin to the pixel grid** through the shared
+`snapTextOrigin` (DisplayList.lean): a run rasterizes identically at any
+nearby fractional origin (no shimmer while animating, byte-identical
+GPU↔SDL — the "text fractional" parity scene, gpu-probe ⑮, and a headless
+Draw pixel test pin it). Intra-run subpixel *layout* is SDL_ttf's and is
+preserved; only the run as a whole snaps. Smoothly-moving fractional or
+rotated text is a layer concern: `Affine.snapComposite` places settled
+composites on the grid and animating ones fractionally through the linear
+sampler. True subpixel glyph rendering (per-offset atlas variants or SDF
+fonts) is deferred — SDL_ttf owns the atlas with one integer-pen entry per
+glyph.
+
 **The IR**: each `Prim` (crisp `rect` / `shape` with a `ShapeSpec` +
 optional cached mesh / raw `mesh` / `text` run / `image` / `layer` with
 `LayerProps`) is stamped with a
@@ -484,7 +499,7 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   in `Sdf.lean`); arcs, angled lines, the clipped ripple, multi-stop/off-spec
   gradients → the **mesh pipeline** reusing the same CPU tessellation as SDL;
   text → **glyph-atlas quads** from SDL_ttf's GPU engine, snapped once per
-  run at the rounded run origin (the resize text-shimmer fix); `rrShadow` →
+  run at the shared `snapTextOrigin` (see **Text positioning**); `rrShadow` →
   instanced **analytic Gaussian shadows** (Evan Wallace's closed-form erf
   integral, twinned in `Sdf.lean`); `layer` prims → **real offscreen layer
   passes** (group opacity composites once — no double blend; a transform maps

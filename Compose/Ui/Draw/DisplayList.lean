@@ -104,6 +104,24 @@ structure TextRun where
   from `PrimState.alpha`). -/
   color : Color
 
+/-- Snap a text run's draw origin (plus the enclosing pass `shift`) to the
+pixel grid. **Both backends** draw runs at this snapped origin: intra-run
+subpixel layout is SDL_ttf's (preserved), the run as a whole lands on whole
+pixels — so a given run rasterizes identically at any fractional origin
+nearby (no shimmer) and fractional-origin text is byte-identical across
+backends. Smooth fractional/rotated motion is a layer concern
+(`Affine.snapComposite`). -/
+def snapTextOrigin (origin shift : Offset) : Offset :=
+  ⟨(origin.x + shift.x).round, (origin.y + shift.y).round⟩
+
+-- Integer origins are fixed points (the static-parity invariant), .5 ties
+-- round away from zero (`Float32.round`), and snapping commutes with the
+-- integral shifts layer passes apply (regions snap to whole px).
+#guard snapTextOrigin ⟨15, 41⟩ .zero == ⟨15, 41⟩
+#guard snapTextOrigin ⟨15.4, 40.6⟩ .zero == ⟨15, 41⟩
+#guard snapTextOrigin ⟨2.5, -2.5⟩ .zero == ⟨3, -3⟩
+#guard snapTextOrigin ⟨15.4, 40.6⟩ ⟨3, -7⟩ == snapTextOrigin ⟨15.4, 40.6⟩ .zero + ⟨3, -7⟩
+
 /-- One backend-neutral draw primitive. The draw origin for `rect`/`shape`/
 `mesh` is `st.origin` plus the primitive's own local coordinates; a `text`
 run's `st.origin` is the run's top-left directly. -/

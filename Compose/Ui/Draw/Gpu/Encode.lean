@@ -484,10 +484,11 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
     match texts[runIdx]? with
     | none => st
     | some seqs =>
-      -- Snap once per run in device px (the shimmer fix): intra-run subpixel
-      -- layout is preserved, the run origin lands on the pixel grid (`shift`
-      -- is integral, so snapping commutes with the layer displacement).
-      let origin : Offset := ⟨(s.origin.x + shift.x).round, (s.origin.y + shift.y).round⟩
+      -- Snap once per run in device px (the shimmer fix, shared with the
+      -- SDL backend): intra-run subpixel layout is preserved, the run origin
+      -- lands on the pixel grid (`shift` is integral, so snapping commutes
+      -- with the layer displacement).
+      let origin := snapTextOrigin s.origin shift
       seqs.foldl (pushGlyphSeq run.color (s.alpha * extraAlpha) origin (scissorAt s.clip shift)) st
   | .image s img src dst sampling =>
     let imgIdx := st.imagesConsumed

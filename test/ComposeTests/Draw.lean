@@ -10,8 +10,9 @@ software renderer under the dummy video driver, reads them back with
 own suite proves works headless. Covers: solid/overlapping fills, rounded-rect
 corners, circle fill + alpha blend, clip nesting + restore, translate, alpha
 scaling, gradient sampling (linear endpoints; radial/sweep on the per-vertex
-fallback's near-exact circle-fan cases), and the documented SDL layer
-approximations (alpha flatten double-blends; blur renders unblurred).
+fallback's near-exact circle-fan cases), the documented SDL layer
+approximations (alpha flatten double-blends; blur renders unblurred), and the
+shared text run-origin snap (fractional origins render like snapped ones).
 
 Run: `SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy lake exe test`.
 -/
@@ -29,6 +30,35 @@ private def mkRen (w h : Int32) : IO Sdl.Renderer := do
 private def clearBlack (ren : Sdl.Renderer) : IO Unit := do
   ren.setDrawColor 0 0 0 255
   ren.clear
+
+/-- Text run-origin snapping (M-j): a run drawn at a fractional origin renders
+byte-identically to the same run at the shared `snapTextOrigin` result
+(⟨15.4, 20.6⟩ → ⟨15, 21⟩) — the cross-backend invariant whose GPU side
+gpu-parity's "text fractional" scene checks. -/
+private def textSnap : IO Unit := do
+  let ren ← mkRen 160 64
+  Sdl.Ttf.init
+  let font ← Sdl.Ttf.openFont "assets/fonts/Roboto-Regular.ttf" 16
+  let engine ← Sdl.Ttf.createRendererTextEngine ren
+  let text ← engine.createText font "The quick brown fox"
+  let render (origin : Offset) : IO Sdl.Surface := do
+    clearBlack ren
+    DrawScope.run ren {} do
+      drawText { text, string := "The quick brown fox", color := .white } origin
+    ren.readPixels
+  let frac ← render ⟨15.4, 20.6⟩
+  let snapped ← render ⟨15, 21⟩
+  let mut lit := 0
+  let mut diffs := 0
+  for y in [0:64] do
+    for x in [0:160] do
+      let a ← frac.readPixel (Int32.ofNat x) (Int32.ofNat y)
+      let b ← snapped.readPixel (Int32.ofNat x) (Int32.ofNat y)
+      if a.r.toNat > 100 then lit := lit + 1
+      if a.r != b.r || a.g != b.g || a.b != b.b then diffs := diffs + 1
+  check s!"text snap: glyphs rendered ({lit} lit px)" (lit > 20)
+  check s!"text snap: fractional origin matches the snapped rendering ({diffs} diff px)"
+    (diffs == 0)
 
 /-- The Draw group. -/
 def run : IO Unit := do
@@ -200,5 +230,8 @@ def run : IO Unit := do
       (colorNear (← shot.readPixel 11 30) 255 0 0)
     check "blur fallback: nothing spreads outside"
       (colorNear (← shot.readPixel 54 30) 0 0 0)
+
+  -- 11. text run-origin snapping (M-j)
+  textSnap
 
 end Tests.Draw

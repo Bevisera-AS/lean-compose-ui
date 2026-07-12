@@ -126,6 +126,123 @@ def union (a b : Rect) : Rect :=
 
 end Rect
 
+/-- A 2D affine transform, column-vector convention (Skia/Compose):
+`p' = (a·x + c·y + tx, b·x + d·y + ty)`. Identity by default. -/
+structure Affine where
+  /-- X scale (`m00`). -/
+  a : Float32 := 1
+  /-- Y skew (`m10`). -/
+  b : Float32 := 0
+  /-- X skew (`m01`). -/
+  c : Float32 := 0
+  /-- Y scale (`m11`). -/
+  d : Float32 := 1
+  /-- X translation. -/
+  tx : Float32 := 0
+  /-- Y translation. -/
+  ty : Float32 := 0
+  deriving Repr, BEq, Inhabited
+
+namespace Affine
+
+def identity : Affine := {}
+
+def translation (o : Offset) : Affine := { tx := o.x, ty := o.y }
+
+def scaling (sx sy : Float32) : Affine := { a := sx, d := sy }
+
+/-- Rotation by `rad` radians (clockwise in the y-down screen frame). -/
+def rotation (rad : Float32) : Affine :=
+  let cs := (Float.cos rad.toFloat).toFloat32
+  let sn := (Float.sin rad.toFloat).toFloat32
+  { a := cs, b := sn, c := -sn, d := cs }
+
+/-- Composition: `(f.comp g).mapOffset p = f.mapOffset (g.mapOffset p)`
+(apply `g` first). -/
+def comp (f g : Affine) : Affine :=
+  { a := f.a * g.a + f.c * g.b
+    b := f.b * g.a + f.d * g.b
+    c := f.a * g.c + f.c * g.d
+    d := f.b * g.c + f.d * g.d
+    tx := f.a * g.tx + f.c * g.ty + f.tx
+    ty := f.b * g.tx + f.d * g.ty + f.ty }
+
+def mapOffset (m : Affine) (p : Offset) : Offset :=
+  ⟨m.a * p.x + m.c * p.y + m.tx, m.b * p.x + m.d * p.y + m.ty⟩
+
+def det (m : Affine) : Float32 := m.a * m.d - m.b * m.c
+
+/-- The inverse transform, or `none` when degenerate (`|det| ≤ 1e-9`). -/
+def invert? (m : Affine) : Option Affine :=
+  let dt := m.det
+  if dt.abs <= 1e-9 then none
+  else
+    let ia := m.d / dt
+    let ib := -m.b / dt
+    let ic := -m.c / dt
+    let idd := m.a / dt
+    some { a := ia, b := ib, c := ic, d := idd
+           tx := -(ia * m.tx + ic * m.ty), ty := -(ib * m.tx + idd * m.ty) }
+
+/-- The axis-aligned bounding box of the mapped rectangle's four corners. -/
+def mapRect (m : Affine) (r : Rect) : Rect :=
+  let p0 := m.mapOffset ⟨r.left, r.top⟩
+  let p1 := m.mapOffset ⟨r.right, r.top⟩
+  let p2 := m.mapOffset ⟨r.left, r.bottom⟩
+  let p3 := m.mapOffset ⟨r.right, r.bottom⟩
+  ⟨min (min p0.x p1.x) (min p2.x p3.x), min (min p0.y p1.y) (min p2.y p3.y),
+   max (max p0.x p1.x) (max p2.x p3.x), max (max p0.y p1.y) (max p2.y p3.y)⟩
+
+def isTranslationOnly (m : Affine) : Bool :=
+  m.a == 1 && m.b == 0 && m.c == 0 && m.d == 1
+
+def isIdentity (m : Affine) : Bool :=
+  m.isTranslationOnly && m.tx == 0 && m.ty == 0
+
+/-- Component-wise approximate equality (trig-built transforms carry rounding). -/
+def approxEq (m n : Affine) (eps : Float32 := 1e-5) : Bool :=
+  (m.a - n.a).abs <= eps && (m.b - n.b).abs <= eps && (m.c - n.c).abs <= eps
+    && (m.d - n.d).abs <= eps && (m.tx - n.tx).abs <= eps && (m.ty - n.ty).abs <= eps
+
+/-- Whether a layer composited through `m` should snap to the pixel grid and
+sample nearest: pure translations within `eps` of a whole pixel (the crisp,
+parity-stable case — static content and settled animations); everything else
+places fractionally with linear filtering. The subpixel-text heuristic —
+identity-ish composites keep text byte-identical to unlayered rendering. -/
+def snapComposite (m : Affine) (eps : Float32 := 1 / 64) : Bool :=
+  m.isTranslationOnly
+    && (m.tx - m.tx.round).abs <= eps && (m.ty - m.ty.round).abs <= eps
+
+private def pi32 : Float32 := (3.14159265358979323846 : Float).toFloat32
+
+-- identity / composition / inverse
+#guard Affine.identity.mapOffset ⟨3, 4⟩ == ⟨3, 4⟩
+#guard (translation ⟨2, 3⟩).mapOffset ⟨1, 1⟩ == ⟨3, 4⟩
+#guard (scaling 2 3).mapOffset ⟨4, 5⟩ == ⟨8, 15⟩
+#guard ((translation ⟨2, 3⟩).comp (scaling 2 2)).mapOffset ⟨1, 1⟩ == ⟨4, 5⟩
+#guard ((scaling 2 2).comp (translation ⟨2, 3⟩)).mapOffset ⟨1, 1⟩ == ⟨6, 8⟩
+#guard ((translation ⟨5, -2⟩).comp (translation ⟨-5, 2⟩)).isIdentity
+#guard (rotation (pi32 / 2)).approxEq { a := 0, b := 1, c := -1, d := 0 }
+#guard ((rotation 0.7).comp (rotation (-0.7))).approxEq .identity
+#guard (((rotation 0.5).comp (scaling 2 3)).invert?.getD .identity).comp
+        ((rotation 0.5).comp (scaling 2 3)) |>.approxEq .identity
+#guard (scaling 1 0).invert? == none
+#guard (scaling 2 3).det == 6
+-- mapRect: 90° about the origin maps (1,2,3,4) to x=-4..-2, y=1..3
+#guard (((rotation (pi32 / 2)).mapRect ⟨1, 2, 3, 4⟩).left + 4).abs <= 1e-5
+#guard (((rotation (pi32 / 2)).mapRect ⟨1, 2, 3, 4⟩).top - 1).abs <= 1e-5
+#guard (translation ⟨10, 20⟩).mapRect ⟨0, 0, 4, 4⟩ == ⟨10, 20, 14, 24⟩
+-- classification + snap heuristic
+#guard (translation ⟨5, 6⟩).isTranslationOnly && !(translation ⟨5, 6⟩).isIdentity
+#guard !(scaling 2 1).isTranslationOnly
+#guard (translation ⟨5, 6⟩).snapComposite
+#guard (translation ⟨5.004, 6⟩).snapComposite          -- within 1/64 of the grid
+#guard !(translation ⟨5.4, 6⟩).snapComposite
+#guard !(rotation 0.3).snapComposite
+#guard !((scaling 1.5 1.5).comp (translation ⟨1, 1⟩)).snapComposite
+
+end Affine
+
 /-- Integer 2D position, used by layout placement. Mirrors `IntOffset`. -/
 structure IntOffset where
   x : Int32

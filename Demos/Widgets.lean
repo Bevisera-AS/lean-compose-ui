@@ -67,6 +67,25 @@ composable def imagesSection : Composable Unit := do
       (sampling := .nearest) (desc := some "checkerboard crop")
     Image img (desc := some "checkerboard natural")
 
+/-- Layer transforms (M-g): a spinner on an infinite rotation, a static
+rotate+squash, and a press-to-scale chip (press interactions drive an
+animated `graphicsLayer` scale). -/
+composable def transformsSection : Composable Unit := do
+  let it ← rememberInfiniteTransition
+  let angle ← it.animateFloat 0 360 (.infiniteRepeatable (.tween 1400 0 .linear))
+  let source ← rememberInteractionSource
+  let scale ← animateFloatAsState (if (← source.pressed.get) then 1.3 else 1.0)
+    (.tween 120 0 .linear)
+  Row (horizontalArrangement := .spacedBy 24) (verticalAlignment := .centerVertically) do
+    Box (modifier := Modifier.graphicsLayer (rotationZ := (← angle.get))
+          |>.size 28 28 |>.background (Color.hex 0xFF6200EE) (.rounded 6))
+    Box (modifier := Modifier.graphicsLayer (rotationZ := 30) (scaleY := 0.8)
+          |>.size 28 28 |>.background (Color.hex 0xFF03DAC6) (.rounded 6))
+    Box (modifier := Modifier.graphicsLayer (scaleX := (← scale.get)) (scaleY := (← scale.get))
+          |>.clickable (pure ()) (source := some source)
+          |>.size 28 28 |>.background (Color.hex 0xFFB00020) (.rounded 14))
+    Text "spin · tilt · press"
+
 /-- The dark-theme strip: the same controls on the dark baseline palette. -/
 composable def darkSection (checked : MutableState Bool)
     (on : MutableState Bool) : Composable Unit := do
@@ -98,6 +117,8 @@ composable def widgetsUi : Composable Unit := do
       progressSection amount
       HorizontalDivider
       imagesSection
+      HorizontalDivider
+      transformsSection
       HorizontalDivider
       darkSection checked on
 

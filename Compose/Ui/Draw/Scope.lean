@@ -46,6 +46,64 @@ inductive PathStyle where
   | stroke (s : Stroke)
   deriving Repr, BEq, Inhabited
 
+/-- The composite-time properties of a graphics layer, mirroring the mutable
+receiver of Compose's `Modifier.graphicsLayer { ... }`: rotation/scale/
+translation about a fractional pivot, plus the group alpha. Resolved to an
+`Affine` (or nothing, when identity) by `toAffine` at record time. -/
+structure GraphicsLayerScope where
+  /-- Group alpha applied once at composite. Mirrors `alpha`. -/
+  alpha : Float32 := 1
+  /-- Rotation about the pivot, degrees clockwise. Mirrors `rotationZ`. -/
+  rotationZ : Float32 := 0
+  /-- Scale about the pivot. Mirrors `scaleX`/`scaleY`. -/
+  scaleX : Float32 := 1
+  scaleY : Float32 := 1
+  /-- Post-transform displacement in pixels. Mirrors
+  `translationX`/`translationY`. -/
+  translationX : Float32 := 0
+  translationY : Float32 := 0
+  /-- Pivot as a fraction of the layer bounds (`⟨0.5, 0.5⟩` = center).
+  Mirrors `TransformOrigin`. -/
+  transformOrigin : Offset := ⟨0.5, 0.5⟩
+  deriving Repr, BEq, Inhabited
+
+namespace GraphicsLayerScope
+
+/-- Resolve to the composite transform about `bounds`'s pivot —
+`T(pivot + translation) ∘ R ∘ S ∘ T(−pivot)` — or `none` when the transform
+part is identity (alpha is not consulted; pure-alpha layers stay
+transform-free). -/
+def toAffine (g : GraphicsLayerScope) (bounds : Rect) : Option Affine :=
+  if g.rotationZ == 0 && g.scaleX == 1 && g.scaleY == 1
+      && g.translationX == 0 && g.translationY == 0 then
+    none
+  else
+    let pivot : Offset := ⟨bounds.left + g.transformOrigin.x * bounds.width,
+                           bounds.top + g.transformOrigin.y * bounds.height⟩
+    let rad := g.rotationZ * ((3.14159265358979323846 : Float).toFloat32 / 180)
+    some ((Affine.translation (pivot + ⟨g.translationX, g.translationY⟩)).comp
+      ((Affine.rotation rad).comp
+        ((Affine.scaling g.scaleX g.scaleY).comp
+          (Affine.translation (-pivot)))))
+
+-- identity settings record no transform; alpha alone doesn't either
+#guard ({} : GraphicsLayerScope).toAffine ⟨0, 0, 10, 10⟩ == none
+#guard ({ alpha := 0.5 } : GraphicsLayerScope).toAffine ⟨0, 0, 10, 10⟩ == none
+-- pure translation
+#guard ({ translationX := 3, translationY := -2 } : GraphicsLayerScope).toAffine
+        ⟨0, 0, 10, 10⟩ == some (.translation ⟨3, -2⟩)
+-- 2× scale about the center of (0,0,10,10): (0,0) ↦ (-5,-5)
+#guard ((({ scaleX := 2, scaleY := 2 } : GraphicsLayerScope).toAffine
+        ⟨0, 0, 10, 10⟩).getD .identity).mapOffset ⟨0, 0⟩ == ⟨-5, -5⟩
+-- the pivot is a fixed point of rotation + scale
+#guard (((({ rotationZ := 90, scaleX := 3, scaleY := 2 } : GraphicsLayerScope).toAffine
+        ⟨10, 10, 30, 50⟩).getD .identity).mapOffset ⟨20, 30⟩).distance ⟨20, 30⟩ <= 1e-4
+-- 90° about the center of (0,0,40,40): (0,0) ↦ (40,0)
+#guard (((({ rotationZ := 90 } : GraphicsLayerScope).toAffine
+        ⟨0, 0, 40, 40⟩).getD .identity).mapOffset ⟨0, 0⟩).distance ⟨40, 0⟩ <= 1e-3
+
+end GraphicsLayerScope
+
 /-- The ambient drawing state threaded through a draw pass. Mirrors the receiver
 state of Compose's `DrawScope` (transform + clip + layer alpha + density). -/
 structure DrawContext where
@@ -254,27 +312,47 @@ every draw's output alpha). Mirrors `DrawScope.alpha` / a graphics-layer alpha. 
 def withAlpha (a : Float32) (body : DrawM α) : DrawM α :=
   withReader (fun c => { c with alpha := c.alpha * a }) body
 
-/-- Record `body` as an offscreen layer composited once at alpha `a` — real
-group opacity, no double-blending where the content overlaps itself (the GPU
-backend renders the content to a texture; the SDL backend flattens by folding
-`a` into the content, today's documented approximation). `bounds` is the
-composite region in local coordinates: content is composited within it (plus
-a 1 px AA margin), a documented deviation from Compose's unclipped
-`graphicsLayer`. `a ≥ 1` records no layer. The layer's own `a` is *not*
-folded into the recorded content — executors apply it at composite time (the
-ambient alpha stays folded into content as usual, so a layer primitive's
-`PrimState.alpha` is ignored by executors). Backs `Modifier.alpha`; mirrors
-`graphicsLayer { alpha = a }`. -/
-def withLayer (bounds : Rect) (a : Float32) (body : DrawM α) : DrawM α := do
-  if a ≥ 1.0 then
+/-- Record `body` as an offscreen graphics layer composited once with `g`'s
+alpha and transform — real group opacity (no double-blending where the
+content overlaps itself) and layer-boundary rotate/scale/translate: content
+records untransformed, executors render it to a texture and map only the
+composite. `bounds` is the *content* region in local coordinates: content is
+composited within it (plus a 1 px AA margin), a documented deviation from
+Compose's unclipped `graphicsLayer`. Identity transform at alpha `≥ 1`
+records no layer. The layer's own alpha/transform are *not* folded into the
+recorded content — executors apply them at composite time (the ambient alpha
+stays folded into content as usual, so a layer primitive's `PrimState.alpha`
+is ignored by executors). Backs `Modifier.graphicsLayer`; mirrors
+`graphicsLayer { ... }`. -/
+def withGraphicsLayer (bounds : Rect) (g : GraphicsLayerScope) (body : DrawM α) :
+    DrawM α := do
+  let ctx ← read
+  let target := bounds.translate ctx.translation
+  let transform := g.toAffine target
+  if transform.isNone && g.alpha ≥ 1.0 then
     body
   else
-    let ctx ← read
     let sub ← IO.mkRef #[]
-    let r ← withReader (fun c => { c with sink := sub }) body
+    -- Under a transform, enclosing clips must scissor the *composite* (they
+    -- are target-coordinate regions — they apply where pixels land), not
+    -- crop the content pre-transform: strip the ambient clip state from the
+    -- content (the layer prim itself keeps it via `stamp`), so only clips
+    -- established inside the layer bake into the texture and rotate with it.
+    let r ← withReader (fun c =>
+      if transform.isSome then
+        { c with sink := sub
+                 clip := none, clipShape := none, clipPathShape := none, rounded := none }
+      else
+        { c with sink := sub }) body
     ctx.sink.modify
-      (·.push (.layer (stamp ctx) (bounds.translate ctx.translation) a (← sub.get)))
+      (·.push (.layer (stamp ctx) target { alpha := g.alpha, transform } (← sub.get)))
     return r
+
+/-- Record `body` as an offscreen layer composited once at alpha `a` (see
+`withGraphicsLayer` — this is its transform-free case). `a ≥ 1` records no
+layer. Backs `Modifier.alpha`; mirrors `graphicsLayer { alpha = a }`. -/
+def withLayer (bounds : Rect) (a : Float32) (body : DrawM α) : DrawM α :=
+  withGraphicsLayer bounds { alpha := a } body
 
 /-- Declare the size of the region `body` draws into (readable via
 `DrawScope.size`); the draw walk wraps `Modifier.drawBehind` blocks with the

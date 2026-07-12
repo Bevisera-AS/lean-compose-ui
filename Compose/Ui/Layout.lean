@@ -150,6 +150,10 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
         -- backends with render-to-texture composite once (`a ≥ 1` records
         -- nothing; the SDL backend flattens the layer by folding).
         DrawScope.withLayer (Rect.ofOffsetSize off sz) a cont
+      | .graphicsLayer g =>
+        -- Layer-boundary transform + group alpha over the wrapper bounds
+        -- (identity settings record nothing).
+        DrawScope.withGraphicsLayer (Rect.ofOffsetSize off sz) g cont
       | .drawBehind block =>
         DrawScope.translate off (DrawScope.withSize sz block)
         cont

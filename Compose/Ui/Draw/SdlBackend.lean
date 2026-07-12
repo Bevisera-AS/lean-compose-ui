@@ -13,10 +13,18 @@ the vertices, text runs draw through the renderer text engine, images draw
 through per-backend cached textures (`createTextureFromSurface` on first use of
 an `ImageBitmap.id`, never evicted — textures die with the renderer), and the
 resolved rect clip is applied to SDL's single render clip rect only when it
-changes between primitives. Layers flatten by folding their alpha into the content
-(the documented double-blend approximation; the GPU backend composites them
-offscreen instead). Works headless under the dummy video driver — the whole
-test suite runs on this backend.
+changes between primitives.
+
+Untransformed layers flatten by folding their alpha into the content (the
+documented double-blend approximation; the GPU backend composites all layers
+offscreen). *Transformed* layers render for real: content draws into a pooled
+render-target texture (cleared transparent — `.blend` onto transparency
+yields premultiplied texels), then one `textureAffine` composite maps the
+region's corners through the layer transform with `.blendPremultiplied` and
+the group alpha as color+alpha mod (scaling all four premultiplied channels).
+SDL clip state is per render target, so the clip tracker resets across every
+`setTarget`. Works headless under the dummy video driver — the whole test
+suite runs on this backend.
 -/
 
 namespace Compose.Draw
@@ -57,28 +65,91 @@ private def meshToGeometry (m : Mesh) (translation : Offset) (alpha : Float32) :
        texCoord := ⟨0, 0⟩ } : Sdl.Vertex)
   (verts, m.indices)
 
-/-- Per-backend image texture cache: `ImageBitmap.id` → the uploaded texture.
-Never evicted (id-keyed, images are immutable); the textures die with the
-renderer. -/
-def ImageTextures := IO.Ref (Array (Nat × Texture))
+/-- One pooled render-target texture for offscreen layers (64 px-quantized
+dimensions, like the GPU backend's layer pool). -/
+private structure TargetEntry where
+  tex : Texture
+  w : Int32
+  h : Int32
+  /-- Executed frames since last use (released past `poolTrimAge`). -/
+  idle : Nat := 0
+  /-- Claimed by an enclosing in-progress layer (nesting). -/
+  inUse : Bool := false
 
-/-- A fresh, empty image texture cache. -/
-def ImageTextures.new : IO ImageTextures :=
-  IO.mkRef #[]
+/-- Executed frames a pooled target texture may sit idle before release. -/
+private def poolTrimAge : Nat := 120
+
+/-- Per-backend texture caches: the image texture cache (`ImageBitmap.id` →
+the uploaded texture; never evicted — images are immutable and id-keyed) and
+the render-target pool for transformed layers. Both die with the renderer. -/
+structure Caches where private mk ::
+  private images : IO.Ref (Array (Nat × Texture))
+  private targets : IO.Ref (Array TargetEntry)
+
+/-- Fresh, empty caches. -/
+def Caches.new : IO Caches :=
+  return ⟨← IO.mkRef #[], ← IO.mkRef #[]⟩
 
 /-- The cached texture for `img`, uploading via `createTextureFromSurface` on
 first use (blend mode set once — the straight-alpha surface becomes a
 blendable texture). -/
-private def obtainTexture (r : Renderer) (cache : ImageTextures)
+private def obtainTexture (r : Renderer) (cache : Caches)
     (img : ImageBitmap) : IO Texture := do
-  let entries ← (cache : IO.Ref _).get
+  let entries ← cache.images.get
   for (id, tex) in entries do
     if id == img.id then
       return tex
   let tex ← r.createTextureFromSurface img.surface
   tex.setBlendMode .blend
-  (cache : IO.Ref _).modify (·.push (img.id, tex))
+  cache.images.modify (·.push (img.id, tex))
   return tex
+
+/-- Quantize a (whole-px, positive) layer extent up to a multiple of 64. -/
+private def quantize64 (x : Float32) : Int32 :=
+  let n := max 1 x.toInt32
+  (n + 63) / 64 * 64
+
+/-- Claim a pooled `.target` texture of at least `w × h` px (first-fit ≥ the
+quantized request, creating an `rgba32` target on miss). Returns the texture
+with its pool index — release with `releaseTarget` once composited; siblings
+then reuse it within the frame, so the pool's steady size is the layer
+nesting depth. -/
+private def acquireTarget (r : Renderer) (cache : Caches) (w h : Float32) :
+    IO (Texture × Nat) := do
+  let qw := quantize64 w
+  let qh := quantize64 h
+  let entries ← cache.targets.get
+  let mut found : Option (Nat × Texture) := none
+  let mut j := 0
+  for e in entries do
+    if found.isNone && !e.inUse && e.w ≥ qw && e.h ≥ qh then
+      found := some (j, e.tex)
+    j := j + 1
+  match found with
+  | some (i, tex) =>
+    cache.targets.modify (·.modify i ({ · with inUse := true, idle := 0 }))
+    return (tex, i)
+  | none =>
+    let tex ← r.createTexture .rgba32 .target qw qh
+    cache.targets.modify (·.push { tex, w := qw, h := qh, inUse := true })
+    return (tex, entries.size)
+
+/-- Return a pooled target to the free list. -/
+private def releaseTarget (cache : Caches) (i : Nat) : IO Unit :=
+  cache.targets.modify (·.modify i ({ · with inUse := false }))
+
+/-- Age the pool one executed frame and release entries idle past
+`poolTrimAge`. -/
+private def trimTargets (cache : Caches) : IO Unit := do
+  let mut kept : Array TargetEntry := #[]
+  for e in (← cache.targets.get) do
+    if e.inUse then
+      kept := kept.push e
+    else if e.idle + 1 ≥ poolTrimAge then
+      e.tex.destroy
+    else
+      kept := kept.push { e with idle := e.idle + 1 }
+  cache.targets.set kept
 
 /-- Apply `clip` to SDL's single render clip rect iff it differs from the
 currently applied one (tracked in `applied`). -/
@@ -95,61 +166,118 @@ private def emitMesh (r : Renderer) (m : Mesh) (origin : Offset) (alpha : Float3
   r.setDrawBlendMode .blend
   r.geometry none verts idx
 
-/-- Execute one primitive; `extraAlpha` is the flattened alpha of enclosing
-`layer`s. -/
+/-- Execute one primitive. `extraAlpha` is the flattened alpha of enclosing
+untransformed `layer`s; `shift` displaces record-time coordinates into the
+current render target's (zero on the main target; a layer region's negated
+origin inside its texture — always integral, since layer regions snap to
+whole px). -/
 private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
-    (images : ImageTextures) (extraAlpha : Float32) : Prim → IO Unit
+    (caches : Caches) (extraAlpha : Float32) (shift : Offset) : Prim → IO Unit
   | .rect st color topLeft size => do
-    applyClip r applied st.clip
+    applyClip r applied (st.clip.map (·.translate shift))
     let col := color.withAlpha (color.a * st.alpha * extraAlpha)
     let (cr, cg, cb, ca) := col.toBytes
-    let tl := topLeft + st.origin
+    let tl := topLeft + st.origin + shift
     r.setDrawBlendMode .blend
     r.setDrawColor cr cg cb ca
     r.fillRect (some ⟨tl.x, tl.y, size.width, size.height⟩)
   | .shape st spec cached => do
-    applyClip r applied st.clip
-    emitMesh r (cached.getD spec.tessellate) st.origin (st.alpha * extraAlpha)
+    applyClip r applied (st.clip.map (·.translate shift))
+    emitMesh r (cached.getD spec.tessellate) (st.origin + shift) (st.alpha * extraAlpha)
   | .mesh st m => do
-    applyClip r applied st.clip
-    emitMesh r m st.origin (st.alpha * extraAlpha)
+    applyClip r applied (st.clip.map (·.translate shift))
+    emitMesh r m (st.origin + shift) (st.alpha * extraAlpha)
   | .text st run => do
-    applyClip r applied st.clip
+    applyClip r applied (st.clip.map (·.translate shift))
     let c := run.color
     run.text.setColorFloat ⟨c.r, c.g, c.b, c.a * st.alpha * extraAlpha⟩
-    run.text.drawRenderer st.origin.x st.origin.y
+    run.text.drawRenderer (st.origin.x + shift.x) (st.origin.y + shift.y)
   | .image st img src dst sampling => do
-    applyClip r applied st.clip
-    let tex ← obtainTexture r images img
+    applyClip r applied (st.clip.map (·.translate shift))
+    let tex ← obtainTexture r caches img
     -- Per-draw (mod state persists per texture): the sampling mode and the
     -- resolved alpha.
     tex.setScaleMode (match sampling with | .nearest => .nearest | .linear => .linear)
+    tex.setColorModFloat 1 1 1
     tex.setAlphaModFloat (st.alpha * extraAlpha)
-    let d := dst.translate st.origin
+    let d := dst.translate (st.origin + shift)
     let toF (x : Rect) : Sdl.FRect := ⟨x.left, x.top, x.width, x.height⟩
     r.texture tex (src.map toF) (some (toF d))
-  | .layer _ _ alpha content => do
-    -- Flatten: fold the layer alpha into the content (today's double-blend
-    -- approximation of group opacity; DESIGN.md). The GPU backend composites
-    -- a real offscreen layer instead.
-    for p in content do
-      execPrim r applied images (extraAlpha * alpha) p
+  | .layer st bounds props content => do
+    match props.transform with
+    | none =>
+      -- Flatten: fold the layer alpha into the content (the documented
+      -- double-blend approximation of group opacity; DESIGN.md). The GPU
+      -- backend composites a real offscreen layer instead.
+      for p in content do
+        execPrim r applied caches (extraAlpha * props.alpha) shift p
+    | some t => do
+      -- Real offscreen layer: content region = bounds plus a 1 px AA margin,
+      -- snapped to whole px (the GPU encoder's rule).
+      let l := (bounds.left - 1).floor
+      let tp := (bounds.top - 1).floor
+      let rt := max ((bounds.right + 1).ceil) (l + 1)
+      let bt := max ((bounds.bottom + 1).ceil) (tp + 1)
+      let (w, h) := (rt - l, bt - tp)
+      let (tex, poolIdx) ← acquireTarget r caches w h
+      let prevTarget ← r.getTarget
+      let savedClip ← applied.get
+      r.setTarget (some tex)
+      -- Clip state is per render target, and pooled textures can carry a
+      -- stale clip from their previous use: reset both SDL and the tracker.
+      r.setClipRect none
+      applied.set none
+      -- Transparent clear (`clear` ignores blend mode): `.blend` content on
+      -- transparency yields premultiplied texels.
+      r.setDrawColor 0 0 0 0
+      r.clear
+      -- Content renders at full alpha; the group alpha (and any enclosing
+      -- flattened alpha) applies once at composite — transformed layers get
+      -- true group opacity on SDL.
+      for p in content do
+        execPrim r applied caches 1.0 (shift - ⟨l, tp⟩) p
+      r.setTarget prevTarget
+      -- The previous target's clip state was untouched (per-target): just
+      -- restore the tracker.
+      applied.set savedClip
+      applyClip r applied (st.clip.map (·.translate shift))
+      let a := props.alpha * extraAlpha
+      tex.setBlendMode .blendPremultiplied
+      tex.setColorModFloat a a a
+      tex.setAlphaModFloat a
+      -- Region corners mapped through the transform, in this target's
+      -- coordinates.
+      let map (p : Offset) : Offset := t.mapOffset p + shift
+      let o := map ⟨l, tp⟩
+      if t.snapComposite then
+        -- Near-integer pure translation: snap to the grid and copy 1:1 —
+        -- crisp (text stays byte-identical to unlayered rendering).
+        tex.setScaleMode .nearest
+        r.texture tex (some ⟨0, 0, w, h⟩) (some ⟨o.x.round, o.y.round, w, h⟩)
+      else
+        tex.setScaleMode .linear
+        let rgt := map ⟨rt, tp⟩
+        let dwn := map ⟨l, bt⟩
+        r.textureAffine tex (some ⟨0, 0, w, h⟩)
+          (some ⟨o.x, o.y⟩) (some ⟨rgt.x, rgt.y⟩) (some ⟨dwn.x, dwn.y⟩)
+      releaseTarget caches poolIdx
 
 /-- Execute a recorded display list against `r`, restoring an unclipped
-renderer afterwards. `images` is the backend's persistent texture cache
-(pass a fresh one for single-shot execution). -/
-def execute (r : Renderer) (list : DisplayList) (images : ImageTextures) :
+renderer afterwards. `caches` is the backend's persistent texture state
+(pass a fresh `Caches.new` for single-shot execution). -/
+def execute (r : Renderer) (list : DisplayList) (caches : Caches) :
     IO Unit := do
   let applied ← IO.mkRef (none : Option Rect)
   for p in list do
-    execPrim r applied images 1.0 p
+    execPrim r applied caches 1.0 .zero p
   applyClip r applied none
+  trimTargets caches
 
 /-- Package `renderer` as a `RenderBackend` (see `Backend.lean`): render =
 clear → execute → present (always presents — SDL_Renderer never blocks on
 acquire). -/
 def create (renderer : Renderer) : IO RenderBackend := do
-  let images ← ImageTextures.new
+  let images ← Caches.new
   return {
     kind := .sdlRenderer
     createTextEngine := Sdl.Ttf.createRendererTextEngine renderer
@@ -172,7 +300,7 @@ single-shot entry point low-level draw tests use (the app shell records via
 `DrawScope.record` and renders through its window's `RenderBackend` instead). -/
 def DrawScope.run (renderer : Renderer) (density : Density := {}) (body : DrawM α) : IO α := do
   let (list, a) ← DrawScope.record density body
-  SdlBackend.execute renderer list (← SdlBackend.ImageTextures.new)
+  SdlBackend.execute renderer list (← SdlBackend.Caches.new)
   return a
 
 end Compose.Draw

@@ -27,13 +27,17 @@ Lowering per primitive:
   `src` fraction; the sampling mode picks the nearest or linear sampler at
   replay). Texture uploads happen before the encode (`Gpu.resolveImages`,
   walk-order indices like text).
-- `layer` (alpha `< 1`) → an **offscreen layer pass**: the content encodes
-  into its own command list with every coordinate shifted to the layer's
-  origin (`LayerEnc`; packed buffers are shared across passes), and the
-  parent list gets one `.layer` composite command. The composite region is
-  the recorded bounds ∩ clip plus a 1 px AA margin, snapped to whole px so
-  pixel-grid reasoning (text snapping) holds inside. Alpha `≥ 1` flattens
-  inline. Layers are emitted innermost-first — the render order.
+- `layer` (alpha `< 1` or transformed) → an **offscreen layer pass**: the
+  content encodes into its own command list with every coordinate shifted to
+  the layer's origin (`LayerEnc`; packed buffers are shared across passes),
+  and the parent list gets one `.layer` composite command. The content region
+  is the recorded bounds (∩ clip when untransformed) plus a 1 px AA margin,
+  snapped to whole px so pixel-grid reasoning (text snapping) holds inside. A
+  composite transform is conjugated into the pass's coordinates and maps the
+  composite quad's corners (`Affine.snapComposite` translations snap to the
+  grid + nearest; others sample linearly); an enclosing clip scissors the
+  composite. Identity props flatten inline. Layers are emitted
+  innermost-first — the render order.
 
 Clips: `PrimState.clip` becomes an integer scissor per command with the same
 floor/ceil expansion as the SDL backend's clip rect, so the two backends clip
@@ -53,10 +57,16 @@ coordinates of the pass that composites it — the target, or an enclosing
 layer), the group alpha, and the commands rendered into its texture (their
 coordinates and scissors are layer-local). -/
 structure LayerEnc where
-  /-- Composite region (whole-px `Rect`). -/
+  /-- Content region (whole-px `Rect`, pre-transform — content renders
+  axis-aligned into the texture at this region's size). -/
   bounds : Rect
   /-- Group alpha applied once at composite. -/
   alpha : Float32
+  /-- Composite transform in the compositing pass's coordinates: the four
+  corners of `bounds` map through it (`none` = axis-aligned at `bounds`).
+  Near-integer pure translations arrive pre-snapped to the grid
+  (`Affine.snapComposite`) so the composite stays pixel-exact. -/
+  transform : Option Affine := none
   /-- The layer's own render-pass commands. -/
   cmds : Array DrawCmd
   deriving Repr, BEq, Inhabited
@@ -439,18 +449,32 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
     | some texIdx =>
       pushImage st texIdx img src (dst.translate (s.origin + shift))
         (sampling == .linear) (s.alpha * extraAlpha) (scissorAt s.clip shift)
-  | .layer s bounds alpha content =>
-    if alpha ≥ 1.0 then
+  | .layer s bounds props content =>
+    if props.transform.isNone && props.alpha ≥ 1.0 then
       -- No compositing needed: flatten inline (records don't produce these;
       -- hand-built lists may).
-      content.foldl (encodePrim texts images (extraAlpha * alpha) shift) st
+      content.foldl (encodePrim texts images (extraAlpha * props.alpha) shift) st
     else Id.run do
-      -- Composite region: bounds ∩ clip plus a 1 px AA margin, snapped to
-      -- whole px (kept ≥ 1×1 even when degenerate so the text-run walk stays
-      -- aligned with `resolveTexts`).
-      let r := match s.clip with
-        | some c => Rect.intersect bounds c
-        | none => bounds
+      -- Conjugate the record-time transform into this pass's coordinates
+      -- (`shift` is integral): pass = record + shift ⟹ T(shift)∘t∘T(−shift).
+      -- Near-integer pure translations snap to the grid and composite
+      -- nearest (crisp, parity-stable); everything else filters linearly.
+      let (transform, linear) := match props.transform with
+        | none => (none, false)
+        | some t =>
+          let t := (Affine.translation shift).comp (t.comp (Affine.translation (-shift)))
+          if t.snapComposite then
+            (some (Affine.translation ⟨t.tx.round, t.ty.round⟩), false)
+          else
+            (some t, true)
+      -- Content region: bounds plus a 1 px AA margin, snapped to whole px
+      -- (kept ≥ 1×1 even when degenerate so the text-run walk stays aligned
+      -- with `resolveTexts`). An enclosing clip crops untransformed content
+      -- directly; under a transform it scissors the *composite* instead
+      -- (target-coordinate clips apply to where pixels land).
+      let r := match s.clip, transform with
+        | some c, none => Rect.intersect bounds c
+        | _, _ => bounds
       let l := (r.left + shift.x - 1).floor
       let t := (r.top + shift.y - 1).floor
       let rt := max ((r.right + shift.x + 1).ceil) (l + 1)
@@ -460,9 +484,10 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
         { st with cmds := #[] }
       let idx := st.layers.size
       return { st with
-        cmds := saved.push (.layer idx (scissorAt s.clip shift))
+        cmds := saved.push (.layer idx linear (scissorAt s.clip shift))
         layers := st.layers.push
-          { bounds := ⟨l, t, rt, bt⟩, alpha := alpha * extraAlpha, cmds := st.cmds } }
+          { bounds := ⟨l, t, rt, bt⟩, alpha := props.alpha * extraAlpha
+            transform, cmds := st.cmds } }
 
 /-- Encode a display list against its resolved text runs and image texture
 indices (both in the same prim-walk order `Gpu.resolveTexts` /
@@ -502,27 +527,55 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   let g3 : Brush := .linearGradient #[(0, Color.red), (0.5, .green), (1, .blue)] ⟨0, 0⟩ ⟨40, 0⟩
   let r := encode #[.shape {} (.rrFill rr g2) none, .shape {} (.rrFill rr g3) none] #[]
   r.quadCount == 1 && r.meshIdxCount > 0
--- A full-alpha layer flattens inline (no offscreen pass).
+-- A full-alpha untransformed layer flattens inline (no offscreen pass).
 #guard
   let inner : Prim := .rect {} .red ⟨0, 0⟩ ⟨4, 4⟩
-  let r := encode #[.layer {} ⟨0, 0, 4, 4⟩ 1.0 #[inner]] #[]
+  let r := encode #[.layer {} ⟨0, 0, 4, 4⟩ {} #[inner]] #[]
   r.quadCount == 1 && r.cmds == #[.quads 0 1 none] && r.layers.isEmpty
 -- A translucent layer becomes an offscreen pass: bounds get the 1 px AA
 -- margin and whole-px snap, content coordinates shift to the layer origin,
 -- and the parent list holds one composite command.
 #guard
   let inner : Prim := .rect {} .red ⟨10, 10⟩ ⟨4, 4⟩
-  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ 0.5 #[inner]] #[]
-  r.layers.size == 1 && r.cmds == #[.layer 0 none]
+  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ { alpha := 0.5 } #[inner]] #[]
+  r.layers.size == 1 && r.cmds == #[.layer 0 false none]
     && r.layers[0]!.bounds == (⟨7, 7, 25, 25⟩ : Rect) && r.layers[0]!.alpha == 0.5
+    && r.layers[0]!.transform == none
     && r.layers[0]!.cmds == #[.quads 0 1 none]
     && r.quads == (encode #[.rect {} .red ⟨3, 3⟩ ⟨4, 4⟩] #[]).quads
 -- Nested layers emit innermost-first; the outer layer composites the inner.
 #guard
-  let inner : Prim := .layer {} ⟨0, 0, 4, 4⟩ 0.5 #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]
-  let r := encode #[.layer {} ⟨0, 0, 8, 8⟩ 0.25 #[inner]] #[]
-  r.layers.size == 2 && r.cmds == #[.layer 1 none]
-    && r.layers[1]!.cmds == #[.layer 0 none] && r.layers[0]!.alpha == 0.5
+  let inner : Prim := .layer {} ⟨0, 0, 4, 4⟩ { alpha := 0.5 } #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]
+  let r := encode #[.layer {} ⟨0, 0, 8, 8⟩ { alpha := 0.25 } #[inner]] #[]
+  r.layers.size == 2 && r.cmds == #[.layer 1 false none]
+    && r.layers[1]!.cmds == #[.layer 0 false none] && r.layers[0]!.alpha == 0.5
+-- A transformed layer records a pass even at alpha 1: the transform rides
+-- the LayerEnc, the composite samples linearly, and the enclosing clip does
+-- NOT crop the content region (it scissors the composite instead).
+#guard
+  let t := Affine.rotation 0.5
+  let st : PrimState := { clip := some ⟨0, 0, 10, 10⟩ }
+  let r := encode #[.layer st ⟨8, 8, 24, 24⟩ { transform := some t }
+    #[.rect {} .red ⟨10, 10⟩ ⟨4, 4⟩]] #[]
+  r.layers.size == 1 && r.cmds == #[.layer 0 true (some ⟨0, 0, 10, 10⟩)]
+    && r.layers[0]!.bounds == (⟨7, 7, 25, 25⟩ : Rect)
+    && r.layers[0]!.transform == some t && r.layers[0]!.alpha == 1
+-- A near-integer pure translation snaps to the grid and composites nearest.
+#guard
+  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩
+    { transform := some (.translation ⟨3.004, -2⟩) } #[.rect {} .red ⟨10, 10⟩ ⟨4, 4⟩]] #[]
+  r.cmds == #[.layer 0 false none]
+    && r.layers[0]!.transform == some (.translation ⟨3, -2⟩)
+-- Inside an enclosing layer pass the transform is conjugated by the pass
+-- shift: a 2× scale about (0,0) in record coordinates keeps (0,0) fixed, so
+-- in the inner pass (shifted by −(−1,−1) = +1) the fixed point is (1,1).
+#guard
+  let inner : Prim := .layer {} ⟨0, 0, 4, 4⟩
+    { transform := some (.scaling 2 2) } #[.rect {} .red ⟨0, 0⟩ ⟨2, 2⟩]
+  let r := encode #[.layer {} ⟨0, 0, 8, 8⟩ { alpha := 0.5 } #[inner]] #[]
+  r.layers.size == 2
+    && (r.layers[0]!.transform.getD .identity).mapOffset ⟨1, 1⟩ == ⟨1, 1⟩
+    && (r.layers[0]!.transform.getD .identity).mapOffset ⟨2, 1⟩ == ⟨3, 1⟩
 -- The ambient rounded clip becomes the quad's in-shader mask.
 #guard
   let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8
@@ -604,7 +657,7 @@ def EncodeResult.stats (r : EncodeResult) : FrameStats :=
   r.stats == { drawCalls := 1, quads := 2 }
 -- A translucent layer: its content draw + the composite draw, one layer.
 #guard
-  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ 0.5 #[.rect {} .red ⟨10, 10⟩ ⟨4, 4⟩]] #[]
+  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ { alpha := 0.5 } #[.rect {} .red ⟨10, 10⟩ ⟨4, 4⟩]] #[]
   r.stats == { drawCalls := 2, quads := 1, layers := 1 }
 -- Shadows and meshes count their own pipelines.
 #guard

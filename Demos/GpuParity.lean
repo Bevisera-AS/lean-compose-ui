@@ -74,7 +74,7 @@ private def compare (name : String) (r : Compose.Draw.Gpu.GpuRenderer) (bgra : B
   let (cr, cg, cb, ca) := clear.toBytes
   ren.setDrawColor cr cg cb ca
   ren.clear
-  SdlBackend.execute ren sdlList (← SdlBackend.ImageTextures.new)
+  SdlBackend.execute ren sdlList (← SdlBackend.Caches.new)
   let shot ← ren.readPixels
   let mut gpu : Array Px := Array.emptyWithCapacity (W * H)
   let mut sdl : Array Px := Array.emptyWithCapacity (W * H)
@@ -270,6 +270,37 @@ def run : IO UInt32 := do
   scene "images linear" ⟨0, 0, 0, 1⟩
     (DrawScope.drawImage rampImg ⟨20, 20, 100, 100⟩)
     (meanTol := 0.5) (grossTol := 0.005)
+
+  -- Transforms, exact angles (M-g): both backends render the identical layer
+  -- content into a texture and map the composite — at 90° / whole-pixel
+  -- translations the sampling lands on texel centers and the scene measures
+  -- byte-exact (shifted mean 0.000, max 0), group opacity inside the
+  -- transformed layer included (real offscreen on BOTH backends here).
+  scene "transform 90 + snap" ⟨0, 0, 0, 1⟩
+    (do
+      DrawScope.withGraphicsLayer ⟨10, 10, 50, 50⟩ { rotationZ := 90 } do
+        DrawScope.drawRect (.solid .red) ⟨10, 10⟩ ⟨20, 40⟩
+        DrawScope.drawRect (.solid .blue) ⟨30, 10⟩ ⟨20, 40⟩
+      DrawScope.withGraphicsLayer ⟨70, 10, 130, 50⟩ { alpha := 0.5, translationX := 2 } do
+        DrawScope.drawRect (.solid .red) ⟨70, 10⟩ ⟨40, 30⟩
+        DrawScope.drawRect (.solid .red) ⟨90, 10⟩ ⟨40, 30⟩
+      DrawScope.withGraphicsLayer ⟨150, 10, 190, 40⟩ { translationX := 6, translationY := 4 } do
+        DrawScope.drawRect (.solid .white) ⟨150, 10⟩ ⟨40, 30⟩
+        DrawScope.drawImage quadImg ⟨155, 15, 175, 35⟩ (sampling := .nearest))
+    (meanTol := 0.1) (grossTol := 0.001)
+
+  -- Transforms, fractional angles: linear-filtered diagonal edges — the two
+  -- bilinear samplers' phase differs on every mapped edge, so this is the
+  -- looser scene (interior agreement still pins geometry/color/alpha;
+  -- measured shifted mean ≈ 1.3, gross ≈ 0.7%).
+  scene "transform 30deg" ⟨0, 0, 0, 1⟩
+    (do
+      DrawScope.withGraphicsLayer ⟨20, 20, 90, 90⟩ { rotationZ := 30 } do
+        DrawScope.drawRoundRect (.solid .yellow) (RoundRect.circular ⟨25, 25, 85, 85⟩ 10)
+      DrawScope.withGraphicsLayer ⟨110, 20, 200, 100⟩
+          { rotationZ := -20, scaleX := 1.3, scaleY := 0.8 } do
+        DrawScope.drawRect (.gradient .red .blue ⟨110, 0⟩ ⟨200, 0⟩) ⟨115, 30⟩ ⟨80, 55⟩)
+    (meanTol := 1.5) (grossTol := 0.01)
 
   -- Text: same coordinates, two engine-bound handles. The GPU snaps the run
   -- origin to whole pixels (integers here, so no offset) and both rasterize

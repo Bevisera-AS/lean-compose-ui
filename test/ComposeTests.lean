@@ -6,6 +6,7 @@ import ComposeTests.MacroSuite
 import ComposeTests.Draw
 import ComposeTests.PathDraw
 import ComposeTests.Image
+import ComposeTests.Transform
 import ComposeTests.DisplayList
 import ComposeTests.Layout
 import ComposeTests.Scheduler
@@ -53,6 +54,7 @@ def main : IO UInt32 := do
   Harness.group "Draw" Draw.run
   Harness.group "PathDraw" PathDraw.run
   Harness.group "Image" Image.run
+  Harness.group "Transform" Transform.run
   Harness.group "DisplayList" DisplayList.run
   Harness.group "Layout" Layout.run
   Harness.group "Scheduler" Scheduler.run

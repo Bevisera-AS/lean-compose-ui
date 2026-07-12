@@ -310,7 +310,8 @@ drawText (run : TextRun) (topLeft)          -- via TextLayout.draw
 drawImage (img : ImageBitmap) (dst) (src := none) (sampling := .linear)
 clipRect (r : Rect) (body) ; clipRoundRect (rr) (body) ; clipPath (path) (body)
 translate (o : Offset) (body) ; withAlpha (a) (body)
-withLayer (bounds) (alpha) (body)          -- group opacity (records a layer)
+withGraphicsLayer (bounds) (g : GraphicsLayerScope) (body)  -- group alpha + transform
+withLayer (bounds) (alpha) (body)          -- its transform-free case
 ```
 
 `Brush` = `solid Color` | `linearGradient` (vertex colors make gradients free).
@@ -385,9 +386,39 @@ bitmap's intrinsic size clamped to constraints and places pixels per
 Parity in practice: nearest draws are byte-exact across backends; linear
 disagrees by ≤ 1 channel step (both gated in `gpu-parity`).
 
+**Transforms** (`graphicsLayer` — layer-boundary only, the Compose model):
+`Affine` (2×3, column convention, `#guard`ed inverse/compose/mapRect) lives
+in `Core/Geometry.lean`; `GraphicsLayerScope` (rotationZ°, scaleX/Y,
+translation px, fractional `transformOrigin`, group alpha) resolves at record
+time to `LayerProps { alpha, transform : Option Affine }` on `Prim.layer` —
+content records **untransformed**, executors render it axis-aligned into a
+texture at full quality and map only the composite (so SDL text and GPU SDF
+quads never rasterize rotated; the cost is texture-sampled transformed
+content). `Modifier.graphicsLayer` compares structurally, so animating a
+parameter redraws without re-tessellating (meshes key on the untransformed
+shape). Clip semantics: clips *inside* the layer bake into the texture and
+rotate with it; *enclosing* clips are stripped from the recorded content and
+scissor the composite instead (they are target-coordinate regions — they
+apply where pixels land); enclosing *rounded* clips degrade to that rect
+scissor. On SDL a transformed layer becomes a **real offscreen target**
+(pooled 64 px-quantized `.target` textures; content on a transparent clear
+yields premultiplied texels; `textureAffine` composites with
+`.blendPremultiplied` and color+alpha mod as the group alpha — so
+transformed layers get true group opacity on SDL too, and the clip tracker
+resets across every `setTarget` since SDL clip state is per-target).
+Untransformed alpha layers keep the SDL flatten. On the GPU the conjugated
+transform rides `LayerEnc` and maps the composite quad's corners.
+`Affine.snapComposite` picks the sampling: near-integer pure translations
+snap to the grid and composite nearest (crisp text, byte-exact parity —
+settled animations land here automatically); everything else places
+fractionally through the linear sampler. **Hit testing is not transformed**
+(documented on the modifier; `invert?` is ready for the follow-up). Parity in
+practice: 90°/snapped composites are byte-exact across backends; fractional
+angles differ only in bilinear edge phase (mean ≈ 1.3, gated).
+
 **The IR**: each `Prim` (crisp `rect` / `shape` with a `ShapeSpec` +
-optional cached mesh / raw `mesh` / `text` run / `image` / `layer`) is
-stamped with a
+optional cached mesh / raw `mesh` / `text` run / `image` / `layer` with
+`LayerProps`) is stamped with a
 `PrimState` — accumulated translation, resolved rect-clip intersection, the
 innermost rounded clip, folded alpha — so executors need no stacks.
 `ShapeSpec` holds the fully resolved tessellation inputs and doubles as the
@@ -404,8 +435,10 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   `Tessellate.lean` is **pure** and heavily `#guard`-tested (rounded-rect
   fill/stroke, circle fill/stroke, arc stroke, line, polygon clip of a circle
   against a round-rect for bounded ripples; adaptive `⌈π/2 · r / 2px⌉`
-  segments per corner, min 4). Layers flatten by folding alpha (documented
-  double-blend approximation, pinned by a pixel test); elevation shadows
+  segments per corner, min 4). Untransformed layers flatten by folding alpha
+  (documented double-blend approximation, pinned by a pixel test);
+  *transformed* layers render to real pooled offscreen targets and composite
+  via `textureAffine` (see **Transforms**); elevation shadows
   tessellate as rings 3σ inward and outward of the silhouette whose vertex
   alphas sample the same analytic shadow function the GPU evaluates
   (`roundRectShadow`).
@@ -419,9 +452,10 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   run at the rounded run origin (the resize text-shimmer fix); `rrShadow` →
   instanced **analytic Gaussian shadows** (Evan Wallace's closed-form erf
   integral, twinned in `Sdf.lean`); `layer` prims → **real offscreen layer
-  passes** (group opacity composites once — no double blend), textures from
-  a per-window pool (64 px-quantized, first-fit, trimmed after 120 idle
-  frames). One shared `Gpu.Device` per process; MSL shaders compiled at
+  passes** (group opacity composites once — no double blend; a transform maps
+  the composite quad's corners, nearest when `snapComposite` else linear),
+  textures from a per-window pool (64 px-quantized, first-fit, trimmed after
+  120 idle frames). One shared `Gpu.Device` per process; MSL shaders compiled at
   runtime; premultiplied blending with non-premultiplied vertex colors
   (interpolation matches SDL's). Clips are per-command integer scissors with
   SDL's exact floor/ceil expansion, plus an in-shader rounded mask on every

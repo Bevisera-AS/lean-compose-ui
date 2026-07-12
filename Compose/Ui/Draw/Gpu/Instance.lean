@@ -166,8 +166,10 @@ inductive DrawCmd where
   /-- `count` shadow instances starting at instance `first`. -/
   | shadows (first count : Nat) (scissor : Option Sdl.Rect)
   /-- Composite offscreen layer `idx` (an index into the frame's layer table)
-  as one premultiplied textured quad at the layer's bounds. -/
-  | layer (idx : Nat) (scissor : Option Sdl.Rect)
+  as one premultiplied textured quad at the layer's (transform-mapped)
+  bounds. `linear` picks the sampler: transformed composites filter linearly,
+  axis-aligned 1:1 ones stay nearest (pixel-snapped). -/
+  | layer (idx : Nat) (linear : Bool) (scissor : Option Sdl.Rect)
   /-- `count` image indices starting at index `first`, sampling the frame's
   image texture `tex` (an index into the resolved image table) with the
   linear or nearest sampler. Rides the layer pipeline — image textures hold

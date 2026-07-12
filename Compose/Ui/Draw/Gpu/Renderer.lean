@@ -265,8 +265,10 @@ private def acquireLayerTextures (r : GpuRenderer) (fmt : TextureFormat)
 
 /-- The packed composite quads of the frame's layers: layer `i` owns vertices
 `4i..4i+3` and indices `6i..6i+5` (so `DrawCmd.layer i` draws at a fixed
-offset), positioned at the layer bounds with UVs covering the content's
-fraction of the pooled texture and the group alpha in the vertex color. -/
+offset), positioned at the layer bounds' corners mapped through the composite
+transform (a transformed layer renders axis-aligned into its texture; only
+this quad rotates/scales), with UVs covering the content's fraction of the
+pooled texture and the group alpha in the vertex color. -/
 private def layerComposites (layers : Array LayerEnc)
     (texs : Array (Texture × UInt32 × UInt32)) : ByteArray × ByteArray := Id.run do
   let mut verts := ByteArray.empty
@@ -278,11 +280,12 @@ private def layerComposites (layers : Array LayerEnc)
         (l.bounds.width / Float32.ofNat tw.toNat, l.bounds.height / Float32.ofNat th.toNat)
       | none => (1, 1)
     let b := l.bounds
+    let m := l.transform.getD .identity
     let c := Color.white.withAlpha l.alpha
-    verts := packTexVertex verts ⟨b.left, b.top⟩ ⟨0, 0⟩ c
-    verts := packTexVertex verts ⟨b.right, b.top⟩ ⟨u, 0⟩ c
-    verts := packTexVertex verts ⟨b.left, b.bottom⟩ ⟨0, v⟩ c
-    verts := packTexVertex verts ⟨b.right, b.bottom⟩ ⟨u, v⟩ c
+    verts := packTexVertex verts (m.mapOffset ⟨b.left, b.top⟩) ⟨0, 0⟩ c
+    verts := packTexVertex verts (m.mapOffset ⟨b.right, b.top⟩) ⟨u, 0⟩ c
+    verts := packTexVertex verts (m.mapOffset ⟨b.left, b.bottom⟩) ⟨0, v⟩ c
+    verts := packTexVertex verts (m.mapOffset ⟨b.right, b.bottom⟩) ⟨u, v⟩ c
     let base := UInt32.ofNat (4 * i)
     for j in ([0, 1, 2, 1, 3, 2] : List UInt32) do
       idx := pushU32 idx (base + j)
@@ -309,11 +312,11 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
   let mut kind : Nat := 9
   let mut scissor : Option Sdl.Rect := none
   let mut atlas : Option Nat := none
-  let mut boundLayer : Option Nat := none
+  let mut boundLayer : Option (Nat × Bool) := none
   let mut boundImage : Option (Nat × Bool) := none
   for cmd in cmds do
     let want := match cmd with
-      | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ s
+      | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ _ s
       | .image _ _ _ _ s => s
     if want != scissor then
       rp.setScissor (clampScissor (want.getD full) w h)
@@ -356,7 +359,7 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
           rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
         kind := 3
       rp.drawPrimitives 4 (UInt32.ofNat count) 0 (UInt32.ofNat first)
-    | .layer idx _ =>
+    | .layer idx linear _ =>
       if kind != 4 then
         rp.bindPipeline r.pipelines.layer
         if let some s := bufs.layerV then
@@ -365,10 +368,11 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
           rp.bindIndexBuffer { buffer := s.buffer } .u32
         kind := 4
         boundLayer := none
-      if boundLayer != some idx then
+      if boundLayer != some (idx, linear) then
         if let some (tex, _, _) := layerTexs[idx]? then
-          rp.bindFragmentSamplers 0 #[{ texture := tex, sampler := r.sampler }]
-          boundLayer := some idx
+          rp.bindFragmentSamplers 0
+            #[{ texture := tex, sampler := if linear then r.samplerLinear else r.sampler }]
+          boundLayer := some (idx, linear)
       rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
     | .image first count tex linear _ =>
       -- Rides the layer pipeline (premultiplied sample × alpha) with its own

@@ -39,6 +39,18 @@ structure PrimState where
   alpha : Float32 := 1.0
   deriving Repr, BEq, Inhabited
 
+/-- Composite-time properties of an offscreen layer: the group alpha and an
+optional affine transform, both applied once when the layer's texture is
+composited (`transform` in render-target coordinates — the layer-boundary
+transform model, like Compose's `graphicsLayer`). `effect` (blur) joins in a
+later wave. -/
+structure LayerProps where
+  /-- Group alpha applied once at composite. -/
+  alpha : Float32 := 1
+  /-- Composite transform (`none` = axis-aligned at the layer bounds). -/
+  transform : Option Affine := none
+  deriving Repr, BEq, Inhabited
+
 /-- A recorded text run: the live `Ttf.Text` handle (backends draw through
 it — it must not be mutated between record and execute, which holds because
 both happen in the same frame on the main thread) plus the resolved paint.
@@ -73,12 +85,15 @@ inductive Prim where
   coordinates). Executors resolve `img.id` through their texture caches. -/
   | image (st : PrimState) (img : ImageBitmap) (src : Option Rect) (dst : Rect)
       (sampling : Sampling)
-  /-- An offscreen layer: `content` composited once at `alpha` (fixes group
-  opacity double-blending on backends with render-to-texture; the SDL
-  backend flattens by folding `alpha` into the content — today's behavior).
-  `bounds` is the composite region in render-target coordinates. Recorded
-  from milestone M-c on; the constructor exists so the IR is stable. -/
-  | layer (st : PrimState) (bounds : Rect) (alpha : Float32) (content : Array Prim)
+  /-- An offscreen layer: `content` composited once with `props` (group
+  alpha — fixing double-blending on backends with render-to-texture — and an
+  optional affine transform; content renders axis-aligned into the layer at
+  full quality, only the composite maps). `bounds` is the *content* region in
+  render-target coordinates, pre-transform. The SDL backend flattens
+  untransformed layers by folding the alpha into the content (the documented
+  double-blend approximation) and renders transformed layers to a real
+  offscreen target. -/
+  | layer (st : PrimState) (bounds : Rect) (props : LayerProps) (content : Array Prim)
 
 instance : Inhabited Prim := ⟨.mesh {} .empty⟩
 
@@ -174,8 +189,12 @@ partial def Prim.brief : Prim → String
     s!"image {st.brief} id={img.id} {img.width}x{img.height} dst={fmtRect dst}"
       ++ (match src with | some s => s!" src={fmtRect s}" | none => "")
       ++ (if sampling == .nearest then " nearest" else "")
-  | .layer st bounds alpha content =>
-    s!"layer {st.brief} bounds={fmtRect bounds} a={fmtF alpha}\n"
+  | .layer st bounds props content =>
+    s!"layer {st.brief} bounds={fmtRect bounds} a={fmtF props.alpha}"
+      ++ (match props.transform with
+          | some t => s!" t=[{fmtF t.a},{fmtF t.b},{fmtF t.c},{fmtF t.d},{fmtF t.tx},{fmtF t.ty}]"
+          | none => "")
+      ++ "\n"
       ++ String.intercalate "\n" (content.map (fun p => "  " ++ p.brief)).toList
 
 #guard (Prim.rect {} .red ⟨0, 0⟩ ⟨10, 20⟩).brief == "rect @(0,0) #ff0000ff tl=(0,0) sz=10x20"
@@ -216,13 +235,18 @@ partial def Prim.bounds : Prim → Option Rect
     | none => some .zero          -- no vertices: draws nothing
   | .text st _ => st.clip
   | .image st _ _ dst _ => some (clipBounds st (dst.translate st.origin))
-  | .layer st _ _ content => Id.run do
+  | .layer st _ props content => Id.run do
     let mut acc : Option Rect := none
     for p in content do
       match p.bounds with
       | none => return st.clip    -- unknown content extent
       | some b => acc := some ((acc.getD b).union b)
-    return some (clipBounds st (acc.getD .zero))
+    let u := acc.getD .zero
+    -- A composite transform maps where the pixels land (AABB of the mapped
+    -- content union); the enclosing clip still bounds the composite.
+    return some (clipBounds st (match props.transform with
+      | some t => t.mapRect u
+      | none => u))
 
 /-- Union damage bounds of a recorded frame: `some r` = the frame only touches
 `r` (degenerate when nothing draws); `none` = unknown — repaint everything.
@@ -242,8 +266,10 @@ def DisplayList.bounds (list : DisplayList) : Option Rect := Id.run do
           (.rrFill (RoundRect.ofRect ⟨10, 10, 30, 30⟩) (.solid .red)) none).bounds
         == some ⟨109, 9, 131, 31⟩
 #guard (Prim.mesh {} .empty).bounds == some .zero
-#guard (Prim.layer {} ⟨0, 0, 50, 50⟩ 0.5 #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { alpha := 0.5 } #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds
         == some ⟨10, 10, 30, 30⟩
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { transform := some (.translation ⟨5, 0⟩) }
+          #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds == some ⟨15, 10, 35, 30⟩
 #guard DisplayList.bounds #[.rect {} .red ⟨0, 0⟩ ⟨10, 10⟩, .rect {} .blue ⟨40, 40⟩ ⟨10, 10⟩]
         == some ⟨0, 0, 50, 50⟩
 #guard DisplayList.bounds #[] == some .zero

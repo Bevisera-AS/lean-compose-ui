@@ -250,6 +250,10 @@ inductive DrawElem where
   /-- Multiply the layer alpha for the content and everything inner. Mirrors
   `Modifier.alpha`. -/
   | alpha (a : Float32)
+  /-- Composite the content (and everything inner) through an offscreen
+  graphics layer: rotate/scale/translate about a pivot plus group alpha,
+  applied at composite time. Mirrors `Modifier.graphicsLayer`. -/
+  | graphicsLayer (g : Draw.GraphicsLayerScope)
   /-- Arbitrary drawing behind the content at the wrapper's coordinates.
   Mirrors `Modifier.drawBehind`. -/
   | drawBehind (block : Draw.DrawM Unit)
@@ -270,6 +274,7 @@ instance : BEq DrawElem where
     | .shadow e s c, .shadow e' s' c' => e == e' && s == s' && c == c'
     | .clip s, .clip s' => s == s'
     | .alpha a, .alpha a' => a == a'
+    | .graphicsLayer g, .graphicsLayer g' => g == g'
     | _, _ => false
 
 #guard (DrawElem.background .red .rectangle) == (DrawElem.background .red .rectangle)
@@ -504,6 +509,25 @@ def clip (shape : Shape) (m : Modifier := {}) : Modifier :=
 `Modifier.alpha`. -/
 def alpha (a : Float32) (m : Modifier := {}) : Modifier :=
   m.append (.draw (.alpha a))
+
+/-- Composite content and children through an offscreen graphics layer:
+rotation (`rotationZ`, degrees clockwise), scale, and pixel translation about
+`transformOrigin` (a fraction of the element bounds; `⟨0.5, 0.5⟩` = center),
+plus group `alpha` — all applied once at composite time, so content renders
+axis-aligned at full quality and only the composite maps. Identity settings
+record nothing. Compared structurally, so animating a parameter invalidates
+exactly this element's draw.
+
+**Hit testing is not transformed** (a documented M-g limitation): pointer
+input still targets the untransformed bounds — fine for spinners and
+press-scale effects, wrong for large static rotations of interactive
+content. Mirrors `Modifier.graphicsLayer { ... }`. -/
+def graphicsLayer (rotationZ : Float32 := 0) (scaleX : Float32 := 1)
+    (scaleY : Float32 := 1) (translationX : Float32 := 0) (translationY : Float32 := 0)
+    (alpha : Float32 := 1) (transformOrigin : Offset := ⟨0.5, 0.5⟩)
+    (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.graphicsLayer
+    { alpha, rotationZ, scaleX, scaleY, translationX, translationY, transformOrigin }))
 
 /-- Draw behind the content with full `DrawM` access. Mirrors
 `Modifier.drawBehind`. -/

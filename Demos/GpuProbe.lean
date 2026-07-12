@@ -30,6 +30,9 @@ Probed, in order:
 9. Images (M-f): `ImageBitmap` upload through the process texture cache,
    textured quads on the layer pipeline (nearest scaling, source rects,
    ambient alpha).
+10. Graphics-layer transforms (M-g): rotated/scaled layers as mapped
+   composite quads (linear sampler), group opacity inside a transformed
+   layer, whole-pixel translation snapping, rotated text.
 
 Exit code is the number of failed checks; informational verdicts (cycle
 semantics, y-convention, winding) print as notes for the M-b design.
@@ -442,6 +445,56 @@ private def probeImages (r : Compose.Draw.Gpu.GpuRenderer)
   note s!"frame stats: {stats.brief}"
   check "frame stats: three image quads" (stats.images == 3)
 
+/-- ⑪ graphics-layer transforms (M-g): rotated/scaled layers composite as
+mapped textured quads (the linear sampler), group opacity holds inside a
+transformed layer, whole-pixel translations snap crisp, and rotated text
+survives the layer pass. -/
+private def probeTransforms (r : Compose.Draw.Gpu.GpuRenderer)
+    (engine : Sdl.Ttf.TextEngine) (font : Sdl.Ttf.Font)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  IO.println "⑪ graphics-layer transforms → mapped composites → offscreen pixels"
+  let text ← engine.createText font "Hi"
+  let (list, _) ← DrawScope.record {} do
+    -- 90° rotation about the layer center: left red / right blue → top/bottom
+    DrawScope.withGraphicsLayer ⟨10, 10, 50, 50⟩ { rotationZ := 90 } do
+      DrawScope.drawRect (.solid .red) ⟨10, 10⟩ ⟨20, 40⟩
+      DrawScope.drawRect (.solid .blue) ⟨30, 10⟩ ⟨20, 40⟩
+    -- group opacity inside a transformed layer: overlapping red rects at 50 %
+    DrawScope.withGraphicsLayer ⟨70, 10, 130, 50⟩ { alpha := 0.5, translationX := 2 } do
+      DrawScope.drawRect (.solid .red) ⟨70, 10⟩ ⟨40, 30⟩
+      DrawScope.drawRect (.solid .red) ⟨90, 10⟩ ⟨40, 30⟩
+    -- whole-pixel translation: snaps to the grid, composites nearest (crisp)
+    DrawScope.withGraphicsLayer ⟨140, 10, 160, 30⟩ { translationX := 5, translationY := 3 } do
+      DrawScope.drawRect (.solid .white) ⟨140, 10⟩ ⟨20, 20⟩
+    -- rotated text: renders axis-aligned into the layer, composite rotates
+    DrawScope.withGraphicsLayer ⟨10, 60, 90, 100⟩ { rotationZ := 90 } do
+      DrawScope.drawText { text, string := "Hi", color := .white } ⟨15, 70⟩
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 200 120
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (x y : Nat) =>
+    let o := (y * 200 + x) * 4
+    if bgra then (bytes.get! (o+2), bytes.get! (o+1), bytes.get! o, bytes.get! (o+3))
+    else (bytes.get! o, bytes.get! (o+1), bytes.get! (o+2), bytes.get! (o+3))
+  check "rot90: top half red (@30,15)" (px 30 15 == (255, 0, 0, 255))
+  check "rot90: bottom half blue (@30,45)" (px 30 45 == (0, 0, 255, 255))
+  check "rot90: outside the layer clear (@55,30)" (px 55 30 == (0, 0, 0, 255))
+  let single := px 80 25
+  let overlap := px 100 25
+  check s!"transformed layer keeps group opacity (single r={single.1}, overlap r={overlap.1})"
+    (single == overlap && 120 ≤ single.1.toNat && single.1.toNat ≤ 136)
+  check "snap: first covered column crisp (@146,20)" (px 146 20 == (255, 255, 255, 255))
+  check "snap: column left of it clear (@143,20)" (px 143 20 == (0, 0, 0, 255))
+  -- The run (15..35, 70..86) maps through the 90° rotation about (50,80) to
+  -- ≈ (44..60, 45..65) — scan the mapped box, not the recorded one.
+  let mut textHits := 0
+  for x in [40:65] do
+    for y in [40:70] do
+      if (px x y).1 > 100 then textHits := textHits + 1
+  check s!"rotated text landed in the mapped region ({textHits} lit px)" (textHits > 10)
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: four layers" (stats.layers == 4)
+
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
@@ -492,6 +545,7 @@ def run : IO UInt32 := do
   probeLayersShadows gpuRenderer swapchainFmt
   probePaths gpuRenderer swapchainFmt
   probeImages gpuRenderer swapchainFmt
+  probeTransforms gpuRenderer engine font swapchainFmt
   probePresentLoop dev window windowPipe ibuf
 
   dev.releaseWindow window

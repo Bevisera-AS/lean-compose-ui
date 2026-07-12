@@ -268,9 +268,10 @@ private def lowerShape : ShapeSpec → Option QuadInstance
                size := ⟨width, (p1.y - p0.y).abs⟩, bg0 := c, bg1 := c }
       else none
     | _ => none
-  -- Paths always tessellate: the band-sweep mesh IS the path rasterization on
-  -- both backends (a stencil-cover GPU path is noted future work, DESIGN.md).
-  | .pathFill .. => none
+  -- Paths always tessellate: the band-sweep mesh (fills, clipped fills, and
+  -- stroke outlines alike) IS the path rasterization on both backends (a
+  -- stencil-cover GPU path is noted future work, DESIGN.md).
+  | .pathFill .. | .pathFillClipped .. | .pathStroke .. => none
   -- Handled by dedicated `encodePrim` arms (never reaches `lowerShape`).
   | .circleFillClipped .. | .arcStroke .. | .rrShadow .. => none
 

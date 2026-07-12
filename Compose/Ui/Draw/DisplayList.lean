@@ -114,6 +114,10 @@ private def fmtColor (c : Color) : String :=
 private def fmtRR (rr : RoundRect) : String :=
   s!"rr{fmtRect rr.rect}r{fmtF rr.topLeft.x}"
 
+private def fmtRule : FillRule → String
+  | .nonZero => "nonZero"
+  | .evenOdd => "evenOdd"
+
 /-- One-line golden form of a brush. -/
 def Brush.brief : Brush → String
   | .solid c => fmtColor c
@@ -130,8 +134,17 @@ def ShapeSpec.brief : ShapeSpec → String
   | .line p0 p1 w b => s!"line {fmtOff p0}→{fmtOff p1} w={fmtF w} {b.brief}"
   | .rrShadow rr off blur c => s!"rrShadow {fmtRR rr} off={fmtOff off} blur={fmtF blur} {fmtColor c}"
   | .pathFill p b =>
-    let rule := match p.fillRule with | .nonZero => "nonZero" | .evenOdd => "evenOdd"
-    s!"pathFill v={p.verbs.size} {fmtRect p.bounds} {rule} {b.brief}"
+    s!"pathFill v={p.verbs.size} {fmtRect p.bounds} {fmtRule p.fillRule} {b.brief}"
+  | .pathFillClipped p c b =>
+    s!"pathFillClipped v={p.verbs.size} {fmtRect p.bounds} {fmtRule p.fillRule}"
+      ++ s!" clip=v{c.verbs.size}{fmtRect c.bounds} {b.brief}"
+  | .pathStroke p s b =>
+    let cap := match s.cap with | .butt => "" | .round => " cap=round" | .square => " cap=square"
+    let join := match s.join with | .miter => "" | .round => " join=round" | .bevel => " join=bevel"
+    let dash := match s.dash with
+      | some (ints, phase) => s!" dash=[{ints.size}]+{fmtF phase}"
+      | none => ""
+    s!"pathStroke v={p.verbs.size} {fmtRect p.bounds} w={fmtF s.width}{cap}{join}{dash} {b.brief}"
 
 /-- One-line golden form of a primitive's ambient state (omitting defaults). -/
 def PrimState.brief (st : PrimState) : String :=

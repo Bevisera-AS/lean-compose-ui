@@ -48,6 +48,15 @@ def PathVerb.points : PathVerb → Array Offset
   | .cubicTo c1 c2 p => #[c1, c2, p]
   | .close => #[]
 
+/-- The verb displaced by `d` (all points, controls included). -/
+def PathVerb.translate (v : PathVerb) (d : Offset) : PathVerb :=
+  match v with
+  | .moveTo p => .moveTo (p + d)
+  | .lineTo p => .lineTo (p + d)
+  | .quadTo c p => .quadTo (c + d) (p + d)
+  | .cubicTo c1 c2 p => .cubicTo (c1 + d) (c2 + d) (p + d)
+  | .close => .close
+
 /-- How winding numbers classify interior points. Mirrors
 `androidx.compose.ui.graphics.PathFillType`. -/
 inductive FillRule where
@@ -74,6 +83,11 @@ structure Path where
   verbs : Array PathVerb := #[]
   fillRule : FillRule := .nonZero
   deriving Repr, BEq, Inhabited
+
+/-- The path displaced by `d` — how the recorder moves an ambient clip path
+between coordinate frames (`DrawScope.clipPath`). -/
+def Path.translate (path : Path) (d : Offset) : Path :=
+  { path with verbs := path.verbs.map (·.translate d) }
 
 /-! ## Builder -/
 
@@ -377,6 +391,13 @@ open PathM
 #guard (Path.build do moveTo ⟨0, 10⟩; quadTo ⟨10, -10⟩ ⟨20, 10⟩).bounds
         == (⟨0, -10, 20, 10⟩ : Rect)
 #guard (Path.mk #[] .nonZero).bounds == Rect.zero
+
+-- Translate displaces every point (controls included) and keeps the rule.
+#guard (Path.build (fillRule := .evenOdd) do
+          moveTo ⟨1, 2⟩; quadTo ⟨3, 4⟩ ⟨5, 6⟩; close).translate ⟨10, 20⟩
+        == Path.build (fillRule := .evenOdd) do
+          moveTo ⟨11, 22⟩; quadTo ⟨13, 24⟩ ⟨15, 26⟩; close
+#guard ((Path.build do addRect ⟨0, 0, 10, 10⟩).translate ⟨5, 5⟩).bounds == (⟨5, 5, 15, 15⟩ : Rect)
 
 -- Flatten: lines pass through; close marks the contour; single points drop.
 #guard (Path.build do moveTo ⟨0, 0⟩; lineTo ⟨4, 0⟩; lineTo ⟨4, 4⟩; close).flatten

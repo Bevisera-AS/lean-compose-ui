@@ -16,6 +16,14 @@ emit one trapezoid (two triangles) per inside span under the path's fill rule
 from outside grows a 1-px alpha-0 quad on its unfilled side (the same software
 anti-aliasing convention as `Tessellate.lean`'s silhouette feather ring).
 
+The same sweep also clips: `fillContours` optionally carries a second contour
+set (the clip path) whose edges accumulate into a *separate* winding counter —
+a span is inside iff the path's rule accepts its winding **and** the clip's
+rule accepts the clip winding. That makes `clipPath`-ed path fills exact on
+both backends (`ShapeSpec.pathFillClipped`), the `circleFillClipped`
+precedent. With a clip, feather segments are first split at crossings with the
+other set's edges so each piece classifies sidedness at its own midpoint.
+
 Holes, even-odd vs non-zero, and self-intersection all fall out of the winding
 accumulation. Numeric edge cases (near-parallel edges, ε-close events)
 degrade to a sliver band or a misplaced 1-px feather — never a crash or an
@@ -40,11 +48,13 @@ private def norm (v : Offset) : Offset :=
 private def perp (d : Offset) : Offset := ⟨d.y, -d.x⟩
 
 /-- One sweep edge: endpoints with `a.y < b.y` plus the original direction's
-winding contribution (`+1` downward, `-1` upward). -/
+winding contribution (`+1` downward, `-1` upward). `clipSrc` marks edges that
+came from the clip path (they accumulate into the clip's winding counter). -/
 private structure SweepEdge where
   a : Offset
   b : Offset
   w : Int
+  clipSrc : Bool := false
   deriving Inhabited
 
 /-- The edge's x at height `y` (callers keep `y` within `[a.y, b.y]`). -/
@@ -53,15 +63,16 @@ private def SweepEdge.xAt (e : SweepEdge) (y : Float32) : Float32 :=
 
 /-- Non-horizontal edges of closed contours, y-sorted per edge. Horizontal
 segments carry no winding (the feather pass still anti-aliases them). -/
-private def contourEdges (contours : Array (Array Offset)) : Array SweepEdge := Id.run do
+private def contourEdges (contours : Array (Array Offset)) (clipSrc : Bool := false) :
+    Array SweepEdge := Id.run do
   let mut out : Array SweepEdge := #[]
   for pts in contours do
     let n := pts.size
     for i in [0:n] do
       let p := pts[i]!
       let q := pts[(i + 1) % n]!
-      if p.y < q.y then out := out.push ⟨p, q, 1⟩
-      else if q.y < p.y then out := out.push ⟨q, p, -1⟩
+      if p.y < q.y then out := out.push { a := p, b := q, w := 1, clipSrc }
+      else if q.y < p.y then out := out.push { a := q, b := p, w := -1, clipSrc }
   return out
 
 /-- Band-boundary ys: every edge endpoint plus every proper pairwise edge
@@ -91,17 +102,26 @@ private def eventYs (edges : Array SweepEdge) : Array Float32 := Id.run do
       out := out.push y
   return out
 
-/-- Fill an arbitrary path with `color` via the band sweep described in the
-module doc, feathered 1 px on the outside. Total: degenerate input (no area)
-returns `Mesh.empty`. Gradient brushes ride on top via `shapeMesh` (the
-tessellator emits a vertex per trapezoid corner, so per-vertex colors
-interpolate across the interior like every other shape). -/
-def pathFillMesh (path : Path) (color : Color) (tol : Float32 := 0.25) : Mesh := Id.run do
-  let contours := (path.flatten tol).map (·.1)
-  let edges := contourEdges contours
-  if edges.isEmpty then return .empty
+/-- Fill already-flat closed `contours` under `rule` via the band sweep
+described in the module doc, feathered 1 px on the outside; an optional
+`clip` contour set (with its own fill rule) restricts the fill exactly via a
+second winding accumulator. The workhorse behind `pathFillMesh`,
+`pathFillMeshClipped`, and the stroker's outline fill (`pathStrokeMesh`).
+Degenerate input (no area, or a clip with no area) returns `Mesh.empty`. -/
+def fillContours (contours : Array (Array Offset)) (rule : FillRule)
+    (clip : Option (Array (Array Offset) × FillRule)) (color : Color) : Mesh := Id.run do
+  let pEdges := contourEdges contours
+  if pEdges.isEmpty then return .empty
+  let cEdges := match clip with
+    | some (cc, _) => contourEdges cc (clipSrc := true)
+    | none => #[]
+  if clip.isSome && cEdges.isEmpty then return .empty
+  let edges := pEdges ++ cEdges
   let events := eventYs edges
-  let inside := path.fillRule.isInside
+  let hasClip := clip.isSome
+  let clipRule := (clip.map (·.2)).getD .nonZero
+  let insideW (wp wc : Int) : Bool :=
+    rule.isInside wp && (!hasClip || clipRule.isInside wc)
   let mut vs : Array DVertex := #[]
   let mut is : Array Int32 := #[]
   let quad (a b c d : Offset) (ca cb cc cd : Color) (vs : Array DVertex)
@@ -117,11 +137,12 @@ def pathFillMesh (path : Path) (color : Color) (tol : Float32 := 0.25) : Mesh :=
     let midY := (y0 + y1) / 2
     let actives := (edges.filter fun e => e.a.y <= midY && midY <= e.b.y)
       |>.qsort (fun e f => e.xAt midY < f.xAt midY)
-    let mut w : Int := 0
+    let mut wp : Int := 0
+    let mut wc : Int := 0
     for ai in [0:actives.size] do
       let e := actives[ai]!
-      w := w + e.w
-      if inside w && ai + 1 < actives.size then
+      if e.clipSrc then wc := wc + e.w else wp := wp + e.w
+      if insideW wp wc && ai + 1 < actives.size then
         let f := actives[ai + 1]!
         let xl0 := e.xAt y0
         let xr0 := f.xAt y0
@@ -143,22 +164,70 @@ def pathFillMesh (path : Path) (color : Color) (tol : Float32 := 0.25) : Mesh :=
             (vs, is) := quad ⟨xl0, y0⟩ ⟨xr0, y0⟩ ⟨xr1, y1⟩ ⟨xl1, y1⟩
               color color color color vs is
   if is.isEmpty then return .empty
-  -- feather: a 1-px transparent apron on each boundary segment's unfilled side
+  -- feather: a 1-px transparent apron on each boundary piece's unfilled side.
+  -- Both contour sets feather (the clip's edges anti-alias where they crop the
+  -- fill); with a clip, segments are first split at proper crossings with the
+  -- *other* set's edges so a segment only partly on the boundary feathers
+  -- exactly the boundary part (and never paints outside the clipped region).
+  let insidePt (p : Offset) : Bool :=
+    rule.isInside (polyWinding contours p) &&
+      (match clip with | some (cc, rc) => rc.isInside (polyWinding cc p) | none => true)
   let fc := color.withAlpha 0
-  for pts in contours do
-    let n := pts.size
-    for i in [0:n] do
-      let a := pts[i]!
-      let b := pts[(i + 1) % n]!
-      let nrm := perp (norm (b - a))
-      if nrm != (⟨0, 0⟩ : Offset) then
-        let mid := Offset.lerp a b 0.5
-        let plusIn := inside (polyWinding contours (mid + nrm * (0.05 : Float32)))
-        let minusIn := inside (polyWinding contours (mid - nrm * (0.05 : Float32)))
-        if plusIn != minusIn then
-          let out := if plusIn then -nrm else nrm
-          (vs, is) := quad a b (b + out) (a + out) color color fc fc vs is
+  let featherSets : Array (Array (Array Offset) × Array (Array Offset)) :=
+    match clip with
+    | some (cc, _) => #[(contours, cc), (cc, contours)]
+    | none => #[(contours, #[])]
+  for (set, others) in featherSets do
+    for pts in set do
+      let n := pts.size
+      for i in [0:n] do
+        let a := pts[i]!
+        let b := pts[(i + 1) % n]!
+        let d1 := b - a
+        let nrm := perp (norm d1)
+        if nrm != (⟨0, 0⟩ : Offset) then
+          let mut ts : Array Float32 := #[]
+          for opts in others do
+            let on := opts.size
+            for oi in [0:on] do
+              let d2 := opts[(oi + 1) % on]! - opts[oi]!
+              let denom := d1.x * d2.y - d1.y * d2.x
+              if denom.abs > 1e-9 then
+                let r := opts[oi]! - a
+                let t := (r.x * d2.y - r.y * d2.x) / denom
+                let u := (r.x * d1.y - r.y * d1.x) / denom
+                -- u is closed: a cut where the other path's *vertex* touches
+                -- this segment (a T-junction) is still a boundary transition
+                if 0 < t && t < 1 && 0 <= u && u <= 1 then
+                  ts := ts.push t
+          let mut t0 : Float32 := 0
+          for t1 in (ts.qsort (· < ·)).push 1 do
+            if t1 - t0 > 1e-6 then
+              let pa := Offset.lerp a b t0
+              let pb := Offset.lerp a b t1
+              let mid := Offset.lerp pa pb 0.5
+              let plusIn := insidePt (mid + nrm * (0.05 : Float32))
+              let minusIn := insidePt (mid - nrm * (0.05 : Float32))
+              if plusIn != minusIn then
+                let out := if plusIn then -nrm else nrm
+                (vs, is) := quad pa pb (pb + out) (pa + out) color color fc fc vs is
+              t0 := t1
   return { vertices := vs, indices := is }
+
+/-- Fill an arbitrary path with `color`, feathered 1 px on the outside.
+Gradient brushes ride on top via `shapeMesh` (the tessellator emits a vertex
+per trapezoid corner, so per-vertex colors interpolate across the interior
+like every other shape). -/
+def pathFillMesh (path : Path) (color : Color) (tol : Float32 := 0.25) : Mesh :=
+  fillContours ((path.flatten tol).map (·.1)) path.fillRule none color
+
+/-- Fill `path` restricted to the interior of `clip` (each under its own fill
+rule) — one band sweep over both edge sets, exact on both backends. Backs
+`ShapeSpec.pathFillClipped` (recorded by `drawPath` fills inside
+`DrawScope.clipPath`). -/
+def pathFillMeshClipped (path clip : Path) (color : Color) (tol : Float32 := 0.25) : Mesh :=
+  fillContours ((path.flatten tol).map (·.1)) path.fillRule
+    (some ((clip.flatten tol).map (·.1), clip.fillRule)) color
 
 /-! ## Test oracle helpers
 
@@ -185,6 +254,17 @@ def meshContains (m : Mesh) (p : Offset) (opaqueOnly : Bool := false) : Bool := 
         return true
   return false
 
+/-- Whether `p` sits within `margin` of any segment of any contour (test
+helper — samples this close to an edge are in the intentional AA band). -/
+def nearContours (contours : Array (Array Offset)) (p : Offset)
+    (margin : Float32 := 1.5) : Bool := Id.run do
+  for pts in contours do
+    let n := pts.size
+    for i in [0:n] do
+      if Offset.distToSegment p pts[i]! pts[(i + 1) % n]! < margin then
+        return true
+  return false
+
 /-- The tessellator-vs-oracle agreement test: over an integer+½ grid across
 the path's inflated bounds, every sample ≥ 1.5 px away from all flattened
 edges classifies identically — inside samples land in an opaque triangle,
@@ -202,41 +282,34 @@ def pathFillAgreesWithOracle (path : Path) (tol : Float32 := 0.25) : Bool := Id.
   for iy in [0:h] do
     for ix in [0:w] do
       let p : Offset := ⟨x0 + ix.toFloat32 + 0.5, y0 + iy.toFloat32 + 0.5⟩
-      let mut near := false
-      for pts in contours do
-        let n := pts.size
-        for i in [0:n] do
-          if Offset.distToSegment p pts[i]! pts[(i + 1) % n]! < 1.5 then
-            near := true
-      if !near then
+      if !nearContours contours p then
         if path.contains p tol then
           if !meshContains m p (opaqueOnly := true) then return false
         else
           if meshContains m p then return false
   return true
 
-/-! ## Provisional stroke sampling (replaced by the real stroker in M-e2) -/
-
-/-- `(point, unit normal)` samples of a flattened polyline: each point's
-normal averages its adjacent segments' perpendiculars (endpoints of an open
-line take their single segment's). Feeds `strokeSilhouette` for the
-provisional `drawPath` stroke. -/
-def polylineNormals (pts : Array Offset) (closed : Bool) : Array (Offset × Offset) := Id.run do
-  let n := pts.size
-  if n < 2 then return #[]
-  let mut out : Array (Offset × Offset) := Array.emptyWithCapacity n
-  for i in [0:n] do
-    let d1 := if i > 0 then norm (pts[i]! - pts[i - 1]!)
-      else if closed then norm (pts[i]! - pts[n - 1]!) else ⟨0, 0⟩
-    let d2 := if i + 1 < n then norm (pts[i + 1]! - pts[i]!)
-      else if closed then norm (pts[0]! - pts[i]!) else ⟨0, 0⟩
-    let d := norm (d1 + d2)
-    let dir := if d == (⟨0, 0⟩ : Offset) then (if d2 == (⟨0, 0⟩ : Offset) then d1 else d2) else d
-    out := out.push (pts[i]!, perp dir)
-  return out
-
-#guard polylineNormals #[⟨0, 0⟩, ⟨10, 0⟩] false == #[(⟨0, 0⟩, ⟨0, -1⟩), (⟨10, 0⟩, ⟨0, -1⟩)]
-#guard (polylineNormals #[⟨5, 5⟩] false).isEmpty
+/-- `pathFillAgreesWithOracle` for the clipped sweep: samples ≥ 1.5 px from
+*both* paths' edges must classify as `path.contains ∧ clip.contains`. The grid
+covers the path's inflated bounds (the mesh cannot exist elsewhere), so
+feather leaking outside the clip would fail the outside check. -/
+def pathFillClippedAgreesWithOracle (path clip : Path) (tol : Float32 := 0.25) : Bool := Id.run do
+  let m := pathFillMeshClipped path clip .red tol
+  let contours := ((path.flatten tol) ++ (clip.flatten tol)).map (·.1)
+  let b := (path.bounds).inflate 2
+  let x0 := b.left.floor
+  let y0 := b.top.floor
+  let w := ((b.right - x0).toFloat.ceil.toUInt64.toNat) + 1
+  let h := ((b.bottom - y0).toFloat.ceil.toUInt64.toNat) + 1
+  for iy in [0:h] do
+    for ix in [0:w] do
+      let p : Offset := ⟨x0 + ix.toFloat32 + 0.5, y0 + iy.toFloat32 + 0.5⟩
+      if !nearContours contours p then
+        if path.contains p tol && clip.contains p tol then
+          if !meshContains m p (opaqueOnly := true) then return false
+        else
+          if meshContains m p then return false
+  return true
 
 /-! ## `#guard` corpus
 
@@ -317,5 +390,44 @@ private def blobPath : Path := Path.build do
 #guard (pathFillMesh (Path.build (PathM.moveTo ⟨5, 5⟩)) .red).isEmpty
 open PathM in
 #guard (pathFillMesh (Path.build do moveTo ⟨0, 0⟩; lineTo ⟨10, 10⟩; close) .red).isEmpty
+
+/-! ### Clipped fills -/
+
+open PathM in
+private def clipSquare : Path := Path.build do addRect ⟨0, 0, 10, 10⟩
+
+-- A rect clipped by an overlapping rect fills exactly the intersection.
+#guard
+  let m := pathFillMeshClipped (Path.build do PathM.addRect ⟨4, 4, 20, 8⟩) clipSquare .red
+  meshContains m ⟨6, 6⟩ (opaqueOnly := true) &&
+    !meshContains m ⟨12, 6⟩ &&      -- inside path, outside clip
+    !meshContains m ⟨2, 2⟩          -- inside clip, outside path
+-- A clip entirely disjoint from the path clips everything out.
+#guard (pathFillMeshClipped (Path.build do PathM.addRect ⟨20, 20, 30, 30⟩) clipSquare .red).isEmpty
+-- A degenerate clip (no area) clips everything out.
+#guard (pathFillMeshClipped rectPath (Path.build (PathM.moveTo ⟨5, 5⟩)) .red).isEmpty
+-- The feather split: a path edge crossing the clip boundary must not paint
+-- outside the clipped region — the whole mesh stays inside the intersected
+-- bounds + 1 px.
+#guard
+  let m := pathFillMeshClipped (Path.build do PathM.addRect ⟨0, 0, 6, 12⟩) clipSquare .red
+  match m.bounds with
+  | none => false
+  | some b => (b.intersect ((⟨0, 0, 6, 10⟩ : Rect).inflate 1)) == b
+-- An even-odd ring as the *clip*: the fill shows in the ring, not the hole.
+#guard
+  let m := pathFillMeshClipped (Path.build do PathM.addRect ⟨0, 0, 30, 30⟩)
+    (ringPath .evenOdd) .red
+  meshContains m ⟨4, 15⟩ (opaqueOnly := true) && !meshContains m ⟨15, 15⟩
+
+-- Clipped oracle agreement (path rule × clip shape combinations).
+#guard pathFillClippedAgreesWithOracle rectPath clipSquare
+#guard pathFillClippedAgreesWithOracle (starPath .nonZero)
+        (Path.build do PathM.addRect ⟨0, 0, 26, 40⟩)
+#guard pathFillClippedAgreesWithOracle (starPath .evenOdd)
+        (Path.build do PathM.addRect ⟨10, 4, 40, 30⟩)
+#guard pathFillClippedAgreesWithOracle blobPath (ringPath .evenOdd)
+#guard pathFillClippedAgreesWithOracle (ringPath .nonZero)
+        (Path.build do PathM.addOval ⟨2, 2, 28, 28⟩)
 
 end Compose.Draw

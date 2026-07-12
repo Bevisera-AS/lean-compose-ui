@@ -192,12 +192,12 @@ def run : IO UInt32 := do
         DrawScope.drawCircle (.solid .yellow) ⟨35, 92⟩ 40)
     (meanTol := 0.5) (grossTol := 0.005)
 
-  -- Vector paths (M-e1): fills and the provisional stroke lower to the SAME
-  -- band-sweep/silhouette mesh on both backends, so geometry, winding, and
-  -- color bugs show at full magnitude. What remains is the two triangle
-  -- rasterizers' sub-pixel phase on thin AA geometry (feather ramps, bands at
-  -- curve extrema — observed shifted mean ≈ 1.1), the same family as the
-  -- mesh-drawn "gradients" (1.6) and "aa shapes" (2.0) scenes.
+  -- Vector paths (M-e1/M-e2): fills and strokes lower to the SAME band-sweep
+  -- mesh on both backends, so geometry, winding, and color bugs show at full
+  -- magnitude. What remains is the two triangle rasterizers' sub-pixel phase
+  -- on thin AA geometry (feather ramps, bands at curve extrema — observed
+  -- shifted mean ≈ 1.1), the same family as the mesh-drawn "gradients" (1.6)
+  -- and "aa shapes" (2.0) scenes.
   scene "paths" ⟨0, 0, 0, 1⟩
     (do
       DrawScope.drawPath (.solid .yellow) (Path.build (fillRule := .evenOdd) do
@@ -219,7 +219,27 @@ def run : IO UInt32 := do
         PathM.close)
       DrawScope.drawPath (.solid .white) (Path.build do
         PathM.moveTo ⟨10, 90⟩; PathM.lineTo ⟨40, 112⟩; PathM.lineTo ⟨70, 90⟩)
-        (.stroke 3))
+        (.stroke { width := 3 }))
+    (meanTol := 1.5) (grossTol := 0.01)
+
+  -- Path strokes + clipPath (M-e2): dashed round caps, miter joins, and the
+  -- dual-winding clipped fill — again identical meshes on both backends, so
+  -- only rasterizer sub-pixel phase remains (same tolerance family as the
+  -- "paths" scene above; strokes are almost all thin AA geometry).
+  scene "path strokes" ⟨0, 0, 0, 1⟩
+    (do
+      DrawScope.drawPath (.solid .white) (Path.build do
+        PathM.moveTo ⟨10, 20⟩; PathM.lineTo ⟨50, 55⟩; PathM.lineTo ⟨90, 20⟩)
+        (.stroke { width := 7, cap := .round, join := .round, dash := some (#[16, 9], 4) })
+      DrawScope.drawPath (.solid .yellow) (Path.build do
+        PathM.addRect ⟨15, 75, 60, 105⟩)
+        (.stroke { width := 6, join := .miter })
+      DrawScope.drawPath (.gradient .red .blue ⟨105, 0⟩ ⟨160, 0⟩) (Path.build do
+        PathM.moveTo ⟨105, 95⟩; PathM.quadTo ⟨132, 55⟩ ⟨160, 95⟩)
+        (.stroke { width := 5, cap := .square, join := .bevel })
+      DrawScope.clipPath (Path.build do PathM.addOval ⟨140, 10, 210, 70⟩) do
+        DrawScope.drawPath (.solid .green) (Path.build do
+          PathM.addRect ⟨120, 5, 215, 45⟩))
     (meanTol := 1.5) (grossTol := 0.01)
 
   -- Text: same coordinates, two engine-bound handles. The GPU snaps the run

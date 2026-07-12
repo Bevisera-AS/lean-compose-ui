@@ -36,6 +36,16 @@ inductive DrawStyle where
   | stroke (width : Float32)
   deriving Repr, BEq, Inhabited
 
+/-- Fill vs. stroke for `drawPath`. Unlike the closed-shape `DrawStyle`, a path
+stroke carries the full `Stroke` description (caps, joins, miter limit,
+dashing): `.stroke { width := 3, cap := .round }`. -/
+inductive PathStyle where
+  /-- Fill the path's interior under its fill rule. -/
+  | fill
+  /-- Stroke the path with the given `Stroke`. -/
+  | stroke (s : Stroke)
+  deriving Repr, BEq, Inhabited
+
 /-- The ambient drawing state threaded through a draw pass. Mirrors the receiver
 state of Compose's `DrawScope` (transform + clip + layer alpha + density). -/
 structure DrawContext where
@@ -50,6 +60,11 @@ structure DrawContext where
   `clipRoundRect` for shape-aware geometric clipping at record time (`none` =
   rectangular clip only). -/
   clipShape : Option RoundRect := none
+  /-- Current path clip in **render-target** coordinates (`none` = no path
+  clip), set by `clipPath`: `drawPath` fills translate it back into their
+  local frame and record `ShapeSpec.pathFillClipped` (exact on both
+  backends); all other content degrades to the rectangular bounds clip. -/
+  clipPathShape : Option Path := none
   /-- Current rounded clip shape in render-target coordinates, stamped onto
   every recorded primitive (`PrimState.rounded`) for backends that clip
   exactly. -/
@@ -165,19 +180,21 @@ def drawLine (brush : Brush) (p0 p1 : Offset) (width : Float32) : DrawM Unit := 
   countTessellation
   drawShape (.line p0 p1 width brush)
 
-/-- Draw an arbitrary vector `path`. Fill records a `ShapeSpec.pathFill`
-(exact band-sweep tessellation on both backends); stroke is provisional —
-each flattened contour stroked as a feathered polyline (butt caps, averaged
-normals at vertices) until the real stroker lands (M-e2). Mirrors
+/-- Draw an arbitrary vector `path` — both styles rasterize through the exact
+band-sweep tessellation on both backends. A fill inside `clipPath` records
+`ShapeSpec.pathFillClipped` (the clip translated into this draw's local
+frame); a stroke carries its full `Stroke` (caps/joins/miter/dash) and, like
+all non-path-fill content, degrades to the clip's bounds rectangle. Mirrors
 `DrawScope.drawPath`. -/
-def drawPath (brush : Brush) (path : Path) (style : DrawStyle := .fill) : DrawM Unit := do
+def drawPath (brush : Brush) (path : Path) (style : PathStyle := .fill) : DrawM Unit := do
+  let ctx ← read
   countTessellation
   match style with
-  | .fill => drawShape (.pathFill path brush)
-  | .stroke w =>
-    let mesh := path.flatten.foldl (init := Mesh.empty) fun acc (pts, closed) =>
-      acc.append (shapeMesh brush fun c => strokeSilhouette (polylineNormals pts closed) w c closed)
-    drawMesh mesh
+  | .fill =>
+    match ctx.clipPathShape with
+    | some clip => drawShape (.pathFillClipped path (clip.translate (-ctx.translation)) brush)
+    | none => drawShape (.pathFill path brush)
+  | .stroke s => drawShape (.pathStroke path s brush)
 
 /-! ## Scoping combinators -/
 
@@ -202,6 +219,20 @@ def clipRoundRect (rr : RoundRect) (body : DrawM α) : DrawM α := do
   let ctx ← read
   clipRect rr.rect <| withReader
     (fun c => { c with clipShape := some rr, rounded := some (rr.translate ctx.translation) })
+    body
+
+/-- Clip to an arbitrary vector path. Sets the rectangular bounds clip to the
+path's bounds AND exposes the path (render-target coordinates) so `drawPath`
+fills inside clip to it *exactly* on both backends
+(`ShapeSpec.pathFillClipped` — one band sweep, two winding accumulators); all
+other content degrades to the bounds clip (documented DESIGN.md limitation,
+like the SDL rounded-clip story). A nested `clipPath` replaces the ambient
+path (only the innermost is exact); bounds rectangles still intersect.
+Mirrors `DrawScope.clipPath`. -/
+def clipPath (path : Path) (body : DrawM α) : DrawM α := do
+  let ctx ← read
+  clipRect path.bounds <| withReader
+    (fun c => { c with clipPathShape := some (path.translate ctx.translation) })
     body
 
 /-- Translate the coordinate system by `o` for the duration of `body`. Mirrors

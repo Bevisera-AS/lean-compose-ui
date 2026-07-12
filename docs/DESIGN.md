@@ -305,9 +305,9 @@ report conservative device-space damage bounds per prim and per frame
 ```lean
 drawRect / drawRoundRect / drawCircle / drawLine / drawArc
   (brush : Brush) (style : Fill | Stroke width) …
-drawPath (brush) (path : Path) (style)      -- arbitrary vector paths (M-e1)
+drawPath (brush) (path : Path) (style : PathStyle)  -- .fill | .stroke (s : Stroke)
 drawText (run : TextRun) (topLeft)          -- via TextLayout.draw
-clipRect (r : Rect) (body) ; clipRoundRect (rr) (body)
+clipRect (r : Rect) (body) ; clipRoundRect (rr) (body) ; clipPath (path) (body)
 translate (o : Offset) (body) ; withAlpha (a) (body)
 withLayer (bounds) (alpha) (body)          -- group opacity (records a layer)
 ```
@@ -330,8 +330,36 @@ rules, and self-intersection all fall out of the winding accumulation; the
 worst numeric failure is a sliver band, not a crash. The mesh IS the path
 rasterization on **both** backends (`ShapeSpec.pathFill` rides `Prim.shape`
 and the node mesh cache; GPU `lowerShape` sends it to the mesh pipeline — a
-stencil-cover GPU path is possible future work). `drawPath`'s stroke style is
-provisional (per-contour feathered polyline) until the real stroker (M-e2).
+stencil-cover GPU path is possible future work).
+
+**Path strokes** (`PathStroke.lean`): `drawPath`'s `.stroke` carries a full
+`Stroke` — width, `StrokeCap` (butt/round/square), `StrokeJoin`
+(miter-with-limit/round/bevel), optional `(intervals, phase)` dashing.
+Stroke-to-fill, Skia style: dashes split by pure arc length first
+(`dashSplit`), then `strokeOutline` emits consistently-wound convex pieces
+(one rect per segment, one wedge/arc fan per join, cap pieces) and the bag
+fills through the same band sweep under non-zero — overlap at tight joins and
+abutting dashes resolves by winding, interior seams get no feather, and a bad
+join degrades to a local shape error, never a broken mesh.
+
+**`clipPath`** sets the rectangular bounds clip AND exposes the path
+(render-target coordinates, re-anchored per draw across `translate`); path
+*fills* inside record `ShapeSpec.pathFillClipped` — the same sweep run over
+both edge sets with two winding accumulators, so path-clipped fills are exact
+on **both** backends (the `circleFillClipped` precedent; feather segments are
+split where the two boundaries cross so the apron never paints outside the
+clipped region). All other content under `clipPath` degrades to the bounds
+clip, and a nested `clipPath` replaces the ambient path (innermost exact) —
+both documented limitations of the recorder's flat clip state.
+
+**SDL geometry snapping**: SDL's software rasterizer truncates
+`RenderGeometry` vertices to integer coordinates internally, which turns the
+tessellators' sub-pixel band seams into dropped/doubled pixel rows. The SDL
+backend therefore rounds every mesh vertex to the nearest pixel after the
+origin translation (`meshToGeometry`) — the closest integer approximation of
+true pixel-center coverage, gap-free by construction, and measurably tighter
+GPU↔SDL parity than raw truncation. The GPU backend keeps the exact
+fractional mesh.
 
 **The IR**: each `Prim` (crisp `rect` / `shape` with a `ShapeSpec` +
 optional cached mesh / raw `mesh` / `text` run / `layer`) is stamped with a

@@ -4,13 +4,15 @@ import ComposeTests.Harness
 /-!
 # PathDraw group (`test/ComposeTests/PathDraw.lean`)
 
-Headless pixel + IR coverage for vector paths (M-e1): `drawPath` fills through
-the band-sweep tessellator on the software renderer (donut hole, fill-rule
-discrimination, gradients, ambient translate/clip/alpha), the recorded
-`pathFill` brief golden, the provisional polyline stroke, and a seeded
-random-polygon fuzz of the tessellator against the geometric oracle
-(`pathFillAgreesWithOracle` — the same agreement the compile-time corpus in
-`PathFill.lean` pins for hand-picked shapes).
+Headless pixel + IR coverage for vector paths (M-e1 fills, M-e2 strokes +
+`clipPath`): `drawPath` fills and strokes through the band-sweep tessellator
+on the software renderer (donut hole, fill-rule discrimination, gradients,
+ambient translate/clip/alpha, stroked outlines, dashed round caps, exact
+path-clipped fills), the recorded brief goldens, and seeded random-polygon
+fuzz of the plain and clipped tessellators against the geometric oracle
+(`pathFillAgreesWithOracle` / `pathFillClippedAgreesWithOracle` — the same
+agreement the compile-time corpus in `PathFill.lean` pins for hand-picked
+shapes).
 -/
 
 namespace Tests.PathDraw
@@ -102,30 +104,81 @@ def run : IO Unit := do
     check "path translate: untranslated origin untouched"
       (colorNear (← shot.readPixel 10 10) 0 0 0)
 
-  -- 5. provisional stroke: a polyline stroke marks the boundary, not the interior
+  -- 5. stroke: a closed outline covers the boundary (miter corners included)
+  -- and leaves the interior open
   do
     let ren ← mkRen 128 128
     clearBlack ren
     DrawScope.run ren {} do
-      drawPath (.solid Color.white) (Path.build do addRect ⟨20, 20, 80, 80⟩) (.stroke 4)
+      drawPath (.solid Color.white) (Path.build do addRect ⟨20, 20, 80, 80⟩)
+        (.stroke { width := 4 })
     let shot ← ren.readPixels
     check "path stroke: edge covered" (colorNear (← shot.readPixel 50 20) 255 255 255)
+    check "path stroke: miter corner covered" (colorNear (← shot.readPixel 19 19) 255 255 255)
     check "path stroke: interior open" (colorNear (← shot.readPixel 50 50) 0 0 0)
 
-  -- 6. IR: fill records a pathFill shape spec (brief golden); stroke records
-  -- a mesh prim (no spec until the real stroker)
+  -- 6. dashed round-cap stroke: on-runs paint, gaps stay clear
+  do
+    let ren ← mkRen 128 128
+    clearBlack ren
+    DrawScope.run ren {} do
+      drawPath (.solid Color.white) (Path.build do moveTo ⟨20, 60⟩; lineTo ⟨100, 60⟩)
+        (.stroke { width := 6, cap := .round, dash := some (#[20, 20], 0) })
+    let shot ← ren.readPixels
+    check "dash: first on-run painted" (colorNear (← shot.readPixel 30 60) 255 255 255)
+    check "dash: gap clear" (colorNear (← shot.readPixel 50 60) 0 0 0)
+    check "dash: second on-run painted" (colorNear (← shot.readPixel 70 60) 255 255 255)
+    check "dash: stroke thickness reaches off-axis" (colorNear (← shot.readPixel 30 58) 255 255 255)
+
+  -- 7. clipPath: a path fill clips exactly to a circular path (not just its
+  -- bounds rectangle)
+  do
+    let ren ← mkRen 128 128
+    clearBlack ren
+    DrawScope.run ren {} do
+      clipPath (Path.build do addOval ⟨30, 30, 90, 90⟩) do
+        drawPath (.solid Color.red) (Path.build do addRect ⟨0, 0, 128, 128⟩)
+    let shot ← ren.readPixels
+    check "clipPath: circle interior filled" (colorNear (← shot.readPixel 60 60) 255 0 0)
+    check "clipPath: inside bounds, outside circle clear"
+      (colorNear (← shot.readPixel 35 35) 0 0 0)
+    check "clipPath: outside bounds clear" (colorNear (← shot.readPixel 20 60) 0 0 0)
+
+  -- 8. clipPath across translate: the clip is captured in render-target
+  -- coordinates and re-anchored into the draw's local frame
+  do
+    let ren ← mkRen 128 128
+    clearBlack ren
+    DrawScope.run ren {} do
+      clipPath (Path.build do addRect ⟨40, 40, 80, 80⟩) do
+        translate ⟨40, 40⟩ do
+          drawPath (.solid Color.red) (Path.build do addRect ⟨0, 0, 60, 60⟩)
+    let shot ← ren.readPixels
+    check "clipPath+translate: intersection filled" (colorNear (← shot.readPixel 60 60) 255 0 0)
+    check "clipPath+translate: drawn but clipped region clear"
+      (colorNear (← shot.readPixel 90 60) 0 0 0)
+
+  -- 9. IR: the recorded shape specs (brief goldens) for a clipped fill and a
+  -- fully-dressed stroke
   do
     let (list, _) ← DrawScope.record {} do
       drawPath (.solid .red) (Path.build (fillRule := .evenOdd) do addRect ⟨2, 2, 22, 14⟩)
-      drawPath (.solid .white) (Path.build do addRect ⟨0, 0, 10, 10⟩) (.stroke 2)
-    checkEq "pathFill brief" (list.map (·.brief)).toList
+      clipPath (Path.build do addRect ⟨4, 4, 20, 20⟩) do
+        drawPath (.solid .red) (Path.build (fillRule := .evenOdd) do addRect ⟨2, 2, 22, 14⟩)
+      drawPath (.solid .white) (Path.build do addRect ⟨0, 0, 10, 10⟩)
+        (.stroke { width := 2, cap := .round, join := .bevel, dash := some (#[4, 2], 1) })
+    checkEq "path brief goldens" (list.map (·.brief)).toList
       [ "shape @(0,0) pathFill v=5 (2,2,22,14) evenOdd #ff0000ff"
-      , "mesh @(0,0) v=16 t=24" ]
+      , "shape @(0,0) clip=(4,4,20,20) pathFillClipped v=5 (2,2,22,14) evenOdd"
+          ++ " clip=v5(4,4,20,20) #ff0000ff"
+      , "shape @(0,0) pathStroke v=5 (0,0,10,10) w=2 cap=round join=bevel dash=[2]+1 #ffffffff" ]
 
-  -- 7. fuzz: random 8-gons (both rules) agree with the winding oracle
+  -- 10. fuzz: random 8-gons (both rules) agree with the winding oracle,
+  -- plain and clipped by a fixed square
   do
     let mut seed : UInt32 := 0xC0FFEE
     let next : UInt32 → UInt32 := fun s => s * 1664525 + 1013904223
+    let clip := Path.build do addRect ⟨10, 10, 54, 54⟩
     for round in [0:10] do
       let mut pts : Array Offset := #[]
       for _ in [0:8] do
@@ -142,5 +195,7 @@ def run : IO Unit := do
         close)
       check s!"fuzz round {round} ({repr rule}): tessellation agrees with oracle"
         (pathFillAgreesWithOracle path)
+      check s!"fuzz round {round} ({repr rule}): clipped tessellation agrees with oracle"
+        (pathFillClippedAgreesWithOracle path clip)
 
 end Tests.PathDraw

@@ -35,11 +35,22 @@ private def toSdlRect (r : Rect) : Sdl.Rect :=
 /-- Convert a `Mesh` (local coordinates) to SDL geometry, folding in the
 primitive's `origin` translation and `alpha`. Feather vertices keep alpha `0`
 after scaling; the index buffer is already `Int32`-encoded and passes through
-untouched. -/
+untouched.
+
+Positions are rounded to whole pixels: SDL's software rasterizer truncates
+geometry vertices to integer coordinates internally (`SW_QueueGeometry`'s
+`(int)` cast feeding the half-pixel fixed-point triangle filler), which makes
+sub-pixel band seams — the fill tessellator's trapezoid boundaries at curve
+event ys, a stroke's cap-arc bands — drop or double whole pixel rows.
+Rounding first is the closest integer approximation of true pixel-center
+coverage (a quad snapped to `[y0, y1]` rasterizes exactly rows
+`[round y0, round y1)`), so abutting bands stay gap-free and the result
+tracks the GPU backend's exact fractional rasterization within half a pixel. -/
 private def meshToGeometry (m : Mesh) (translation : Offset) (alpha : Float32) :
     Array Sdl.Vertex × Array Int32 :=
+  let snap (x : Float32) : Float32 := (x + 0.5).floor
   let verts := m.vertices.map fun v =>
-    ({ position := ⟨v.pos.x + translation.x, v.pos.y + translation.y⟩
+    ({ position := ⟨snap (v.pos.x + translation.x), snap (v.pos.y + translation.y)⟩
        color := ⟨v.color.r, v.color.g, v.color.b, v.color.a * alpha⟩
        texCoord := ⟨0, 0⟩ } : Sdl.Vertex)
   (verts, m.indices)

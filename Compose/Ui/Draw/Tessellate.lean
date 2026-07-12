@@ -1,6 +1,6 @@
 import Compose.Ui.Draw.Mesh
 import Compose.Ui.Draw.Brush
-import Compose.Ui.Draw.PathFill
+import Compose.Ui.Draw.PathStroke
 import Compose.Ui.Draw.Gpu.Sdf
 
 /-!
@@ -439,6 +439,13 @@ inductive ShapeSpec where
   /-- An arbitrary vector path filled under its fill rule (`pathFillMesh` —
   the band-sweep tessellation is the path rasterization on *both* backends). -/
   | pathFill (path : Path) (brush : Brush)
+  /-- A path fill restricted to a second path's interior — recorded by
+  `drawPath` fills inside `DrawScope.clipPath`; `clip` is in the same local
+  coordinates as `path` (`pathFillMeshClipped`, exact on both backends). -/
+  | pathFillClipped (path clip : Path) (brush : Brush)
+  /-- A path stroked with the full `Stroke` description — caps, joins, miter
+  limit, dashing (`pathStrokeMesh`). -/
+  | pathStroke (path : Path) (stroke : Stroke) (brush : Brush)
   deriving Repr, BEq, Inhabited
 
 /-- Tessellate the mesh a `ShapeSpec` describes (a pure function — the spec
@@ -456,6 +463,8 @@ def ShapeSpec.tessellate : ShapeSpec → Mesh
   | .line p0 p1 width brush => shapeMesh brush (Compose.Draw.line p0 p1 width)
   | .rrShadow rr offset blur color => roundRectShadow rr offset blur color
   | .pathFill path brush => shapeMesh brush (fun c => pathFillMesh path c)
+  | .pathFillClipped path clip brush => shapeMesh brush (fun c => pathFillMeshClipped path clip c)
+  | .pathStroke path stroke brush => shapeMesh brush (fun c => pathStrokeMesh path stroke c)
 
 #guard ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
         == ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
@@ -497,6 +506,8 @@ def ShapeSpec.bounds : ShapeSpec → Rect
   | .rrShadow rr off blur _ =>
     (rr.rect.translate off).inflate (3 * max 0.5 (blur / 2) + 1)
   | .pathFill path _ => path.bounds.inflate 1
+  | .pathFillClipped path clip _ => (path.bounds.intersect clip.bounds).inflate 1
+  | .pathStroke path stroke _ => path.bounds.inflate stroke.boundsPad
 
 #guard (ShapeSpec.rrFill (RoundRect.ofRect ⟨10, 10, 30, 30⟩) (.solid .red)).bounds
         == (⟨9, 9, 31, 31⟩ : Rect)
@@ -517,7 +528,13 @@ def ShapeSpec.bounds : ShapeSpec → Rect
     .rrShadow (RoundRect.circular ⟨10, 10, 50, 40⟩ 8) ⟨0, 2⟩ 6 .black,
     .pathFill (Path.build do
       PathM.moveTo ⟨10, 10⟩; PathM.quadTo ⟨45, 5⟩ ⟨45, 40⟩; PathM.lineTo ⟨10, 40⟩
-      PathM.close) (.solid .red)]
+      PathM.close) (.solid .red),
+    .pathFillClipped (Path.build do PathM.addRect ⟨5, 5, 45, 45⟩)
+      (Path.build do PathM.addOval ⟨10, 0, 50, 40⟩) (.solid .red),
+    .pathStroke (Path.build do
+        PathM.moveTo ⟨5, 40⟩; PathM.lineTo ⟨25, 5⟩; PathM.lineTo ⟨45, 40⟩)
+      { width := 6, cap := .square, join := .miter, dash := some (#[9, 4], 0) }
+      (.solid .red)]
   specs.all fun spec =>
     match spec.tessellate.bounds with
     | none => true

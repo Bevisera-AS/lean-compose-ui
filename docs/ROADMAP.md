@@ -39,7 +39,7 @@ Post-MG waves closing the gap to Skia/Impeller-class renderers (plan approved
 | # | Wave | Contents | Status |
 |---|---|---|---|
 | M-e1 | Path fill | `Path` verb model + `Path.build` (arcs lower to cubics), adaptive flatten, winding oracle; band-sweep fill tessellator + 1-px feather (`PathFill.lean`), oracle `#guard` corpus + fuzz; `ShapeSpec.pathFill` through both backends; `drawPath` (provisional stroke); `PathDraw` group, gpu-probe step ⑨, gpu-parity "paths" scene | ✅ |
-| M-e2 | Stroker | joins/caps/miter-limit/dashing (`PathStroke.lean`), outline filled by the M-e1 sweep; `clipPath` | — |
+| M-e2 | Stroker | joins/caps/miter-limit/dashing (`PathStroke.lean`), stroke-to-fill through the M-e1 sweep; `clipPath` (exact dual-winding path fills, `pathFillClipped`); SDL backend rounds mesh vertices to whole pixels (software-rasterizer truncation fix) | ✅ |
 | M-f | Images | `ImageBitmap` (BMP+PNG via SDL 3.4 `loadSurface`), `Prim.image`, texture caches both backends, `Image` composable + `ContentScale` | — |
 | M-g | Transforms | `Affine`, `graphicsLayer` (rotate/scale at layer boundaries), real SDL offscreen layers, `snapComposite` text heuristic | — |
 | M-h | Gradients | radial/sweep brushes, GPU quad `gradKind` packing, IGN dithering | — |

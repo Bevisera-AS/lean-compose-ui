@@ -61,8 +61,16 @@ static inline float rrect_sdf(float2 p, float4 bounds, float4 radii) {
 `vertex_id` (inflated by the stroke half-width plus a 1 px AA margin), and an
 SDF fragment — centered-stroke band when `borderWidth > 0`, gradient/solid
 fill coverage otherwise (`coverage(sdf) = saturate(0.5 - sdf)`, twin of
-`Gpu.Sdf.coverage`), both masked by the rounded clip. -/
+`Gpu.Sdf.coverage`), both masked by the rounded clip. The gradient fraction
+`t` is selected by `gradKind` (0 linear, 1 radial, 2 sweep — twins
+`Gpu.Sdf.radialT`/`sweepT`), and gradient fills (`bg0 ≠ bg1`) are dithered
+with interleaved gradient noise (`Gpu.Sdf.ign`, ±½ of an 8-bit step before
+quantization) — solid fills stay bit-stable. -/
 private def quadMsl : String := mslPrelude ++ "
+static inline float ign(float2 p) {
+  return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
+}
+
 struct QuadIn {
   float4 bounds     [[attribute(0)]];
   float4 radii      [[attribute(1)]];
@@ -85,6 +93,7 @@ struct QuadOut {
   float4 gradient   [[flat]];
   float4 border     [[flat]];
   float  borderW    [[flat]];
+  float  gradKind   [[flat]];
   float4 clipBounds [[flat]];
   float4 clipRadii  [[flat]];
 };
@@ -104,6 +113,7 @@ vertex QuadOut quad_vertex(QuadIn in [[stage_in]], uint vid [[vertex_id]],
   out.gradient = in.gradient;
   out.border = in.border;
   out.borderW = in.borderW.x;
+  out.gradKind = in.borderW.y;
   out.clipBounds = in.clipBounds;
   out.clipRadii = in.clipRadii;
   return out;
@@ -118,8 +128,19 @@ fragment float4 quad_fragment(QuadOut in [[stage_in]]) {
     src = in.border;
     cov = saturate(0.5 - (abs(sdf) - in.borderW * 0.5));
   } else {
-    float t = saturate(dot(in.world - in.gradient.xy, in.gradient.zw));
+    float t;
+    if (in.gradKind < 0.5) {          // linear
+      t = saturate(dot(in.world - in.gradient.xy, in.gradient.zw));
+    } else if (in.gradKind < 1.5) {   // radial (Gpu.Sdf.radialT)
+      t = saturate(length(in.world - in.gradient.xy) * in.gradient.z + in.gradient.w);
+    } else {                          // sweep (Gpu.Sdf.sweepT)
+      float2 d = in.world - in.gradient.xy;
+      t = fract((atan2(d.y, d.x) - in.gradient.z) * 0.15915494309189533577);
+    }
     src = mix(in.bg0, in.bg1, t);
+    if (any(in.bg0 != in.bg1)) {      // dither gradient fills only (Gpu.Sdf.ign)
+      src.rgb = saturate(src.rgb + (ign(in.pos.xy) - 0.5) * (1.0 / 255.0));
+    }
     cov = saturate(0.5 - sdf);
   }
   cov *= clip;

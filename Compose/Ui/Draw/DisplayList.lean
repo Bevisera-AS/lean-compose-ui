@@ -143,6 +143,9 @@ private def fmtRule : FillRule → String
 def Brush.brief : Brush → String
   | .solid c => fmtColor c
   | .linearGradient stops start stop => s!"grad[{stops.size}]{fmtOff start}→{fmtOff stop}"
+  | .radialGradient stops center radius => s!"radial[{stops.size}]{fmtOff center} r={fmtF radius}"
+  | .sweepGradient stops center startAngle =>
+    s!"sweep[{stops.size}]{fmtOff center} a0={fmtF startAngle}"
 
 /-- One-line golden form of a shape spec. -/
 def ShapeSpec.brief : ShapeSpec → String
@@ -197,6 +200,10 @@ partial def Prim.brief : Prim → String
       ++ "\n"
       ++ String.intercalate "\n" (content.map (fun p => "  " ++ p.brief)).toList
 
+#guard (Brush.radialGradient #[(0, .red), (1, .blue)] ⟨20, 20⟩ 10).brief
+        == "radial[2](20,20) r=10"
+#guard (Brush.sweepGradient #[(0, .red), (1, .blue)] ⟨20, 20⟩).brief
+        == "sweep[2](20,20) a0=0"
 #guard (Prim.rect {} .red ⟨0, 0⟩ ⟨10, 20⟩).brief == "rect @(0,0) #ff0000ff tl=(0,0) sz=10x20"
 #guard (Prim.rect { origin := ⟨8, 8⟩, alpha := 0.5 } .red ⟨0, 0⟩ ⟨10, 20⟩).brief
         == s!"rect @(8,8) a={fmtF 0.5} #ff0000ff tl=(0,0) sz=10x20"

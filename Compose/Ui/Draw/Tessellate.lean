@@ -384,9 +384,8 @@ def clipMeshToRoundRect (m : Mesh) (_rr : RoundRect) : Mesh := m
 position; solid brushes are returned unchanged. Feather vertices (alpha `0`)
 stay transparent. -/
 def paintMesh (m : Mesh) (brush : Brush) : Mesh :=
-  match brush with
-  | .solid _ => m
-  | .linearGradient .. =>
+  if brush.isSolid then m
+  else
     { m with vertices := m.vertices.map fun v =>
         let c := brush.colorAt v.pos
         { v with color := if v.color.a == 0 then c.withAlpha 0 else c } }
@@ -396,9 +395,8 @@ solid brush the color is used directly; for a gradient the shape is tessellated
 opaque then repainted per vertex (the tessellator emits a vertex per silhouette
 point, so the rasterizer interpolates the gradient across the triangles). -/
 def shapeMesh (brush : Brush) (mk : Color → Mesh) : Mesh :=
-  match brush with
-  | .solid c => mk c
-  | .linearGradient .. => paintMesh (mk Color.white) brush
+  if brush.isSolid then mk brush.primaryColor
+  else paintMesh (mk Color.white) brush
 
 /-! ## Shape specs -/
 

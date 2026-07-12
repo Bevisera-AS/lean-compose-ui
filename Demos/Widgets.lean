@@ -67,6 +67,22 @@ composable def imagesSection : Composable Unit := do
       (sampling := .nearest) (desc := some "checkerboard crop")
     Image img (desc := some "checkerboard natural")
 
+/-- Gradient brushes (M-h): radial and sweep fills — evaluated per fragment
+on the GPU backend, per-vertex fallback on SDL. -/
+composable def gradientsSection : Composable Unit := do
+  Row (horizontalArrangement := .spacedBy 12) (verticalAlignment := .centerVertically) do
+    Box (modifier := (Modifier.size 48 48).drawBehind do
+      Draw.DrawScope.drawCircle
+        (.radial (Color.hex 0xFFBB86FC) (Color.hex 0xFF6200EE) ⟨24, 24⟩ 24) ⟨24, 24⟩ 24)
+    Box (modifier := (Modifier.size 48 48).drawBehind do
+      Draw.DrawScope.drawCircle
+        (.sweepGradient #[(0, Color.hex 0xFF03DAC6), (1, Color.hex 0xFF018786)] ⟨24, 24⟩)
+        ⟨24, 24⟩ 24)
+    Box (modifier := (Modifier.size 72 48).drawBehind do
+      Draw.DrawScope.drawRect (.radial .white (Color.hex 0xFFB00020) ⟨36, 24⟩ 48)
+        ⟨0, 0⟩ ⟨72, 48⟩)
+    Text "radial · sweep"
+
 /-- Layer transforms (M-g): a spinner on an infinite rotation, a static
 rotate+squash, and a press-to-scale chip (press interactions drive an
 animated `graphicsLayer` scale). -/
@@ -118,6 +134,8 @@ composable def widgetsUi : Composable Unit := do
       HorizontalDivider
       imagesSection
       HorizontalDivider
+      gradientsSection
+      HorizontalDivider
       transformsSection
       HorizontalDivider
       darkSection checked on
@@ -126,5 +144,5 @@ end Demos.Widgets
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  Compose.runApp "compose widgets" 480 560 Demos.Widgets.widgetsUi
+  Compose.runApp "compose widgets" 480 630 Demos.Widgets.widgetsUi
     { clearColor := Compose.ColorScheme.light.surface }

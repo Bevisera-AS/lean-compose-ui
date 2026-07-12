@@ -62,6 +62,62 @@ def coverage (sdf : Float32) : Float32 := saturate (0.5 - sdf)
 #guard coverage 5 == 0
 #guard coverage 0 == 0.5
 
+/-! ## Gradient parameters + dither (the quad shader's M-h additions) -/
+
+/-- `fract` (fractional part, always in `[0, 1)`), as in MSL. -/
+def fract (x : Float32) : Float32 := x - x.floor
+
+/-- The radial gradient fraction the quad fragment evaluates:
+`saturate(length(p − center) · scale + bias)`, with the 2-stop remap folded
+into `(scale, bias)` by `Gpu.Encode.quadBrush` (`scale = 1/(radius·span)`,
+`bias = −f₀/span`). -/
+def radialT (p center : Offset) (scale bias : Float32) : Float32 :=
+  saturate (p.distance center * scale + bias)
+
+/-- The sweep gradient fraction the quad fragment evaluates: the angle around
+`center` (clockwise from +x in screen coordinates, `atan2` via the `Float`
+roundtrip) minus `startAngle`, wrapped to `[0, 1)`. MSL's `atan2` diverges
+from Lean's by ULPs near the ±π seam — comparisons tolerate `1e-4`. -/
+def sweepT (p center : Offset) (startAngle : Float32) : Float32 :=
+  let d := p - center
+  let inv2pi : Float32 := 0.15915494309189533577
+  fract (((Float.atan2 d.y.toFloat d.x.toFloat).toFloat32 - startAngle) * inv2pi)
+
+/-- Jimenez interleaved gradient noise — the quad shader's dither source, a
+pure function of the fragment's pixel coordinates (no texture). The fragment
+adds `(ign − 0.5)/255` to gradient fills before quantization, breaking
+banding by at most ±half an 8-bit step. -/
+def ign (x y : Float32) : Float32 :=
+  fract (52.9829189 * fract (0.06711056 * x + 0.00583715 * y))
+
+-- fract: wraps negatives up into [0, 1).
+#guard fract 1.25 == 0.25
+#guard fract (-0.25) == 0.75
+#guard fract 3 == 0
+-- radialT with the stop remap folded in: stops (0.25, 0.75) on radius 10 ⟹
+-- scale = 1/(10·0.5) = 0.2, bias = −0.25/0.5 = −0.5; distances 2.5/5/7.5 map
+-- to 0/½/1, and beyond the last stop clamps.
+#guard radialT ⟨2.5, 0⟩ ⟨0, 0⟩ 0.2 (-0.5) == 0
+#guard radialT ⟨5, 0⟩ ⟨0, 0⟩ 0.2 (-0.5) == 0.5
+#guard radialT ⟨7.5, 0⟩ ⟨0, 0⟩ 0.2 (-0.5) == 1
+#guard radialT ⟨99, 0⟩ ⟨0, 0⟩ 0.2 (-0.5) == 1
+-- The Euclidean distance (3-4-5) matches `Brush.colorAt`'s radial arm.
+#guard radialT ⟨3, 4⟩ ⟨0, 0⟩ 0.1 0 == 0.5
+-- sweepT: 0 on +x, 0.25 straight down (screen y), 0.5 on −x, 0.75 up; the
+-- fraction wraps just below the seam.
+#guard (sweepT ⟨10, 0⟩ ⟨0, 0⟩ 0).abs < 1e-4
+#guard (sweepT ⟨0, 10⟩ ⟨0, 0⟩ 0 - 0.25).abs < 1e-4
+#guard (sweepT ⟨-10, 0⟩ ⟨0, 0⟩ 0 - 0.5).abs < 1e-4
+#guard (sweepT ⟨0, -10⟩ ⟨0, 0⟩ 0 - 0.75).abs < 1e-4
+#guard (sweepT ⟨100, -0.01⟩ ⟨0, 0⟩ 0 - 1).abs < 1e-3
+-- startAngle rotates the seam.
+#guard (sweepT ⟨0, 10⟩ ⟨0, 0⟩ 1.57079632679489661923).abs < 1e-4
+-- ign: pinned outputs catch MSL constant typos; neighbors decorrelate.
+#guard (ign 0.5 0.5 - 0.932491).abs < 1e-4
+#guard (ign 1.5 0.5 - 0.488204).abs < 1e-4
+#guard (ign 100.5 200.5 - 0.477245).abs < 1e-4
+#guard ign 0.5 0.5 >= 0 && ign 0.5 0.5 < 1
+
 /-! ## Analytic Gaussian shadow (Evan Wallace) -/
 
 /-- The Gaussian PDF with standard deviation `sigma`. -/

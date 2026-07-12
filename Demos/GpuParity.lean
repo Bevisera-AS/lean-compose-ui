@@ -166,6 +166,20 @@ def run : IO UInt32 := do
         (RoundRect.circular ⟨110, 10, 210, 50⟩ 8))
     (meanTol := 1.6) (grossTol := 0.013)
 
+  -- Radial gradients, the honest cross-backend case: a (0,1)-stop brush
+  -- centered on a circle fill, where SDL's per-vertex fan (center vertex t=0,
+  -- rim t=1, linear along each spoke) IS the analytic ramp the GPU quad
+  -- evaluates per fragment. Off-center/multi-stop radials and sweeps have no
+  -- SDL-exact form (documented per-vertex fallback) — GPU-side correctness is
+  -- pinned by gpu-probe step ⑫ instead. The GPU dithers gradient fills
+  -- (±0.5/255), part of the residual here.
+  scene "radial circle" ⟨0, 0, 0, 1⟩
+    (do
+      DrawScope.drawCircle (.radial .red .blue ⟨60, 60⟩ 40) ⟨60, 60⟩ 40
+      DrawScope.drawCircle (.radial .white (Color.white.withAlpha 0) ⟨160, 60⟩ 40)
+        ⟨160, 60⟩ 40)
+    (meanTol := 1.2) (grossTol := 0.005)
+
   -- Shadows: analytic Gaussian vs sampled feathered rings under a filled
   -- surface (the Material lowering shape: offset e/2, blur e).
   scene "shadows" ⟨1, 1, 1, 1⟩

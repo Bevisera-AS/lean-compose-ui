@@ -33,6 +33,10 @@ Probed, in order:
 10. Graphics-layer transforms (M-g): rotated/scaled layers as mapped
    composite quads (linear sampler), group opacity inside a transformed
    layer, whole-pixel translation snapping, rotated text.
+11. Radial/sweep gradients + dithering (M-h): quad-path fragments match the
+   `Brush.colorAt` twins on rects (the cases the SDL fallback renders
+   coarsely), the sweep seam stays clean, IGN dithering is on for gradient
+   fills (and only them — solid quads stay byte-exact).
 
 Exit code is the number of failed checks; informational verdicts (cycle
 semantics, y-convention, winding) print as notes for the M-b design.
@@ -495,6 +499,87 @@ private def probeTransforms (r : Compose.Draw.Gpu.GpuRenderer)
   note s!"frame stats: {stats.brief}"
   check "frame stats: four layers" (stats.layers == 4)
 
+/-- ⑫ radial/sweep gradients + dithering (M-h): the quad fragment's per-kind
+`t` must match the `Brush.colorAt`/`Gpu.Sdf` twins on rects — exactly the
+shapes whose per-vertex SDL fallback is coarse, so only the GPU can assert
+them — and the IGN dither must perturb gradient fills by ±1 step while
+leaving solid fills byte-exact. -/
+private def probeGradients (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  IO.println "⑫ radial/sweep gradient quads + IGN dither → offscreen pixels"
+  let radial : Brush := .radial .red .blue ⟨50, 50⟩ 40
+  let sweep : Brush := .sweepGradient #[(0, .red), (1, .blue)] ⟨140, 50⟩
+  -- A shallow horizontal ramp (16 quantization steps over 180 px — ~11 px
+  -- bands without dithering) and a solid quad pinning the dither gate.
+  let ramp : Brush := .gradient .black ⟨16.0/255, 16.0/255, 16.0/255, 1⟩ ⟨10, 0⟩ ⟨190, 0⟩
+  let solid : Color := ⟨37.0/255, 99.0/255, 201.0/255, 1⟩
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawRect (.solid solid) ⟨2, 2⟩ ⟨6, 6⟩
+    DrawScope.drawRect radial ⟨10, 10⟩ ⟨80, 80⟩
+    DrawScope.drawRect sweep ⟨100, 10⟩ ⟨80, 80⟩
+    DrawScope.drawRect ramp ⟨10, 95⟩ ⟨180, 20⟩
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 200 120
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (x y : Nat) =>
+    let o := (y * 200 + x) * 4
+    if bgra then (bytes.get! (o+2), bytes.get! (o+1), bytes.get! o, bytes.get! (o+3))
+    else (bytes.get! o, bytes.get! (o+1), bytes.get! (o+2), bytes.get! (o+3))
+  -- Fragment coordinates are pixel centers; ±3/255 covers dither (±0.5),
+  -- quantization, and MSL float divergence.
+  let checkPx (name : String) (b : Brush) (x y : Nat) : IO Unit := do
+    let (er, eg, eb, _) := (b.colorAt ⟨Float32.ofNat x + 0.5, Float32.ofNat y + 0.5⟩).toBytes
+    let (gr, gg, gb, _) := px x y
+    let d := fun (a b : UInt8) => max a.toNat b.toNat - min a.toNat b.toNat
+    check s!"{name} @({x},{y}): got ({gr},{gg},{gb}) want ({er},{eg},{eb})"
+      (d gr er ≤ 3 && d gg eg ≤ 3 && d gb eb ≤ 3)
+  checkPx "radial: near center" radial 50 50
+  checkPx "radial: half radius" radial 70 50
+  checkPx "radial: up three-quarters" radial 50 20
+  checkPx "radial: diagonal" radial 75 75
+  checkPx "radial: corner clamps past the rim" radial 12 12
+  checkPx "sweep: t=0.125 (down-right)" sweep 160 70
+  checkPx "sweep: t=0.375 (down-left)" sweep 120 70
+  checkPx "sweep: t=0.625 (up-left)" sweep 120 30
+  checkPx "sweep: t=0.875 (up-right)" sweep 160 30
+  -- The seam (+x axis) must be clean: half a pixel above it is almost-wrapped
+  -- blue, half a pixel below almost-red — no midway blend.
+  checkPx "sweep: just above the seam" sweep 170 49
+  checkPx "sweep: just below the seam" sweep 170 50
+  -- Dither: neighbor deltas along the ramp stay ≤ 1 (no banding steps get
+  -- amplified) …
+  let mut maxDelta := 0
+  for x in [11:189] do
+    let a := (px x 105).1.toNat
+    let b := (px (x + 1) 105).1.toNat
+    maxDelta := max maxDelta (max a b - min a b)
+  check s!"dither: ramp neighbor deltas ≤ 1 (max {maxDelta})" (maxDelta ≤ 1)
+  -- … a 16×16 window mean tracks the analytic ramp within ±0.7/255 (banding
+  -- alone drifts up to half a step) …
+  let mut sum : Float := 0
+  let mut analytic : Float := 0
+  for x in [40:56] do
+    analytic := analytic + ((x.toFloat + 0.5 - 10) / 180 * 16) * 16
+    for y in [97:113] do
+      sum := sum + (px x y).1.toNat.toFloat
+  let drift := (sum - analytic).abs / 256
+  check s!"dither: window mean within ±0.7 of analytic (drift {drift})" (drift ≤ 0.7)
+  -- … and the dither is actually on: the ramp is constant in y, so without
+  -- noise every column would be a single value.
+  let mut variedCols := 0
+  for x in [30:38] do
+    let v0 := (px x 97).1
+    let mut varied := false
+    for y in [98:113] do
+      if (px x y).1 != v0 then varied := true
+    if varied then variedCols := variedCols + 1
+  check s!"dither: columns vary across rows ({variedCols}/8)" (variedCols ≥ 6)
+  -- Solid fills bypass the dither gate — byte-exact.
+  check "solid quad stays byte-exact (@5,5)" (px 5 5 == (37, 99, 201, 255))
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: all four fills took the quad path"
+    (stats.quads == 4 && stats.meshTriangles == 0)
+
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
@@ -546,6 +631,7 @@ def run : IO UInt32 := do
   probePaths gpuRenderer swapchainFmt
   probeImages gpuRenderer swapchainFmt
   probeTransforms gpuRenderer engine font swapchainFmt
+  probeGradients gpuRenderer swapchainFmt
   probePresentLoop dev window windowPipe ibuf
 
   dev.releaseWindow window

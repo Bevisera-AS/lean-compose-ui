@@ -39,8 +39,9 @@ def pushColor (b : ByteArray) (c : Color) : ByteArray :=
 /-! ## Quad instances (the SDF pipeline) -/
 
 /-- One instance of the quad pipeline: an axis-aligned (rounded) rectangle
-with either a fill brush (solid or two-stop linear gradient) or a centered
-stroke, masked by a (rounded) clip rect. 144 bytes = 9 `float4` attributes. -/
+with either a fill brush (solid or a two-stop linear/radial/sweep gradient)
+or a centered stroke, masked by a (rounded) clip rect. 144 bytes = 9 `float4`
+attributes. -/
 structure QuadInstance where
   /-- Shape origin and size in target px. -/
   origin : Offset := .zero
@@ -53,13 +54,19 @@ structure QuadInstance where
   /-- Fill colors: gradient endpoints (equal for a solid fill). -/
   bg0 : Color := ⟨0, 0, 0, 0⟩
   bg1 : Color := ⟨0, 0, 0, 0⟩
-  /-- Gradient projection: `t = saturate(dot(p - gradStart, gradDir))`, with
-  `gradDir` premultiplied by `1/len²`. Zero for solid fills (`t = 0`). -/
+  /-- Gradient parameters, interpreted per `gradKind` (linear: `gradStart` +
+  `gradDir` premultiplied by `1/len²`; radial: center + `(scale, bias)`;
+  sweep: center + `(startAngle, ·)`). Zero for solid fills (`t = 0`). -/
   gradStart : Offset := .zero
   gradDir : Offset := .zero
   /-- Centered-stroke paint; `borderWidth = 0` means fill. -/
   borderColor : Color := ⟨0, 0, 0, 0⟩
   borderWidth : Float32 := 0
+  /-- Gradient kind selecting the fragment's `t`: 0 linear
+  (`saturate(dot(p − gradStart, gradDir))`, twin of the shader inline), 1
+  radial (`Gpu.Sdf.radialT`), 2 sweep (`Gpu.Sdf.sweepT`). Packed into the
+  `borderWidth` attribute's pad — the stride stays 144. -/
+  gradKind : Float32 := 0
   /-- Rounded clip mask in target px (a huge rect when unclipped). -/
   clipOrigin : Offset := ⟨-1e8, -1e8⟩
   clipSize : Size := ⟨2e8, 2e8⟩
@@ -82,7 +89,7 @@ def QuadInstance.pack (q : QuadInstance) (b : ByteArray) : ByteArray := Id.run d
   b := pushColor b q.bg1
   b := pushF32 (pushF32 (pushF32 (pushF32 b q.gradStart.x) q.gradStart.y) q.gradDir.x) q.gradDir.y
   b := pushColor b q.borderColor
-  b := pushF32 (pushF32 (pushF32 (pushF32 b q.borderWidth) 0) 0) 0
+  b := pushF32 (pushF32 (pushF32 (pushF32 b q.borderWidth) q.gradKind) 0) 0
   b := pushF32 (pushF32 (pushF32 (pushF32 b q.clipOrigin.x) q.clipOrigin.y) q.clipSize.width) q.clipSize.height
   b := pushF32 (pushF32 (pushF32 (pushF32 b q.clipRadiusTL) q.clipRadiusTR) q.clipRadiusBR) q.clipRadiusBL
   return b

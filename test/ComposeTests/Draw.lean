@@ -9,7 +9,8 @@ software renderer under the dummy video driver, reads them back with
 `Renderer.readPixels`, and probes individual pixels — the approach lean-sdl3's
 own suite proves works headless. Covers: solid/overlapping fills, rounded-rect
 corners, circle fill + alpha blend, clip nesting + restore, translate, alpha
-scaling, and linear-gradient endpoints.
+scaling, and gradient sampling (linear endpoints; radial/sweep on the
+per-vertex fallback's near-exact circle-fan cases).
 
 Run: `SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy lake exe test`.
 -/
@@ -119,6 +120,36 @@ def run : IO Unit := do
     check "gradient: left endpoint ≈ red" (colorNear (← shot.readPixel 11 30) 255 0 0 24)
     check "gradient: right endpoint ≈ blue" (colorNear (← shot.readPixel 49 30) 0 0 255 24)
     check "gradient: midpoint ≈ purple" (colorNear (← shot.readPixel 30 30) 128 0 128 12)
+
+  -- 7b. radial + sweep gradients on the per-vertex SDL fallback: a circle fan
+  -- centered on the brush center interpolates the radial ramp near-exactly
+  -- (center vertex t=0, rim t=1, linear along each spoke); a sweep's rim
+  -- colors sit on the rim vertices (interior stays the documented coarse
+  -- interpolation — not asserted).
+  do
+    let ren ← mkRen 128 128
+    clearBlack ren
+    DrawScope.run ren {} do
+      drawCircle (.radial Color.red .blue ⟨40, 40⟩ 30) ⟨40, 40⟩ 30
+    let shot ← ren.readPixels
+    check "radial: center is the first stop" (colorNear (← shot.readPixel 40 40) 255 0 0 8)
+    check "radial: half-radius ≈ midpoint color" (colorNear (← shot.readPixel 55 40) 128 0 128 12)
+    check "radial: near the rim ≈ last stop" (colorNear (← shot.readPixel 40 12) 17 0 238 24)
+  do
+    let ren ← mkRen 128 128
+    clearBlack ren
+    DrawScope.run ren {} do
+      drawCircle (.sweepGradient #[(0, Color.red), (1, .blue)] ⟨40, 40⟩) ⟨40, 40⟩ 30
+    let shot ← ren.readPixels
+    -- Rim samples away from the seam (fan vertices straddling the +x axis
+    -- interpolate through it): straight down t = 0.25, left t = 0.5, up
+    -- t = 0.75.
+    check "sweep: rim straight down ≈ quarter blend"
+      (colorNear (← shot.readPixel 40 68) 191 0 64 24)
+    check "sweep: rim straight left ≈ half blend"
+      (colorNear (← shot.readPixel 12 40) 128 0 128 24)
+    check "sweep: rim straight up ≈ three-quarter blend"
+      (colorNear (← shot.readPixel 40 12) 64 0 191 24)
 
   -- 8. elevation shadow fallback (rrShadow tessellation): dark under the
   -- shape, a penumbra just outside the edge, untouched far away

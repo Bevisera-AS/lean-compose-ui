@@ -314,7 +314,18 @@ withGraphicsLayer (bounds) (g : GraphicsLayerScope) (body)  -- group alpha + tra
 withLayer (bounds) (alpha) (body)          -- its transform-free case
 ```
 
-`Brush` = `solid Color` | `linearGradient` (vertex colors make gradients free).
+`Brush` = `solid Color` | `linearGradient` | `radialGradient (center, radius)`
+| `sweepGradient (center, startAngle)` — all sampled by the pure
+`Brush.colorAt`. Two evaluation tiers: the SDL backend paints gradients
+**per vertex** (`colorAt` at each mesh vertex — free, and near-exact where
+the tessellation follows the gradient's geometry: linear anywhere, a
+`(0,·),(1,·)` radial centered on a circle fan; coarse for radial/sweep on
+sparse-interior shapes, a documented fallback); the GPU backend evaluates
+2-stop gradients **per fragment** in the quad shader (`gradKind` selects
+linear/radial/sweep `t`, twinned in `Gpu/Sdf.lean`; multi-stop and off-spec
+sweeps fall back to the per-vertex mesh path) and dithers gradient fills
+with interleaved gradient noise (±½ of an 8-bit step, gated on
+`bg0 ≠ bg1` so solid fills stay byte-stable).
 
 **Vector paths** (`Path.lean`, `PathFill.lean`): a `Path` is an immutable
 verb array (`moveTo/lineTo/quadTo/cubicTo/close`, absolute coordinates) plus
@@ -444,9 +455,11 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   (`roundRectShadow`).
 - **`GpuBackend.lean`** (SDL_GPU, GPUI-style SDF instancing; `Gpu/*.lean`) —
   a pure encoder (`Encode.lean`) lowers the list into per-pipeline buffers +
-  a flat `DrawCmd` list: axis-aligned rounded geometry under solid/two-stop
-  brushes → instanced **SDF quads** (analytic coverage, math `#guard`-twinned
-  in `Sdf.lean`); arcs, angled lines, the clipped ripple, multi-stop
+  a flat `DrawCmd` list: axis-aligned rounded geometry under solid/2-stop
+  gradient brushes (linear, radial, on-spec sweep — `gradKind` packed into
+  the border attribute's pad, per-fragment `t` + IGN dither in the quad
+  shader) → instanced **SDF quads** (analytic coverage, math `#guard`-twinned
+  in `Sdf.lean`); arcs, angled lines, the clipped ripple, multi-stop/off-spec
   gradients → the **mesh pipeline** reusing the same CPU tessellation as SDL;
   text → **glyph-atlas quads** from SDL_ttf's GPU engine, snapped once per
   run at the rounded run origin (the resize text-shimmer fix); `rrShadow` →

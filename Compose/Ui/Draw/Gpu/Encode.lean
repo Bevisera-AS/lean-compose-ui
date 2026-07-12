@@ -12,11 +12,14 @@ them).
 
 Lowering per primitive:
 - `rect`, and `shape` specs that are axis-aligned rounded geometry under a
-  solid or two-stop-gradient brush (`rrFill`/`rrStroke`, circles, axis-aligned
-  lines) → **quad instances** (SDF coverage in the fragment shader).
+  solid or two-stop gradient brush — linear, radial, or a sweep with exactly
+  `(0, ·), (1, ·)` stops (`rrFill`/`rrStroke`, circles, axis-aligned lines) →
+  **quad instances** (SDF coverage + per-fragment gradient `t` in the
+  fragment shader, selected by `gradKind`).
 - Everything else (`arcStroke`, angled lines, the ripple's
-  `circleFillClipped`, multi-stop or gradient-stroked brushes) → the **mesh
-  pipeline**, reusing the exact CPU tessellation the SDL backend rasterizes.
+  `circleFillClipped`, multi-stop/off-spec-sweep or gradient-stroked
+  brushes) → the **mesh pipeline**, reusing the exact CPU tessellation the
+  SDL backend rasterizes.
 - `text` → **glyph vertices** (atlas quads snapped once per run at the
   rounded run origin — the shimmer fix; SDL_ttf's y-up data maps as
   `screen = origin + (x, −y)`, probe-verified).
@@ -261,13 +264,35 @@ private def pushImage (st : EncodeResult) (texIdx : Nat) (img : ImageBitmap)
 
 /-! ## Shape lowering -/
 
-/-- Lower a brush to the quad fill encoding: gradient endpoints plus the
-projection vector (`t = saturate(dot(p - start, dir))`, `dir` scaled by
-`1/len²`). Solid → equal endpoints, zero projection. `none` = the brush needs
-the mesh path (≠ 2 stops, or a degenerate axis). Coordinates stay local; the
-caller translates by the primitive origin. -/
-private def quadBrush : Brush → Option (Color × Color × Offset × Offset)
-  | .solid c => some (c, c, .zero, .zero)
+/-- A brush lowered to the quad fill encoding: the two gradient endpoint
+colors plus the `gradStart`/`gradDir`/`gradKind` parameters the fragment
+evaluates (see `QuadInstance.gradKind`). `gradStart` is the only
+position-valued field — `placeQuad` translates exactly it, which is correct
+for every kind (linear start, radial center, sweep center; `gradDir` carries
+direction/scale-bias/angle, all translation-invariant). -/
+private structure QuadPaint where
+  bg0 : Color
+  bg1 : Color
+  gradStart : Offset := .zero
+  gradDir : Offset := .zero
+  gradKind : Float32 := 0
+
+/-- Copy a lowered brush's fill fields onto a quad instance. -/
+private def QuadPaint.fill (p : QuadPaint) (q : QuadInstance) : QuadInstance :=
+  { q with bg0 := p.bg0, bg1 := p.bg1, gradStart := p.gradStart
+           gradDir := p.gradDir, gradKind := p.gradKind }
+
+/-- Lower a brush to the quad fill encoding. Solid → equal endpoints, zero
+projection. Linear 2-stop → `t = saturate(dot(p − start, dir))` with `dir`
+scaled by `1/len²` and the stop fractions folded into `start`/`dir`. Radial
+2-stop → center + `(scale, bias)` with the stop remap folded in
+(`t = saturate(|p − c|·scale + bias)`, twin `Gpu.Sdf.radialT`). Sweep with
+exactly `(0, ·), (1, ·)` stops → center + `(startAngle, ·)` (the wrapped
+fraction can't fold a stop remap — off-spec sweeps tessellate). `none` = the
+brush needs the mesh path. Coordinates stay local; the caller translates by
+the primitive origin. -/
+private def quadBrush : Brush → Option QuadPaint
+  | .solid c => some { bg0 := c, bg1 := c }
   | .linearGradient stops start stop => do
     unless stops.size == 2 do failure
     let (f0, c0) := stops[0]!
@@ -278,7 +303,23 @@ private def quadBrush : Brush → Option (Color × Color × Offset × Offset)
     let d := axis * (f1 - f0)
     let len2 := Offset.dot d d
     unless len2 > 1e-9 do failure
-    some (c0, c1, s, ⟨d.x / len2, d.y / len2⟩)
+    some { bg0 := c0, bg1 := c1, gradStart := s, gradDir := ⟨d.x / len2, d.y / len2⟩ }
+  | .radialGradient stops center radius => do
+    unless stops.size == 2 do failure
+    let (f0, c0) := stops[0]!
+    let (f1, c1) := stops[1]!
+    let span := f1 - f0
+    unless span > 1e-6 do failure
+    unless radius > 1e-6 do failure
+    some { bg0 := c0, bg1 := c1, gradStart := center
+           gradDir := ⟨1 / (radius * span), -(f0 / span)⟩, gradKind := 1 }
+  | .sweepGradient stops center startAngle => do
+    unless stops.size == 2 do failure
+    let (f0, c0) := stops[0]!
+    let (f1, c1) := stops[1]!
+    unless f0 == 0 && f1 == 1 do failure
+    some { bg0 := c0, bg1 := c1, gradStart := center
+           gradDir := ⟨startAngle, 0⟩, gradKind := 2 }
 
 /-- The quad geometry of a normalized rounded rect: origin, size, per-corner
 circular radii (elliptical corners degrade to the x radius — no production
@@ -293,10 +334,10 @@ the mesh-tessellation path (arcs, angled lines, the clipped ripple, non-quad
 brushes; strokes take only solid brushes — a gradient stroke tessellates). -/
 private def lowerShape : ShapeSpec → Option QuadInstance
   | .rrFill rr brush => do
-    let (bg0, bg1, gs, gd) ← quadBrush brush
+    let p ← quadBrush brush
     let (o, sz, (tl, tr, br, bl)) := rrQuad rr
-    some { origin := o, size := sz, radiusTL := tl, radiusTR := tr
-           radiusBR := br, radiusBL := bl, bg0, bg1, gradStart := gs, gradDir := gd }
+    some (p.fill { origin := o, size := sz, radiusTL := tl, radiusTR := tr
+                   radiusBR := br, radiusBL := bl })
   | .rrStroke rr width brush =>
     match brush with
     | .solid c =>
@@ -305,11 +346,11 @@ private def lowerShape : ShapeSpec → Option QuadInstance
              radiusBR := br, radiusBL := bl, borderColor := c, borderWidth := width }
     | _ => none
   | .circleFill center radius brush => do
-    let (bg0, bg1, gs, gd) ← quadBrush brush
-    some { origin := ⟨center.x - radius, center.y - radius⟩
-           size := ⟨radius * 2, radius * 2⟩
-           radiusTL := radius, radiusTR := radius, radiusBR := radius, radiusBL := radius
-           bg0, bg1, gradStart := gs, gradDir := gd }
+    let p ← quadBrush brush
+    some (p.fill { origin := ⟨center.x - radius, center.y - radius⟩
+                   size := ⟨radius * 2, radius * 2⟩
+                   radiusTL := radius, radiusTR := radius
+                   radiusBR := radius, radiusBL := radius })
   | .circleStroke center radius width brush =>
     match brush with
     | .solid c =>
@@ -416,13 +457,12 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
       -- like `center`) becomes the exact in-shader mask of a circle quad —
       -- no Sutherland–Hodgman mesh needed.
       match quadBrush brush with
-      | some (bg0, bg1, gs, gd) =>
-        let q : QuadInstance :=
+      | some p =>
+        let q : QuadInstance := p.fill
           { origin := ⟨center.x - radius, center.y - radius⟩
             size := ⟨radius * 2, radius * 2⟩
             radiusTL := radius, radiusTR := radius
-            radiusBR := radius, radiusBL := radius
-            bg0, bg1, gradStart := gs, gradDir := gd }
+            radiusBR := radius, radiusBL := radius }
         pushQuad st (maskQuadRR (placeQuad q origin alpha) (rr.translate origin)) scissor
       | none => pushMesh st (cached.getD spec.tessellate) origin alpha scissor
     | _ =>
@@ -527,6 +567,31 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   let g3 : Brush := .linearGradient #[(0, Color.red), (0.5, .green), (1, .blue)] ⟨0, 0⟩ ⟨40, 0⟩
   let r := encode #[.shape {} (.rrFill rr g2) none, .shape {} (.rrFill rr g3) none] #[]
   r.quadCount == 1 && r.meshIdxCount > 0
+-- A 2-stop radial fill lowers to a quad with `gradKind` 1 and the stop remap
+-- folded into (scale, bias): stops (0.25, 0.75) on radius 10 give scale
+-- 1/(10·0.5) = 0.2, bias −0.25/0.5 = −0.5. The primitive origin translates
+-- only the center (`placeQuad`), never the scale/bias.
+#guard
+  let b : Brush := .radialGradient #[(0.25, Color.red), (0.75, .blue)] ⟨20, 20⟩ 10
+  let r := encode
+    #[.shape { origin := ⟨5, 5⟩ } (.rrFill (RoundRect.ofRect ⟨0, 0, 40, 40⟩) b) none] #[]
+  let want : QuadInstance :=
+    { origin := ⟨5, 5⟩, size := ⟨40, 40⟩, bg0 := .red, bg1 := .blue
+      gradStart := ⟨25, 25⟩, gradDir := ⟨0.2, -0.5⟩, gradKind := 1 }
+  r.quadCount == 1 && r.meshIdxCount == 0 && r.quads == want.pack .empty
+-- An on-spec sweep lowers to `gradKind` 2 carrying (startAngle, ·); a
+-- fraction-shifted sweep and a 3-stop radial take the mesh path.
+#guard
+  let rect := RoundRect.ofRect ⟨0, 0, 40, 40⟩
+  let enc (b : Brush) := encode #[.shape {} (.rrFill rect b) none] #[]
+  let ok := enc (.sweepGradient #[(0, Color.red), (1, .blue)] ⟨20, 20⟩ 1)
+  let want : QuadInstance :=
+    { origin := ⟨0, 0⟩, size := ⟨40, 40⟩, bg0 := .red, bg1 := .blue
+      gradStart := ⟨20, 20⟩, gradDir := ⟨1, 0⟩, gradKind := 2 }
+  ok.quadCount == 1 && ok.quads == want.pack .empty
+    && (enc (.sweepGradient #[(0.1, Color.red), (1, .blue)] ⟨20, 20⟩)).quadCount == 0
+    && (enc (.sweepGradient #[(0.1, Color.red), (1, .blue)] ⟨20, 20⟩)).meshIdxCount > 0
+    && (enc (.radialGradient #[(0, Color.red), (0.5, .green), (1, .blue)] ⟨20, 20⟩ 10)).quadCount == 0
 -- A full-alpha untransformed layer flattens inline (no offscreen pass).
 #guard
   let inner : Prim := .rect {} .red ⟨0, 0⟩ ⟨4, 4⟩

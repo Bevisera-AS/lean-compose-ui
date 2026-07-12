@@ -128,6 +128,7 @@ def ShapeSpec.brief : ShapeSpec → String
   | .circleStroke c r w b => s!"circleStroke c={fmtOff c} r={fmtF r} w={fmtF w} {b.brief}"
   | .arcStroke c r s0 s1 w b => s!"arcStroke c={fmtOff c} r={fmtF r} {fmtF s0}..{fmtF s1} w={fmtF w} {b.brief}"
   | .line p0 p1 w b => s!"line {fmtOff p0}→{fmtOff p1} w={fmtF w} {b.brief}"
+  | .rrShadow rr off blur c => s!"rrShadow {fmtRR rr} off={fmtOff off} blur={fmtF blur} {fmtColor c}"
 
 /-- One-line golden form of a primitive's ambient state (omitting defaults). -/
 def PrimState.brief (st : PrimState) : String :=

@@ -240,6 +240,10 @@ inductive DrawElem where
   /-- Stroke `shape` just inside the wrapper bounds. Mirrors
   `Modifier.border`. -/
   | border (width : Dp) (color : Color) (shape : Shape)
+  /-- A Material elevation shadow under `shape` at the wrapper bounds
+  (drop offset `elevation / 2` down, blur `elevation`). Mirrors
+  `Modifier.shadow`. -/
+  | shadow (elevation : Dp) (shape : Shape) (color : Color)
   /-- Clip the content (and everything inner) to `shape`. Mirrors
   `Modifier.clip`. -/
   | clip (shape : Shape)
@@ -263,12 +267,15 @@ instance : BEq DrawElem where
   beq
     | .background c s, .background c' s' => c == c' && s == s'
     | .border w c s, .border w' c' s' => w == w' && c == c' && s == s'
+    | .shadow e s c, .shadow e' s' c' => e == e' && s == s' && c == c'
     | .clip s, .clip s' => s == s'
     | .alpha a, .alpha a' => a == a'
     | _, _ => false
 
 #guard (DrawElem.background .red .rectangle) == (DrawElem.background .red .rectangle)
 #guard (DrawElem.background .red .rectangle) != (DrawElem.background .blue .rectangle)
+#guard (DrawElem.shadow 2 .rectangle .black) == (DrawElem.shadow 2 .rectangle .black)
+#guard (DrawElem.shadow 2 .rectangle .black) != (DrawElem.shadow 3 .rectangle .black)
 #guard (DrawElem.clip .circle) != (DrawElem.alpha 1)
 #guard (DrawElem.drawBehind (pure ())) != (DrawElem.drawBehind (pure ()))
 
@@ -479,6 +486,15 @@ def background (color : Color) (shape : Shape := .rectangle) (m : Modifier := {}
 def border (width : Dp) (color : Color) (shape : Shape := .rectangle)
     (m : Modifier := {}) : Modifier :=
   m.append (.draw (.border width color shape))
+
+/-- Draw a Material elevation shadow under `shape` at this element's bounds:
+a Gaussian drop shadow displaced `elevation / 2` down with a blur of
+`elevation` (GPU: analytic SDF shadow; SDL renderer: a feathered ring
+tessellation sampling the same math). Append *before* `background` so the
+surface fill covers the shadow's umbra. Mirrors `Modifier.shadow`. -/
+def shadow (elevation : Dp) (shape : Shape := .rectangle)
+    (color : Color := Color.black.withAlpha 0.25) (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.shadow elevation shape color))
 
 /-- Clip content and children to `shape`. Mirrors `Modifier.clip`. -/
 def clip (shape : Shape) (m : Modifier := {}) : Modifier :=

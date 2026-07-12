@@ -200,6 +200,28 @@ every draw's output alpha). Mirrors `DrawScope.alpha` / a graphics-layer alpha. 
 def withAlpha (a : Float32) (body : DrawM α) : DrawM α :=
   withReader (fun c => { c with alpha := c.alpha * a }) body
 
+/-- Record `body` as an offscreen layer composited once at alpha `a` — real
+group opacity, no double-blending where the content overlaps itself (the GPU
+backend renders the content to a texture; the SDL backend flattens by folding
+`a` into the content, today's documented approximation). `bounds` is the
+composite region in local coordinates: content is composited within it (plus
+a 1 px AA margin), a documented deviation from Compose's unclipped
+`graphicsLayer`. `a ≥ 1` records no layer. The layer's own `a` is *not*
+folded into the recorded content — executors apply it at composite time (the
+ambient alpha stays folded into content as usual, so a layer primitive's
+`PrimState.alpha` is ignored by executors). Backs `Modifier.alpha`; mirrors
+`graphicsLayer { alpha = a }`. -/
+def withLayer (bounds : Rect) (a : Float32) (body : DrawM α) : DrawM α := do
+  if a ≥ 1.0 then
+    body
+  else
+    let ctx ← read
+    let sub ← IO.mkRef #[]
+    let r ← withReader (fun c => { c with sink := sub }) body
+    ctx.sink.modify
+      (·.push (.layer (stamp ctx) (bounds.translate ctx.translation) a (← sub.get)))
+    return r
+
 /-- Declare the size of the region `body` draws into (readable via
 `DrawScope.size`); the draw walk wraps `Modifier.drawBehind` blocks with the
 decorated wrapper's size. Mirrors `DrawScope.size` being part of the receiver. -/

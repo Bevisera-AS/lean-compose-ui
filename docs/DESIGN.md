@@ -274,7 +274,7 @@ wrapper chain around the node's inner measurable, old-Compose
 ```lean
 inductive Modifier.Elem
   | layout   (LayoutElem)      -- padding, size, offset, weight-data, align-data …
-  | draw     (DrawElem)        -- background, border, drawBehind, alpha, clip
+  | draw     (DrawElem)        -- background, border, shadow, drawBehind, alpha, clip
   | pointer  (PointerElem)     -- pointerInput handlers, hover, cursor shape
   | focus    (FocusElem)
   | semantics (SemanticsElem)  -- role/label, used by tests
@@ -307,6 +307,7 @@ drawRect / drawRoundRect / drawCircle / drawLine / drawArc
 drawText (run : TextRun) (topLeft)          -- via TextLayout.draw
 clipRect (r : Rect) (body) ; clipRoundRect (rr) (body)
 translate (o : Offset) (body) ; withAlpha (a) (body)
+withLayer (bounds) (alpha) (body)          -- group opacity (records a layer)
 ```
 
 `Brush` = `solid Color` | `linearGradient` (vertex colors make gradients free).
@@ -330,7 +331,9 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   fill/stroke, circle fill/stroke, arc stroke, line, polygon clip of a circle
   against a round-rect for bounded ripples; adaptive `⌈π/2 · r / 2px⌉`
   segments per corner, min 4). Layers flatten by folding alpha (documented
-  double-blend approximation).
+  double-blend approximation, pinned by a pixel test); elevation shadows
+  tessellate as feathered rings whose vertex alphas sample the same analytic
+  shadow function the GPU evaluates (`roundRectShadow`).
 - **`GpuBackend.lean`** (SDL_GPU, GPUI-style SDF instancing; `Gpu/*.lean`) —
   a pure encoder (`Encode.lean`) lowers the list into per-pipeline buffers +
   a flat `DrawCmd` list: axis-aligned rounded geometry under solid/two-stop
@@ -338,12 +341,17 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   in `Sdf.lean`); arcs, angled lines, the clipped ripple, multi-stop
   gradients → the **mesh pipeline** reusing the same CPU tessellation as SDL;
   text → **glyph-atlas quads** from SDL_ttf's GPU engine, snapped once per
-  run at the rounded run origin (the resize text-shimmer fix). One shared
-  `Gpu.Device` per process; MSL shaders compiled at runtime; premultiplied
-  blending with non-premultiplied vertex colors (interpolation matches SDL's).
-  Clips are per-command integer scissors with SDL's exact floor/ceil
-  expansion (M-b); the quad instances carry a rounded clip mask that takes
-  over in M-c, with real offscreen layers and analytic Gaussian shadows.
+  run at the rounded run origin (the resize text-shimmer fix); `rrShadow` →
+  instanced **analytic Gaussian shadows** (Evan Wallace's closed-form erf
+  integral, twinned in `Sdf.lean`); `layer` prims → **real offscreen layer
+  passes** (group opacity composites once — no double blend), textures from
+  a per-window pool (64 px-quantized, first-fit, trimmed after 120 idle
+  frames). One shared `Gpu.Device` per process; MSL shaders compiled at
+  runtime; premultiplied blending with non-premultiplied vertex colors
+  (interpolation matches SDL's). Clips are per-command integer scissors with
+  SDL's exact floor/ceil expansion, plus an in-shader rounded mask on every
+  quad-path instance — `PrimState.rounded` clips exactly on the GPU, and the
+  bounded ripple renders as a masked circle quad instead of a clipped mesh.
   No dummy-driver support, so it is never the test backend: the IR goldens
   cover it headless, and `lake exe gpu-probe` (runtime facts + offscreen
   pixel asserts through the real renderer) plus `scripts/smoke-gpu.sh` gate
@@ -354,8 +362,9 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
 time. `clipRoundRect` records the bounds clip AND (a) passes the rrect down
 in local coordinates so shape-aware draws geometrically clip at record time
 (covers ripple-in-button), and (b) stamps it in target coordinates on every
-prim (`PrimState.rounded`) so the GPU backend clips arbitrary content
-exactly. On the SDL backend arbitrary content under a rounded clip degrades
+prim (`PrimState.rounded`) — the GPU backend clips quad-path content exactly
+via the in-shader mask (mesh-fallback shapes and glyphs get the rectangular
+scissor). On the SDL backend arbitrary content under a rounded clip degrades
 to the rect clip — documented limitation.
 
 Draw order: node's draw modifiers (outer→inner: background under border
@@ -431,6 +440,10 @@ parked in the pump) runs steps 3–4 synchronously from within it — once per
 actual size change, deduping the several events each drag tick posts — so
 content reflows and timers/animations advance during the drag. A drag held
 motionless posts no events, so nothing can advance until the next tick.
+(A cosmetic content-lag wobble during the drag remains on both backends:
+SDL's presents — renderer and SDL_GPU/Metal alike — are asynchronous with no
+transactional-present hook, so frames land a beat behind the window frame;
+fixing it needs SDL changes. Documented punt.)
 
 **Overlays**: `Popup (anchor-relative positioning, onDismiss, focusable)` and
 `Dialog (scrim, Esc/click-outside dismiss)` compose their content into
@@ -516,7 +529,8 @@ clock only while subscribers exist, so an idle UI consumes no CPU.
   `primary`-tinted overlay at Material alpha tokens, animated via
   `animateFloatAsState`; press adds a bounded expanding-circle ripple
   (tessellated, clipped to shape) — cheap but convincing.
-- Widgets: `Surface`, `Text`, `Button` (filled/outlined/text), `IconButton`
+- Widgets: `Surface` (shape/border/`elevation` shadow; Menu/Dialog/Tooltip
+  surfaces default to 3/6/2 dp), `Text`, `Button` (filled/outlined/text), `IconButton`
   (vector-ish icons drawn with primitives), `Checkbox`, `RadioButton`,
   `Switch`, `Slider` (drag + click + arrow keys), `LinearProgressIndicator` +
   `CircularProgressIndicator` (arc), `TextField` (single-line, outlined:

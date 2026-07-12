@@ -171,7 +171,8 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
           (exit := fadeOut (spec := some animSpec) ++ shrinkVertically (spec := some animSpec)) do
         Surface (modifier := modifier.then widthMod |>.sizeIn (minWidth := some 112))
             (shape := shapes.medium) (color := some colors.surface)
-            (border := some { width := 1, color := colors.outline }) do
+            (border := some { width := 1, color := colors.outline })
+            (elevation := 3) do
           CompositionLocalProvider LocalMenuState (some menu) <|
             Column content (modifier := Modifier.padding (vertical := some 8))
 

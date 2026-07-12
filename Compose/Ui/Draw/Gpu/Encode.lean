@@ -20,17 +20,41 @@ Lowering per primitive:
 - `text` → **glyph vertices** (atlas quads snapped once per run at the
   rounded run origin — the shimmer fix; SDL_ttf's y-up data maps as
   `screen = origin + (x, −y)`, probe-verified).
-- `layer` → flattened with folded alpha in M-b (the SDL approximation);
-  offscreen compositing lands in M-c.
+- `rrShadow` → **shadow instances** (the analytic Gaussian shader; blur `≤ 0`
+  degrades to a hard offset fill quad, matching the tessellator).
+- `layer` (alpha `< 1`) → an **offscreen layer pass**: the content encodes
+  into its own command list with every coordinate shifted to the layer's
+  origin (`LayerEnc`; packed buffers are shared across passes), and the
+  parent list gets one `.layer` composite command. The composite region is
+  the recorded bounds ∩ clip plus a 1 px AA margin, snapped to whole px so
+  pixel-grid reasoning (text snapping) holds inside. Alpha `≥ 1` flattens
+  inline. Layers are emitted innermost-first — the render order.
 
 Clips: `PrimState.clip` becomes an integer scissor per command with the same
 floor/ceil expansion as the SDL backend's clip rect, so the two backends clip
-identically in M-b (`QuadInstance`'s in-shader rounded mask takes over on the
-GPU in M-c). Consecutive commands with equal kind/scissor/atlas merge.
+rectangularly identically. `PrimState.rounded` additionally becomes the
+in-shader rounded mask on every quad-path primitive — exact rounded clipping
+the SDL backend can only approximate (mesh/glyph/shadow content still gets
+the rectangular scissor; the ripple's `circleFillClipped` uses its recorded
+rrect as the mask, making the geometric clip exact too). Consecutive commands
+with equal kind/scissor/atlas merge.
 -/
 
 namespace Compose.Draw.Gpu
 open Compose.Draw
+
+/-- One encoded offscreen layer: its composite region (integral, in the
+coordinates of the pass that composites it — the target, or an enclosing
+layer), the group alpha, and the commands rendered into its texture (their
+coordinates and scissors are layer-local). -/
+structure LayerEnc where
+  /-- Composite region (whole-px `Rect`). -/
+  bounds : Rect
+  /-- Group alpha applied once at composite. -/
+  alpha : Float32
+  /-- The layer's own render-pass commands. -/
+  cmds : Array DrawCmd
+  deriving Repr, BEq, Inhabited
 
 /-- Encoder output: one packed buffer per pipeline plus the replay commands.
 `textsConsumed` is the number of text runs consumed (walk-order bookkeeping). -/
@@ -38,6 +62,9 @@ structure EncodeResult where
   /-- Packed `QuadInstance`s (`quadStride` bytes each). -/
   quads : ByteArray := .empty
   quadCount : Nat := 0
+  /-- Packed `ShadowInstance`s (`shadowStride` bytes each). -/
+  shadows : ByteArray := .empty
+  shadowCount : Nat := 0
   /-- Packed mesh vertices (`meshVertexStride` bytes each). -/
   meshVerts : ByteArray := .empty
   meshVertCount : Nat := 0
@@ -52,6 +79,9 @@ structure EncodeResult where
   glyphIdxCount : Nat := 0
   /-- Draws in paint order. -/
   cmds : Array DrawCmd := #[]
+  /-- Offscreen layers, innermost-first (their render order; `DrawCmd.layer`
+  indices point here). -/
+  layers : Array LayerEnc := #[]
   /-- Text runs consumed so far. -/
   textsConsumed : Nat := 0
 
@@ -69,6 +99,12 @@ def scissorOf : Option Rect → Option Sdl.Rect
 #guard scissorOf (some ⟨0.4, 0.6, 10.2, 19.5⟩) == some ⟨0, 0, 11, 20⟩
 #guard scissorOf none == none
 
+/-- The scissor of a recorded clip inside a pass whose coordinates are the
+record-time ones displaced by `shift` (zero for the main pass; a layer's
+negated origin inside it). -/
+private def scissorAt (clip : Option Rect) (shift : Offset) : Option Sdl.Rect :=
+  scissorOf (clip.map (·.translate shift))
+
 /-- Append a quad instance, extending the trailing `quads` command when the
 scissor matches (instances are always contiguous). -/
 private def pushQuad (st : EncodeResult) (q : QuadInstance)
@@ -82,6 +118,20 @@ private def pushQuad (st : EncodeResult) (q : QuadInstance)
     else
       { st with cmds := st.cmds.push (.quads idx 1 scissor) }
   | _ => { st with cmds := st.cmds.push (.quads idx 1 scissor) }
+
+/-- Append a shadow instance, extending the trailing `shadows` command when
+the scissor matches. -/
+private def pushShadow (st : EncodeResult) (sh : ShadowInstance)
+    (scissor : Option Sdl.Rect) : EncodeResult :=
+  let idx := st.shadowCount
+  let st := { st with shadows := sh.pack st.shadows, shadowCount := idx + 1 }
+  match st.cmds.back? with
+  | some (.shadows first count s) =>
+    if s == scissor then
+      { st with cmds := st.cmds.set! (st.cmds.size - 1) (.shadows first (count + 1) s) }
+    else
+      { st with cmds := st.cmds.push (.shadows idx 1 scissor) }
+  | _ => { st with cmds := st.cmds.push (.shadows idx 1 scissor) }
 
 /-- Append a tessellated mesh (the SDL-parity fallback path), folding the
 primitive's translation and alpha into the vertices exactly like
@@ -218,7 +268,8 @@ private def lowerShape : ShapeSpec → Option QuadInstance
                size := ⟨width, (p1.y - p0.y).abs⟩, bg0 := c, bg1 := c }
       else none
     | _ => none
-  | .circleFillClipped .. | .arcStroke .. => none
+  -- Handled by dedicated `encodePrim` arms (never reaches `lowerShape`).
+  | .circleFillClipped .. | .arcStroke .. | .rrShadow .. => none
 
 /-- Translate a local-coordinate quad to target px and fold the primitive
 alpha into its colors. -/
@@ -231,27 +282,89 @@ private def placeQuad (q : QuadInstance) (origin : Offset) (alpha : Float32) :
     bg1 := q.bg1.withAlpha (q.bg1.a * alpha)
     borderColor := q.borderColor.withAlpha (q.borderColor.a * alpha) }
 
+/-- Set a quad's in-shader rounded clip mask from a rounded rect already in
+the pass's final coordinates (elliptical corners degrade to the x radius,
+like the shape itself). -/
+private def maskQuadRR (q : QuadInstance) (rr : RoundRect) : QuadInstance :=
+  let rr := rr.normalize
+  { q with
+    clipOrigin := ⟨rr.rect.left, rr.rect.top⟩
+    clipSize := ⟨rr.rect.width, rr.rect.height⟩
+    clipRadiusTL := rr.topLeft.x, clipRadiusTR := rr.topRight.x
+    clipRadiusBR := rr.bottomRight.x, clipRadiusBL := rr.bottomLeft.x }
+
+/-- Apply the primitive's ambient rounded clip (recorded in render-target
+coordinates) as the quad's mask; `none` leaves the huge default (unmasked). -/
+private def maskQuad (q : QuadInstance) (rounded : Option RoundRect)
+    (shift : Offset) : QuadInstance :=
+  match rounded with
+  | none => q
+  | some rr => maskQuadRR q (rr.translate shift)
+
 /-! ## The walk -/
 
-/-- Encode one primitive (recursing into layers with folded alpha). -/
+/-- Encode one primitive. `shift` displaces record-time coordinates into the
+current pass's (zero for the main pass; a layer's negated snapped origin
+inside its content); `extraAlpha` is the folded alpha of enclosing
+`alpha ≥ 1` layers. -/
 private partial def encodePrim (texts : Array ResolvedRun) (extraAlpha : Float32)
-    (st : EncodeResult) : Prim → EncodeResult
+    (shift : Offset) (st : EncodeResult) : Prim → EncodeResult
   | .rect s color topLeft size =>
     if size.isEmpty then st
     else
       let alpha := s.alpha * extraAlpha
+      let c := color.withAlpha (color.a * alpha)
       pushQuad st
-        { origin := s.origin + topLeft, size
-          bg0 := color.withAlpha (color.a * alpha)
-          bg1 := color.withAlpha (color.a * alpha) }
-        (scissorOf s.clip)
+        (maskQuad { origin := s.origin + shift + topLeft, size, bg0 := c, bg1 := c }
+          s.rounded shift)
+        (scissorAt s.clip shift)
   | .shape s spec cached =>
     let alpha := s.alpha * extraAlpha
-    let scissor := scissorOf s.clip
-    match lowerShape spec with
-    | some q => pushQuad st (placeQuad q s.origin alpha) scissor
-    | none => pushMesh st (cached.getD spec.tessellate) s.origin alpha scissor
-  | .mesh s m => pushMesh st m s.origin (s.alpha * extraAlpha) (scissorOf s.clip)
+    let origin := s.origin + shift
+    let scissor := scissorAt s.clip shift
+    match spec with
+    | .rrShadow rr off blur color =>
+      if color.a * alpha <= 0 then st
+      else if blur <= 0 then
+        -- Degenerate hard shadow: a plain offset fill (the tessellator's
+        -- degenerate case), still under the ambient rounded mask.
+        let (o, sz, (tl, tr, br, bl)) := rrQuad (rr.translate off)
+        pushQuad st
+          (maskQuad (placeQuad
+            { origin := o, size := sz, radiusTL := tl, radiusTR := tr
+              radiusBR := br, radiusBL := bl, bg0 := color, bg1 := color }
+            origin alpha) s.rounded shift)
+          scissor
+      else
+        let rrn := (rr.translate (origin + off)).normalize
+        -- No in-shader mask on shadows (scissor only) — a shadow under a
+        -- rounded clip is not a production shape.
+        pushShadow st
+          { origin := ⟨rrn.rect.left, rrn.rect.top⟩
+            size := ⟨rrn.rect.width, rrn.rect.height⟩
+            color := color.withAlpha (color.a * alpha)
+            sigma := max 0.5 (blur / 2)
+            corner := rrn.topLeft.x }
+          scissor
+    | .circleFillClipped center radius rr brush =>
+      -- The bounded ripple: on the GPU the recorded rrect (local coordinates,
+      -- like `center`) becomes the exact in-shader mask of a circle quad —
+      -- no Sutherland–Hodgman mesh needed.
+      match quadBrush brush with
+      | some (bg0, bg1, gs, gd) =>
+        let q : QuadInstance :=
+          { origin := ⟨center.x - radius, center.y - radius⟩
+            size := ⟨radius * 2, radius * 2⟩
+            radiusTL := radius, radiusTR := radius
+            radiusBR := radius, radiusBL := radius
+            bg0, bg1, gradStart := gs, gradDir := gd }
+        pushQuad st (maskQuadRR (placeQuad q origin alpha) (rr.translate origin)) scissor
+      | none => pushMesh st (cached.getD spec.tessellate) origin alpha scissor
+    | _ =>
+      match lowerShape spec with
+      | some q => pushQuad st (maskQuad (placeQuad q origin alpha) s.rounded shift) scissor
+      | none => pushMesh st (cached.getD spec.tessellate) origin alpha scissor
+  | .mesh s m => pushMesh st m (s.origin + shift) (s.alpha * extraAlpha) (scissorAt s.clip shift)
   | .text s run =>
     let runIdx := st.textsConsumed
     let st := { st with textsConsumed := runIdx + 1 }
@@ -259,16 +372,39 @@ private partial def encodePrim (texts : Array ResolvedRun) (extraAlpha : Float32
     | none => st
     | some seqs =>
       -- Snap once per run in device px (the shimmer fix): intra-run subpixel
-      -- layout is preserved, the run origin lands on the pixel grid.
-      let origin : Offset := ⟨s.origin.x.round, s.origin.y.round⟩
-      seqs.foldl (pushGlyphSeq run.color (s.alpha * extraAlpha) origin (scissorOf s.clip)) st
-  | .layer _ _ alpha content =>
-    content.foldl (encodePrim texts (extraAlpha * alpha)) st
+      -- layout is preserved, the run origin lands on the pixel grid (`shift`
+      -- is integral, so snapping commutes with the layer displacement).
+      let origin : Offset := ⟨(s.origin.x + shift.x).round, (s.origin.y + shift.y).round⟩
+      seqs.foldl (pushGlyphSeq run.color (s.alpha * extraAlpha) origin (scissorAt s.clip shift)) st
+  | .layer s bounds alpha content =>
+    if alpha ≥ 1.0 then
+      -- No compositing needed: flatten inline (records don't produce these;
+      -- hand-built lists may).
+      content.foldl (encodePrim texts (extraAlpha * alpha) shift) st
+    else Id.run do
+      -- Composite region: bounds ∩ clip plus a 1 px AA margin, snapped to
+      -- whole px (kept ≥ 1×1 even when degenerate so the text-run walk stays
+      -- aligned with `resolveTexts`).
+      let r := match s.clip with
+        | some c => Rect.intersect bounds c
+        | none => bounds
+      let l := (r.left + shift.x - 1).floor
+      let t := (r.top + shift.y - 1).floor
+      let rt := max ((r.right + shift.x + 1).ceil) (l + 1)
+      let bt := max ((r.bottom + shift.y + 1).ceil) (t + 1)
+      let saved := st.cmds
+      let st := content.foldl (encodePrim texts extraAlpha (shift - ⟨l, t⟩))
+        { st with cmds := #[] }
+      let idx := st.layers.size
+      return { st with
+        cmds := saved.push (.layer idx (scissorAt s.clip shift))
+        layers := st.layers.push
+          { bounds := ⟨l, t, rt, bt⟩, alpha := alpha * extraAlpha, cmds := st.cmds } }
 
 /-- Encode a display list against its resolved text runs (in the same
 prim-walk order `Gpu.resolveTexts` produced them). -/
 def encode (list : DisplayList) (texts : Array ResolvedRun) : EncodeResult :=
-  list.foldl (encodePrim texts 1.0) {}
+  list.foldl (encodePrim texts 1.0 .zero) {}
 
 -- One crisp rect → one quad instance, one command, no tessellation output.
 #guard
@@ -301,13 +437,64 @@ def encode (list : DisplayList) (texts : Array ResolvedRun) : EncodeResult :=
   let g3 : Brush := .linearGradient #[(0, Color.red), (0.5, .green), (1, .blue)] ⟨0, 0⟩ ⟨40, 0⟩
   let r := encode #[.shape {} (.rrFill rr g2) none, .shape {} (.rrFill rr g3) none] #[]
   r.quadCount == 1 && r.meshIdxCount > 0
--- Layer content flattens with folded alpha (M-b): same instance count, and
--- the folded quad differs from the unfolded one only in its packed alpha.
+-- A full-alpha layer flattens inline (no offscreen pass).
 #guard
   let inner : Prim := .rect {} .red ⟨0, 0⟩ ⟨4, 4⟩
-  let r := encode #[.layer {} ⟨0, 0, 4, 4⟩ 0.5 #[inner]] #[]
-  let plain := encode #[inner] #[]
-  r.quadCount == 1 && r.cmds == #[.quads 0 1 none] && r.quads != plain.quads
+  let r := encode #[.layer {} ⟨0, 0, 4, 4⟩ 1.0 #[inner]] #[]
+  r.quadCount == 1 && r.cmds == #[.quads 0 1 none] && r.layers.isEmpty
+-- A translucent layer becomes an offscreen pass: bounds get the 1 px AA
+-- margin and whole-px snap, content coordinates shift to the layer origin,
+-- and the parent list holds one composite command.
+#guard
+  let inner : Prim := .rect {} .red ⟨10, 10⟩ ⟨4, 4⟩
+  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ 0.5 #[inner]] #[]
+  r.layers.size == 1 && r.cmds == #[.layer 0 none]
+    && r.layers[0]!.bounds == (⟨7, 7, 25, 25⟩ : Rect) && r.layers[0]!.alpha == 0.5
+    && r.layers[0]!.cmds == #[.quads 0 1 none]
+    && r.quads == (encode #[.rect {} .red ⟨3, 3⟩ ⟨4, 4⟩] #[]).quads
+-- Nested layers emit innermost-first; the outer layer composites the inner.
+#guard
+  let inner : Prim := .layer {} ⟨0, 0, 4, 4⟩ 0.5 #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]
+  let r := encode #[.layer {} ⟨0, 0, 8, 8⟩ 0.25 #[inner]] #[]
+  r.layers.size == 2 && r.cmds == #[.layer 1 none]
+    && r.layers[1]!.cmds == #[.layer 0 none] && r.layers[0]!.alpha == 0.5
+-- The ambient rounded clip becomes the quad's in-shader mask.
+#guard
+  let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8
+  let st : PrimState := { clip := some ⟨0, 0, 40, 40⟩, rounded := some rr }
+  let r := encode #[.rect st .red ⟨0, 0⟩ ⟨40, 40⟩] #[]
+  let want : QuadInstance :=
+    { origin := ⟨0, 0⟩, size := ⟨40, 40⟩, bg0 := .red, bg1 := .red
+      clipOrigin := ⟨0, 0⟩, clipSize := ⟨40, 40⟩
+      clipRadiusTL := 8, clipRadiusTR := 8, clipRadiusBR := 8, clipRadiusBL := 8 }
+  r.quads == want.pack .empty && r.cmds == #[.quads 0 1 (some ⟨0, 0, 40, 40⟩)]
+-- The bounded ripple lowers to a masked circle quad — no mesh.
+#guard
+  let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8
+  let r := encode #[.shape { origin := ⟨5, 5⟩ }
+    (.circleFillClipped ⟨20, 20⟩ 10 rr (.solid .red)) none] #[]
+  let want : QuadInstance :=
+    { origin := ⟨15, 15⟩, size := ⟨20, 20⟩
+      radiusTL := 10, radiusTR := 10, radiusBR := 10, radiusBL := 10
+      bg0 := .red, bg1 := .red, gradStart := ⟨5, 5⟩
+      clipOrigin := ⟨5, 5⟩, clipSize := ⟨40, 40⟩
+      clipRadiusTL := 8, clipRadiusTR := 8, clipRadiusBR := 8, clipRadiusBL := 8 }
+  r.quadCount == 1 && r.meshIdxCount == 0 && r.quads == want.pack .empty
+-- Shadows encode as analytic instances (offset applied, σ = blur/2) and
+-- consecutive ones merge; blur 0 degrades to a hard offset-fill quad.
+#guard
+  let sh : Prim := .shape {}
+    (.rrShadow (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) ⟨0, 2⟩ 4 (Color.black.withAlpha 0.25)) none
+  let r := encode #[sh, sh] #[]
+  let want : ShadowInstance :=
+    { origin := ⟨0, 2⟩, size := ⟨40, 40⟩, color := Color.black.withAlpha 0.25
+      sigma := 2, corner := 8 }
+  r.shadowCount == 2 && r.cmds == #[.shadows 0 2 none]
+    && r.shadows == want.pack (want.pack .empty)
+#guard
+  let r := encode #[.shape {}
+    (.rrShadow (RoundRect.ofRect ⟨0, 0, 10, 10⟩) ⟨0, 2⟩ 0 .black) none] #[]
+  r.shadowCount == 0 && r.quadCount == 1
 -- Consecutive meshes merge into one indexed draw with absolute indices.
 #guard
   let arc : Prim := .shape {} (.arcStroke ⟨50, 50⟩ 20 0 3 4 (.solid .blue)) none

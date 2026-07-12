@@ -51,9 +51,11 @@ def create (window : Sdl.Window) : IO RenderBackend := do
     setVSync := fun target => applyVSync dev window target
     sdlRenderer? := none
     dispose := do
-      -- Wait for in-flight frames before the swapchain goes away; buffers,
-      -- pipelines and the sampler are released by their finalizers.
+      -- Wait for in-flight frames before the swapchain goes away; release
+      -- the renderer's pooled textures and buffers deterministically
+      -- (pipelines and the sampler fall to their finalizers).
       dev.waitForIdle
+      renderer.dispose
       dev.releaseWindow window }
 
 end GpuBackend

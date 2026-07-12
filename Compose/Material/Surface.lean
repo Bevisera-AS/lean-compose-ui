@@ -11,8 +11,8 @@ border), content clipped to the shape, and — the part every widget builds on
 — the *content color contract*: `Surface` re-provides `LocalContentColor`
 (and recolors `LocalTextStyle`) to the `on*` pair of its container color, so
 text and marks inside automatically contrast with the container. Mirrors
-`androidx.compose.material3.Surface` (minus elevation/tonal overlays — no
-shadows in the SDL renderer; a documented M9 cut).
+`androidx.compose.material3.Surface` (shadow elevation via `Modifier.shadow`;
+minus tonal overlays).
 
 `LocalContentColor` itself is declared in `Theme.lean` (import-cycle
 constraint, documented there).
@@ -28,18 +28,20 @@ structure BorderStroke where
 /-- A shaped, colored container providing the content color for what's
 inside. `color` defaults to the theme's `surface`; `contentColor` defaults to
 the scheme's `on*` pair for `color` (or the ambient content color when
-`color` is no scheme role). Content is clipped to `shape`. Mirrors
-`androidx.compose.material3.Surface`. -/
+`color` is no scheme role). Content is clipped to `shape`; `elevation > 0`
+draws a Material drop shadow under the shape (`Modifier.shadow`). Mirrors
+`androidx.compose.material3.Surface` (shadow elevation; no tonal overlays). -/
 def Surface (content : Composable Unit := pure ())
     (modifier : Modifier := {}) (shape : Shape := .rectangle)
     (color : Option Color := none) (contentColor : Option Color := none)
-    (border : Option BorderStroke := none) : Composable Unit := do
+    (border : Option BorderStroke := none) (elevation : Dp := 0) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let ambientContent ← LocalContentColor.current
   let container := color.getD colors.surface
   let resolvedContent := contentColor.getD
     ((colors.contentColorFor container).getD ambientContent)
-  let m := modifier.background container shape
+  let m := (if elevation > 0 then modifier.shadow elevation shape else modifier)
+    |>.background container shape
     |>.then (match border with
              | some b => Modifier.border b.width b.color shape
              | none => {})

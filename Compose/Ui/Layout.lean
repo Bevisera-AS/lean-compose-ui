@@ -130,12 +130,26 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
         let mesh ← n.cachedMesh rd.elemIdx spec
         DrawScope.translate off (DrawScope.drawShape spec (some mesh))
         cont
+      | .shadow elevation shape color =>
+        let epx := ctx.density.dpToPx elevation
+        if epx > 0 && color.a > 0 then
+          -- Material elevation lowering: drop offset elevation/2 down, blur
+          -- = elevation. The mesh is the SDL fallback (cached like any shape
+          -- element); the GPU backend renders the spec analytically.
+          let spec : Draw.ShapeSpec :=
+            .rrShadow (shape.toRoundRect sz ctx.density) ⟨0, epx / 2⟩ epx color
+          let mesh ← n.cachedMesh rd.elemIdx spec
+          DrawScope.translate off (DrawScope.drawShape spec (some mesh))
+        cont
       | .clip .rectangle =>
         DrawScope.clipRect (Rect.ofOffsetSize off sz) cont
       | .clip shape =>
         DrawScope.clipRoundRect ((shape.toRoundRect sz ctx.density).translate off) cont
       | .alpha a =>
-        DrawScope.withAlpha a cont
+        -- Group opacity: record an offscreen layer over the wrapper bounds so
+        -- backends with render-to-texture composite once (`a ≥ 1` records
+        -- nothing; the SDL backend flattens the layer by folding).
+        DrawScope.withLayer (Rect.ofOffsetSize off sz) a cont
       | .drawBehind block =>
         DrawScope.translate off (DrawScope.withSize sz block)
         cont

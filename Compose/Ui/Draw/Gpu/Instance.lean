@@ -89,6 +89,39 @@ def QuadInstance.pack (q : QuadInstance) (b : ByteArray) : ByteArray := Id.run d
 
 #guard (({} : QuadInstance).pack .empty).size == quadStride
 
+/-! ## Shadow instances (the analytic Gaussian pipeline) -/
+
+/-- One instance of the shadow pipeline: a Gaussian-blurred rounded rect
+(Evan Wallace's analytic form — the fragment shader is the MSL twin of
+`Gpu.Sdf.shadow`). The drop-shadow offset is already applied to `origin`;
+the vertex shader inflates the quad by `3σ + 1` px on every side.
+48 bytes = 3 `float4` attributes. -/
+structure ShadowInstance where
+  /-- Shadow-casting rect (offset applied) in target px. -/
+  origin : Offset := .zero
+  size : Size := .zero
+  /-- Shadow color (non-premultiplied; the fragment premultiplies after the
+  blurred coverage). -/
+  color : Color := ⟨0, 0, 0, 0⟩
+  /-- Gaussian standard deviation (`blur / 2`). -/
+  sigma : Float32 := 1
+  /-- Circular corner radius (per-corner radii degrade to the top-left one —
+  the analytic form integrates a single corner). -/
+  corner : Float32 := 0
+  deriving Repr, BEq, Inhabited
+
+/-- Bytes-per-instance of the shadow pipeline. -/
+def shadowStride : Nat := 48
+
+/-- Pack one `ShadowInstance` (48 bytes; attribute order matches the
+`shadow_vertex` MSL `[[attribute(n)]]` declarations). -/
+def ShadowInstance.pack (s : ShadowInstance) (b : ByteArray) : ByteArray :=
+  let b := pushF32 (pushF32 (pushF32 (pushF32 b s.origin.x) s.origin.y) s.size.width) s.size.height
+  let b := pushColor b s.color
+  pushF32 (pushF32 (pushF32 (pushF32 b s.sigma) s.corner) 0) 0
+
+#guard (({} : ShadowInstance).pack .empty).size == shadowStride
+
 /-! ## Mesh and glyph vertices -/
 
 /-- Bytes-per-vertex of the mesh pipeline: `pos float2 + color float4`. -/
@@ -130,6 +163,11 @@ inductive DrawCmd where
   /-- `count` glyph indices starting at index `first`, sampling the frame's
   atlas texture `atlas` (an index into the resolved atlas table). -/
   | glyphs (first count : Nat) (atlas : Nat) (scissor : Option Sdl.Rect)
+  /-- `count` shadow instances starting at instance `first`. -/
+  | shadows (first count : Nat) (scissor : Option Sdl.Rect)
+  /-- Composite offscreen layer `idx` (an index into the frame's layer table)
+  as one premultiplied textured quad at the layer's bounds. -/
+  | layer (idx : Nat) (scissor : Option Sdl.Rect)
   deriving Repr, BEq, Inhabited
 
 /-! ## Resolved text input

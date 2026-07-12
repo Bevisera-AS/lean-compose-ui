@@ -72,6 +72,31 @@ private def ambientState : IO Unit := do
     , "shape @(100,0) clip=(100,0,140,40) rounded=rr(100,0,140,40)r8 \
        circleFillClipped c=(20,20) r=30 rr(0,0,40,40)r8 #ff0000ff" ]
 
+private def layersAndShadows : IO Unit := do
+  -- `withLayer` records a layer primitive wrapping its content, bounds in
+  -- render-target coordinates; the layer's own alpha is NOT folded into the
+  -- content (executors apply it once at composite).
+  let l ← rec do
+    DrawScope.translate ⟨10, 0⟩ do
+      DrawScope.withLayer ⟨0, 0, 20, 20⟩ 0.5 do
+        DrawScope.drawRect (.solid .red) ⟨1, 1⟩ ⟨4, 4⟩
+  checkBriefs "layer" l
+    [ s!"layer @(10,0) bounds=(10,0,30,20) a={Draw.fmtF 0.5}\n"
+        ++ "  rect @(10,0) #ff0000ff tl=(1,1) sz=4x4" ]
+  -- Full alpha records no layer at all.
+  let l ← rec do
+    DrawScope.withLayer ⟨0, 0, 10, 10⟩ 1.0 do
+      DrawScope.drawRect (.solid .red) ⟨0, 0⟩ ⟨2, 2⟩
+  checkBriefs "full-alpha layer elided" l
+    [ "rect @(0,0) #ff0000ff tl=(0,0) sz=2x2" ]
+  -- The shadow spec records like any shape (SDL tessellates it, GPU renders
+  -- the analytic form).
+  let l ← rec do
+    DrawScope.drawShape
+      (.rrShadow (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) ⟨0, 2⟩ 4 (Color.black.withAlpha 0.25))
+  checkBriefs "shadow spec" l
+    [ "shape @(0,0) rrShadow rr(0,0,40,40)r8 off=(0,2) blur=4 #00000040" ]
+
 private def wellFormedness : IO Unit := do
   let (list, _) ← DrawScope.record {} do
     DrawScope.drawRoundRect (.solid .red) (RoundRect.circular ⟨0, 0, 40, 40⟩ 8)
@@ -115,11 +140,30 @@ private def composedScene : IO Unit := do
       let (list2, _) ← DrawScope.record density t.ctx.root.drawTree
       checkEq "re-recording the unchanged tree is stable"
         (list2.map (·.brief)).toList briefs.toList
+  -- `Modifier.shadow` and `Modifier.alpha` through the real draw walk: an
+  -- rrShadow spec (cached like any shape element) and a layer prim.
+  runComposeTest
+    (Column do
+      Box (modifier := Modifier.size 40 20 |>.shadow 4 |>.background Color.red)
+      Box (modifier := Modifier.size 20 10 |>.alpha 0.5 |>.background Color.blue))
+    do
+      awaitIdle
+      let t ← uiTest
+      let density ← t.ctx.density
+      let (list, _) ← DrawScope.record density t.ctx.root.drawTree
+      let briefs := list.map (·.brief)
+      check "Modifier.shadow records a cached rrShadow spec"
+        (briefs.any (· == "shape @(0,0) rrShadow rr(0,0,40,20)r0 off=(0,2) blur=4 #00000040 cached"))
+      check "Modifier.alpha records a layer over the wrapper bounds"
+        (briefs.any fun b =>
+          b.startsWith s!"layer @(0,20) bounds=(0,20,20,30) a={Draw.fmtF 0.5}"
+            && (b.splitOn "\n").any (·.trim == "rect @(0,20) #0000ffff tl=(0,0) sz=20x10"))
 
 /-- The DisplayList group. -/
 def run : IO Unit := do
   scenario "record: basic ops and the crisp-rect fast path" basicOps
   scenario "record: translation/clip/alpha resolve onto prims" ambientState
+  scenario "record: layers and shadows" layersAndShadows
   scenario "record: well-formedness invariants" wellFormedness
   scenario "record: composed scene emits rects, cached shapes, text" composedScene
 

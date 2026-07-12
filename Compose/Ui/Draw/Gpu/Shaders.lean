@@ -11,14 +11,20 @@ accepts MSL source) and the three M-b graphics pipelines:
   attributes instance-rate at `quadStride`), SDF fill/stroke coverage plus a
   rounded clip mask. The SDF/coverage formulas are twins of the `#guard`-tested
   Lean functions in `Gpu/Sdf.lean` (cited by name below).
+- **shadow**: instanced quads evaluating Evan Wallace's analytic Gaussian
+  rounded-rect shadow (twin of `Gpu.Sdf.shadow`/`shadowX`/`erf4`/`gaussian`).
 - **mesh**: indexed triangles from the CPU tessellator (SDL-parity fallback).
 - **glyph**: indexed textured triangles over SDL_ttf's GPU glyph atlas.
+- **layer**: indexed textured triangles compositing an offscreen layer — the
+  texel is already premultiplied, so the fragment just scales by the group
+  alpha carried in the vertex color.
 
 All pipelines blend premultiplied (`one / oneMinusSrcAlpha`); colors travel
-non-premultiplied in vertex data and fragments premultiply after coverage, so
-interpolation matches the SDL backend's non-premultiplied vertex colors.
-Uniforms: one 16-byte `Globals { float2 viewport }` at vertex `[[buffer(0)]]`
-(pushed once per command buffer); the shadow and layer pipelines land in M-c.
+non-premultiplied in vertex data and fragments premultiply after coverage
+(except `layer`, whose input is premultiplied), so interpolation matches the
+SDL backend's non-premultiplied vertex colors. Uniforms: one 16-byte
+`Globals { float2 viewport }` at vertex `[[buffer(0)]]`, pushed once per
+render pass (layer passes remap NDC to their texture's extent).
 -/
 
 namespace Compose.Draw.Gpu
@@ -121,6 +127,83 @@ fragment float4 quad_fragment(QuadOut in [[stage_in]]) {
 }
 "
 
+/-- The shadow pipeline's MSL: an instanced quad inflated `3σ + 1` px around
+the shadow-casting rect, whose fragment evaluates the analytic Gaussian
+rounded-rect shadow — `erf4`/`gauss`/`shadow_x`/the quadrature loop are twins
+of `Gpu.Sdf.erf4`/`gaussian`/`shadowX`/`shadow`. -/
+private def shadowMsl : String := mslPrelude ++ "
+static inline float erf4(float x) {
+  float s = x < 0.0 ? -1.0 : 1.0;
+  float a = abs(x);
+  float t = 1.0 + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+  float t2 = t * t;
+  return s - s / (t2 * t2);
+}
+
+static inline float gauss(float x, float sigma) {
+  return exp(-(x * x) / (2.0 * sigma * sigma)) / (2.50662827463 * sigma);
+}
+
+static inline float shadow_x(float x, float y, float sigma, float corner,
+                             float halfW, float halfH) {
+  float delta = min(halfH - corner - abs(y), 0.0);
+  float curved = halfW - corner + sqrt(max(corner * corner - delta * delta, 0.0));
+  float lo = 0.5 + 0.5 * erf4((x - curved) * (0.70710678 / sigma));
+  float hi = 0.5 + 0.5 * erf4((x + curved) * (0.70710678 / sigma));
+  return hi - lo;
+}
+
+struct ShadowIn {
+  float4 bounds [[attribute(0)]];
+  float4 color  [[attribute(1)]];
+  float4 params [[attribute(2)]];
+};
+
+struct ShadowOut {
+  float4 pos [[position]];
+  float2 world;
+  float4 bounds [[flat]];
+  float4 color  [[flat]];
+  float2 params [[flat]];
+};
+
+vertex ShadowOut shadow_vertex(ShadowIn in [[stage_in]], uint vid [[vertex_id]],
+                               constant Globals& g [[buffer(0)]]) {
+  float inflate = in.params.x * 3.0 + 1.0;
+  float2 corner = float2(float(vid & 1u), float(vid >> 1u));
+  float2 p = in.bounds.xy - inflate + corner * (in.bounds.zw + 2.0 * inflate);
+  ShadowOut out;
+  out.pos = to_ndc(p, g.viewport);
+  out.world = p;
+  out.bounds = in.bounds;
+  out.color = in.color;
+  out.params = in.params.xy;
+  return out;
+}
+
+fragment float4 shadow_fragment(ShadowOut in [[stage_in]]) {
+  float sigma = in.params.x;
+  float corner = in.params.y;
+  float2 hs = in.bounds.zw * 0.5;
+  float2 pt = in.world - (in.bounds.xy + hs);
+  float low = pt.y - hs.y;
+  float high = pt.y + hs.y;
+  float start = clamp(-3.0 * sigma, low, high);
+  float stop = clamp(3.0 * sigma, low, high);
+  float step = (stop - start) / 4.0;
+  float y = start + step * 0.5;
+  float value = 0.0;
+  for (int i = 0; i < 4; i++) {
+    value += shadow_x(pt.x, pt.y - y, sigma, corner, hs.x, hs.y)
+               * gauss(y, sigma) * step;
+    y += step;
+  }
+  float cov = value;
+  float4 src = in.color;
+  return float4(src.rgb * src.a * cov, src.a * cov);
+}
+"
+
 /-- The mesh pipeline's MSL: positions in target px, interpolated
 non-premultiplied colors, premultiplied on output — the CPU tessellator's
 feathered AA rasterizes exactly as on the SDL backend. -/
@@ -182,6 +265,39 @@ fragment float4 tex_fragment(TexOut in [[stage_in]],
 }
 "
 
+/-- The layer-composite pipeline's MSL: same vertex layout as the glyph
+pipeline, but the sampled texel is an offscreen layer's *premultiplied*
+pixels — the fragment scales all four channels by the group alpha
+(`color.a`) and must not re-premultiply. -/
+private def layerMsl : String := mslPrelude ++ "
+struct TexIn {
+  float2 pos   [[attribute(0)]];
+  float2 uv    [[attribute(1)]];
+  float4 color [[attribute(2)]];
+};
+
+struct TexOut {
+  float4 pos [[position]];
+  float2 uv;
+  float4 color;
+};
+
+vertex TexOut layer_vertex(TexIn in [[stage_in]],
+                           constant Globals& g [[buffer(0)]]) {
+  TexOut out;
+  out.pos = to_ndc(in.pos, g.viewport);
+  out.uv = in.uv;
+  out.color = in.color;
+  return out;
+}
+
+fragment float4 layer_fragment(TexOut in [[stage_in]],
+                               texture2d<float> layer [[texture(0)]],
+                               sampler smp [[sampler(0)]]) {
+  return layer.sample(smp, in.uv) * in.color.a;
+}
+"
+
 /-- The 16-byte `Globals` uniform (viewport size + pad). -/
 def packGlobals (w h : Float32) : ByteArray := Id.run do
   let push (b : ByteArray) (f : Float32) : ByteArray :=
@@ -200,14 +316,18 @@ private def premulBlend : ColorTargetBlendState :=
     alphaBlendOp := .add
     enableBlend := true }
 
-/-- The M-b pipeline set for one color-target format. -/
+/-- The pipeline set for one color-target format. -/
 structure Pipelines where
   /-- Instanced SDF quads (fills, strokes, circles, axis-aligned lines). -/
   quad : GraphicsPipeline
+  /-- Instanced analytic Gaussian shadows. -/
+  shadow : GraphicsPipeline
   /-- Indexed CPU-tessellated triangles (the SDL-parity fallback). -/
   mesh : GraphicsPipeline
   /-- Indexed glyph-atlas triangles. -/
   glyph : GraphicsPipeline
+  /-- Indexed premultiplied layer-composite quads. -/
+  layer : GraphicsPipeline
 
 /-- Compile the MSL shaders and build the three pipelines against `target`
 (the swapchain's native format for on-screen rendering; rgba8 for offscreen
@@ -236,6 +356,21 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
       targetInfo }
   quadVs.release
   quadFs.release
+  -- shadow: one instance-rate vertex buffer, 3 float4 attributes
+  let shadowVs ← shader shadowMsl "shadow_vertex" .vertex (uniforms := 1)
+  let shadowFs ← shader shadowMsl "shadow_fragment" .fragment
+  let shadow ← dev.createGraphicsPipeline
+    { vertexShader := shadowVs, fragmentShader := shadowFs
+      vertexInputState :=
+        { vertexBufferDescriptions :=
+            #[{ slot := 0, pitch := UInt32.ofNat shadowStride, inputRate := .instance }]
+          vertexAttributes := (Array.range 3).map fun i =>
+            { location := UInt32.ofNat i, bufferSlot := 0, format := .float4
+              offset := UInt32.ofNat (i * 16) } }
+      primitiveType := .triangleStrip
+      targetInfo }
+  shadowVs.release
+  shadowFs.release
   -- mesh: pos float2 @0, color float4 @8
   let meshVs ← shader meshMsl "mesh_vertex" .vertex (uniforms := 1)
   let meshFs ← shader meshMsl "mesh_fragment" .fragment
@@ -265,6 +400,21 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
       targetInfo }
   glyphVs.release
   glyphFs.release
-  return { quad := quad, mesh := mesh, glyph := glyph }
+  -- layer: the glyph vertex layout with the premultiplied-composite fragment
+  let layerVs ← shader layerMsl "layer_vertex" .vertex (uniforms := 1)
+  let layerFs ← shader layerMsl "layer_fragment" .fragment (samplers := 1)
+  let layer ← dev.createGraphicsPipeline
+    { vertexShader := layerVs, fragmentShader := layerFs
+      vertexInputState :=
+        { vertexBufferDescriptions :=
+            #[{ slot := 0, pitch := UInt32.ofNat texVertexStride }]
+          vertexAttributes :=
+            #[{ location := 0, bufferSlot := 0, format := .float2, offset := 0 },
+              { location := 1, bufferSlot := 0, format := .float2, offset := 8 },
+              { location := 2, bufferSlot := 0, format := .float4, offset := 16 }] }
+      targetInfo }
+  layerVs.release
+  layerFs.release
+  return { quad := quad, shadow := shadow, mesh := mesh, glyph := glyph, layer := layer }
 
 end Compose.Draw.Gpu

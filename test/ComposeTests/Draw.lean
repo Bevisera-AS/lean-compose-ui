@@ -120,4 +120,35 @@ def run : IO Unit := do
     check "gradient: right endpoint ≈ blue" (colorNear (← shot.readPixel 49 30) 0 0 255 24)
     check "gradient: midpoint ≈ purple" (colorNear (← shot.readPixel 30 30) 128 0 128 12)
 
+  -- 8. elevation shadow fallback (rrShadow tessellation): dark under the
+  -- shape, a penumbra just outside the edge, untouched far away
+  do
+    let ren ← mkRen 128 128
+    ren.setDrawColor 255 255 255 255
+    ren.clear
+    DrawScope.run ren {} do
+      drawShape (.rrShadow (RoundRect.ofRect ⟨40, 40, 80, 80⟩) ⟨0, 0⟩ 8 Color.black)
+    let shot ← ren.readPixels
+    check "shadow: umbra under the shape is dark" (colorNear (← shot.readPixel 60 60) 0 0 0 40)
+    let edge ← shot.readPixel 85 60   -- 5 px outside the right edge, σ = 4
+    check s!"shadow: penumbra outside the edge is gray (got {showColor edge})"
+      (40 < edge.r.toNat && edge.r.toNat < 245)
+    check "shadow: far away untouched" (colorNear (← shot.readPixel 120 60) 255 255 255)
+
+  -- 9. layer flatten on SDL: the layer alpha folds into the content, so
+  -- self-overlap double-blends — the documented approximation this pins
+  -- (the GPU backend composites the layer once instead)
+  do
+    let ren ← mkRen 128 128
+    clearBlack ren
+    DrawScope.run ren {} do
+      DrawScope.withLayer ⟨0, 0, 100, 100⟩ 0.5 do
+        drawRect (.solid Color.red) ⟨10, 10⟩ ⟨40, 40⟩
+        drawRect (.solid Color.red) ⟨30, 10⟩ ⟨40, 40⟩
+    let shot ← ren.readPixels
+    check "layer flatten: single-covered region ≈ 50% red"
+      (colorNear (← shot.readPixel 15 30) 128 0 0)
+    check "layer flatten: overlap double-blends to ≈ 75% red (SDL approximation)"
+      (colorNear (← shot.readPixel 45 30) 191 0 0)
+
 end Tests.Draw

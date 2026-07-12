@@ -6,11 +6,18 @@ import Compose.Ui.Draw.Gpu.TextEngine
 # GPU frame renderer (`Compose/Ui/Draw/Gpu/Renderer.lean`)
 
 Per-window GPU state and the frame lifecycle: resolve text (IO) → encode
-(pure) → grow GPU buffers (2×, never shrink) → one transfer-buffer write +
-copy pass (`cycle := true` throughout — probe-verified to preserve in-flight
-data) → acquire the swapchain texture (blocking or not per `mayBlock`;
-`none` still submits the copy work and reports a skipped frame) → one render
-pass replaying the command list → submit (present is implicit).
+(pure) → acquire layer textures from the pool + grow GPU buffers (2×, never
+shrink) → one transfer-buffer write + copy pass (`cycle := true` throughout —
+probe-verified to preserve in-flight data) → acquire the swapchain texture
+(blocking or not per `mayBlock`; `none` still submits the copy work and
+reports a skipped frame) → one render pass per offscreen layer
+(innermost-first, cleared transparent) then the target pass, each replaying
+its command list → submit (present is implicit).
+
+Layer textures come from a per-window pool: dimensions quantized up to 64 px,
+first-fit ≥ the request, entries released after sitting idle for
+`poolTrimAge` frames — steady-state animation reuses the same textures with
+`cycle := true` semantics from the render-pass clear.
 
 One `Gpu.Device` is shared per process (lazily created, claiming every GPU
 window); pipelines and the sampler live in this structure so they stay
@@ -44,11 +51,27 @@ private structure Slot where
 /-- Per-window frame buffers, grown geometrically and never shrunk. -/
 private structure FrameBuffers where
   quad : Option Slot := none
+  shadow : Option Slot := none
   meshV : Option Slot := none
   meshI : Option Slot := none
   glyphV : Option Slot := none
   glyphI : Option Slot := none
+  layerV : Option Slot := none
+  layerI : Option Slot := none
   transfer : Option TransferBuffer := none
+
+/-- One pooled offscreen layer texture (64 px-quantized dimensions). -/
+private structure PoolEntry where
+  tex : Texture
+  w : UInt32
+  h : UInt32
+  /-- Frames since last use (released past `poolTrimAge`). -/
+  idle : Nat := 0
+  /-- Claimed by the frame being prepared. -/
+  used : Bool := false
+
+/-- Frames a pooled layer texture may sit idle before release. -/
+private def poolTrimAge : Nat := 120
 
 /-- Per-window GPU renderer state. -/
 structure GpuRenderer where
@@ -59,10 +82,13 @@ structure GpuRenderer where
   /-- Pipelines against the window's swapchain format (kept reachable —
   binds do not retain). -/
   pipelines : Pipelines
-  /-- Glyph-atlas sampler (nearest — glyphs are drawn 1:1 pixel-snapped). -/
+  /-- Glyph-atlas / layer sampler (nearest — both are drawn 1:1
+  pixel-snapped). -/
   sampler : Sampler
   /-- Frame buffers (mutable: grown across frames). -/
   private buffers : IO.Ref FrameBuffers
+  /-- Offscreen layer texture pool. -/
+  private pool : IO.Ref (Array PoolEntry)
 
 /-- Create the per-window renderer state for an already-claimed window. -/
 def GpuRenderer.create (dev : Device) (window : Sdl.Window) : IO GpuRenderer := do
@@ -73,7 +99,8 @@ def GpuRenderer.create (dev : Device) (window : Sdl.Window) : IO GpuRenderer := 
              { minFilter := .nearest, magFilter := .nearest
                addressModeU := .clampToEdge, addressModeV := .clampToEdge
                addressModeW := .clampToEdge }
-           buffers := ← IO.mkRef {} }
+           buffers := ← IO.mkRef {}
+           pool := ← IO.mkRef #[] }
 
 /-- Round `n` up to a 16-byte boundary (transfer-region alignment). -/
 private def align16 (n : Nat) : Nat := (n + 15) / 16 * 16
@@ -107,6 +134,75 @@ private def uploadRegion (cp : CopyPass) (tb : TransferBuffer) (offset : Nat)
   cp.uploadToBuffer { buffer := tb, offset := UInt32.ofNat offset }
     { buffer := s.buffer, size := UInt32.ofNat bytes.size } (cycle := true)
 
+/-- Quantize a (whole-px, positive) layer extent up to a multiple of 64. -/
+private def quantize64 (x : Float32) : UInt32 :=
+  let n := max 1 x.toUInt32
+  (n + 63) / 64 * 64
+
+/-- Acquire one pooled texture per encoded layer (first-fit ≥ the quantized
+request, creating on miss), then age and trim the pool: entries idle past
+`poolTrimAge` frames are released. Returns the textures with their (pool)
+dimensions, parallel to `layers`. -/
+private def acquireLayerTextures (r : GpuRenderer) (fmt : TextureFormat)
+    (layers : Array LayerEnc) : IO (Array (Texture × UInt32 × UInt32)) := do
+  let mut pool := (← r.pool.get).map fun e => { e with used := false }
+  let mut out : Array (Texture × UInt32 × UInt32) := Array.emptyWithCapacity layers.size
+  for l in layers do
+    let w := quantize64 l.bounds.width
+    let h := quantize64 l.bounds.height
+    let mut found : Option (Nat × PoolEntry) := none
+    let mut j := 0
+    for e in pool do
+      if found.isNone && !e.used && e.w ≥ w && e.h ≥ h then
+        found := some (j, e)
+      j := j + 1
+    match found with
+    | some (i, e) =>
+      pool := pool.modify i ({ · with used := true, idle := 0 })
+      out := out.push (e.tex, e.w, e.h)
+    | none =>
+      let tex ← r.dev.createTexture
+        { format := fmt, usage := TextureUsageFlags.sampler ||| .colorTarget
+          width := w, height := h }
+      pool := pool.push { tex, w, h, used := true }
+      out := out.push (tex, w, h)
+  let mut kept : Array PoolEntry := #[]
+  for e in pool do
+    if e.used then
+      kept := kept.push e
+    else if e.idle + 1 ≥ poolTrimAge then
+      e.tex.release
+    else
+      kept := kept.push { e with idle := e.idle + 1 }
+  r.pool.set kept
+  return out
+
+/-- The packed composite quads of the frame's layers: layer `i` owns vertices
+`4i..4i+3` and indices `6i..6i+5` (so `DrawCmd.layer i` draws at a fixed
+offset), positioned at the layer bounds with UVs covering the content's
+fraction of the pooled texture and the group alpha in the vertex color. -/
+private def layerComposites (layers : Array LayerEnc)
+    (texs : Array (Texture × UInt32 × UInt32)) : ByteArray × ByteArray := Id.run do
+  let mut verts := ByteArray.empty
+  let mut idx := ByteArray.empty
+  let mut i := 0
+  for l in layers do
+    let (u, v) := match texs[i]? with
+      | some (_, tw, th) =>
+        (l.bounds.width / Float32.ofNat tw.toNat, l.bounds.height / Float32.ofNat th.toNat)
+      | none => (1, 1)
+    let b := l.bounds
+    let c := Color.white.withAlpha l.alpha
+    verts := packTexVertex verts ⟨b.left, b.top⟩ ⟨0, 0⟩ c
+    verts := packTexVertex verts ⟨b.right, b.top⟩ ⟨u, 0⟩ c
+    verts := packTexVertex verts ⟨b.left, b.bottom⟩ ⟨0, v⟩ c
+    verts := packTexVertex verts ⟨b.right, b.bottom⟩ ⟨u, v⟩ c
+    let base := UInt32.ofNat (4 * i)
+    for j in ([0, 1, 2, 1, 3, 2] : List UInt32) do
+      idx := pushU32 idx (base + j)
+    i := i + 1
+  return (verts, idx)
+
 /-- Clamp a scissor to the render-target extent (Metal validation requires
 scissors inside the target; recorded clips can exceed it). -/
 private def clampScissor (s : Sdl.Rect) (w h : Int32) : Sdl.Rect :=
@@ -116,18 +212,20 @@ private def clampScissor (s : Sdl.Rect) (w h : Int32) : Sdl.Rect :=
   let b := min (s.y + s.h) h
   ⟨x, y, max 0 (r - x), max 0 (b - y)⟩
 
-/-- Replay the encoded command list into an open render pass: bind pipelines
-and buffers lazily on kind switches, apply scissors on change, one draw per
-command. -/
-private def replay (r : GpuRenderer) (rp : RenderPass) (enc : EncodeResult)
-    (atlases : Array Texture) (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
+/-- Replay one command list into an open render pass: bind pipelines and
+buffers lazily on kind switches, apply scissors on change, one draw per
+command. `layerTexs` backs `.layer` composite commands. -/
+private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
+    (atlases : Array Texture) (layerTexs : Array (Texture × UInt32 × UInt32))
+    (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
   let full : Sdl.Rect := ⟨0, 0, w, h⟩
-  let mut kind : Nat := 3       -- 0 quad / 1 mesh / 2 glyph / 3 none
+  let mut kind : Nat := 9       -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 9 none
   let mut scissor : Option Sdl.Rect := none
   let mut atlas : Option Nat := none
-  for cmd in enc.cmds do
+  let mut boundLayer : Option Nat := none
+  for cmd in cmds do
     let want := match cmd with
-      | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s => s
+      | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ s => s
     if want != scissor then
       rp.setScissor (clampScissor (want.getD full) w h)
       scissor := want
@@ -162,29 +260,61 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (enc : EncodeResult)
           rp.bindFragmentSamplers 0 #[{ texture := tex, sampler := r.sampler }]
           atlas := some atlasIdx
       rp.drawIndexedPrimitives (UInt32.ofNat count) 1 (UInt32.ofNat first)
+    | .shadows first count _ =>
+      if kind != 3 then
+        rp.bindPipeline r.pipelines.shadow
+        if let some s := bufs.shadow then
+          rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+        kind := 3
+      rp.drawPrimitives 4 (UInt32.ofNat count) 0 (UInt32.ofNat first)
+    | .layer idx _ =>
+      if kind != 4 then
+        rp.bindPipeline r.pipelines.layer
+        if let some s := bufs.layerV then
+          rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+        if let some s := bufs.layerI then
+          rp.bindIndexBuffer { buffer := s.buffer } .u32
+        kind := 4
+        boundLayer := none
+      if boundLayer != some idx then
+        if let some (tex, _, _) := layerTexs[idx]? then
+          rp.bindFragmentSamplers 0 #[{ texture := tex, sampler := r.sampler }]
+          boundLayer := some idx
+      rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
 
-/-- Resolve text, encode `list`, grow the frame buffers, and record the
-transfer-buffer write + copy pass on `cb`. Returns the encoded frame and its
-atlas texture table, ready for `GpuRenderer.pass`. -/
+/-- Resolve text, encode `list`, acquire the frame's layer textures, grow the
+frame buffers, and record the transfer-buffer write + copy pass on `cb`.
+Returns the encoded frame, its atlas texture table, and the layer textures,
+ready for `GpuRenderer.passes`. -/
 private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
-    (list : DisplayList) : IO (EncodeResult × Array Texture) := do
+    (list : DisplayList) :
+    IO (EncodeResult × Array Texture × Array (Texture × UInt32 × UInt32)) := do
   let (texts, atlases) ← resolveTexts list
   let enc := encode list texts
+  let layerTexs ← acquireLayerTextures r
+    (← r.dev.getSwapchainTextureFormat r.window) enc.layers
+  let (lVerts, lIdx) := layerComposites enc.layers layerTexs
   -- Staging layout: one 16-byte-aligned region per pipeline buffer.
   let qOff := 0
-  let mvOff := qOff + align16 enc.quads.size
+  let shOff := qOff + align16 enc.quads.size
+  let mvOff := shOff + align16 enc.shadows.size
   let miOff := mvOff + align16 enc.meshVerts.size
   let gvOff := miOff + align16 enc.meshIdx.size
   let giOff := gvOff + align16 enc.glyphVerts.size
-  let total := giOff + align16 enc.glyphIdx.size
+  let lvOff := giOff + align16 enc.glyphIdx.size
+  let liOff := lvOff + align16 lVerts.size
+  let total := liOff + align16 lIdx.size
   if total > 0 then
     let mut bufs ← r.buffers.get
     bufs := { bufs with
       quad := ← ensureSlot r.dev bufs.quad .vertex enc.quads.size
+      shadow := ← ensureSlot r.dev bufs.shadow .vertex enc.shadows.size
       meshV := ← ensureSlot r.dev bufs.meshV .vertex enc.meshVerts.size
       meshI := ← ensureSlot r.dev bufs.meshI .index enc.meshIdx.size
       glyphV := ← ensureSlot r.dev bufs.glyphV .vertex enc.glyphVerts.size
-      glyphI := ← ensureSlot r.dev bufs.glyphI .index enc.glyphIdx.size }
+      glyphI := ← ensureSlot r.dev bufs.glyphI .index enc.glyphIdx.size
+      layerV := ← ensureSlot r.dev bufs.layerV .vertex lVerts.size
+      layerI := ← ensureSlot r.dev bufs.layerI .index lIdx.size }
     let tb ← match bufs.transfer with
       | some tb =>
         if tb.size.toNat ≥ total then pure tb
@@ -197,29 +327,56 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
           (UInt32.ofNat (max 4096 total.nextPowerOfTwo)))
     bufs := { bufs with transfer := some tb }
     r.buffers.set bufs
-    let staging :=
-      padTo (padTo (padTo (padTo (padTo enc.quads mvOff ++ enc.meshVerts) miOff
-        ++ enc.meshIdx) gvOff ++ enc.glyphVerts) giOff ++ enc.glyphIdx) total
+    let put (b : ByteArray) (off : Nat) (bytes : ByteArray) : ByteArray :=
+      padTo b off ++ bytes
+    let staging := padTo
+      (put (put (put (put (put (put (put enc.quads
+        shOff enc.shadows) mvOff enc.meshVerts) miOff enc.meshIdx)
+        gvOff enc.glyphVerts) giOff enc.glyphIdx) lvOff lVerts) liOff lIdx)
+      total
     tb.write staging (cycle := true)
     let cp ← cb.beginCopyPass
     uploadRegion cp tb qOff enc.quads bufs.quad
+    uploadRegion cp tb shOff enc.shadows bufs.shadow
     uploadRegion cp tb mvOff enc.meshVerts bufs.meshV
     uploadRegion cp tb miOff enc.meshIdx bufs.meshI
     uploadRegion cp tb gvOff enc.glyphVerts bufs.glyphV
     uploadRegion cp tb giOff enc.glyphIdx bufs.glyphI
+    uploadRegion cp tb lvOff lVerts bufs.layerV
+    uploadRegion cp tb liOff lIdx bufs.layerI
     cp.finish
-  return (enc, atlases)
+  return (enc, atlases, layerTexs)
 
-/-- Record the clear-and-replay render pass into `target` on `cb`. -/
-private def GpuRenderer.pass (r : GpuRenderer) (cb : CommandBuffer)
+/-- Record the frame's render passes on `cb`: one transparent-cleared pass
+per offscreen layer (innermost-first — composites of inner layers replay
+inside outer ones), then the clear-and-replay pass into `target`. Each pass
+pushes its own `Globals` viewport so NDC maps to its texture's extent. -/
+private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     (target : Texture) (w h : UInt32) (clear : Color) (enc : EncodeResult)
-    (atlases : Array Texture) : IO Unit := do
+    (atlases : Array Texture) (layerTexs : Array (Texture × UInt32 × UInt32)) :
+    IO Unit := do
+  let bufs ← r.buffers.get
+  let mut i := 0
+  for l in enc.layers do
+    if let some (tex, tw, th) := layerTexs[i]? then
+      cb.pushVertexUniformData 0
+        (packGlobals (Float32.ofNat tw.toNat) (Float32.ofNat th.toNat))
+      -- `cycle`: the pooled texture is reused every frame; with two frames in
+      -- flight the previous frame may still be sampling it — cycling swaps in
+      -- fresh backing at pass begin (loadOp is `.clear`, so nothing is lost).
+      let rp ← cb.beginRenderPass
+        #[{ texture := tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
+            cycle := true }]
+      replay r rp l.cmds atlases layerTexs bufs
+        (Int32.ofNat tw.toNat) (Int32.ofNat th.toNat)
+      rp.finish
+    i := i + 1
   cb.pushVertexUniformData 0
     (packGlobals (Float32.ofNat w.toNat) (Float32.ofNat h.toNat))
   let rp ← cb.beginRenderPass
     #[{ texture := target, loadOp := .clear
         clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩ }]
-  replay r rp enc atlases (← r.buffers.get)
+  replay r rp enc.cmds atlases layerTexs bufs
     (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
   rp.finish
 
@@ -228,7 +385,7 @@ private def GpuRenderer.pass (r : GpuRenderer) (cb : CommandBuffer)
 def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
     (mayBlock : Bool) : IO Bool := do
   let cb ← r.dev.acquireCommandBuffer
-  let (enc, atlases) ← r.prepare cb list
+  let (enc, atlases, layerTexs) ← r.prepare cb list
   let sc? ← if mayBlock then cb.waitAndAcquireSwapchainTexture r.window
             else cb.acquireSwapchainTexture r.window
   match sc? with
@@ -236,7 +393,7 @@ def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
     cb.submit
     return false
   | some sc =>
-    r.pass cb sc.texture sc.width sc.height clear enc atlases
+    r.passes cb sc.texture sc.width sc.height clear enc atlases layerTexs
     cb.submit
     return true
 
@@ -252,8 +409,8 @@ def GpuRenderer.renderOffscreen (r : GpuRenderer) (clear : Color)
       width := UInt32.ofNat w, height := UInt32.ofNat h }
   let dl ← r.dev.createTransferBuffer .download (UInt32.ofNat (w * h * 4))
   let cb ← r.dev.acquireCommandBuffer
-  let (enc, atlases) ← r.prepare cb list
-  r.pass cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases
+  let (enc, atlases, layerTexs) ← r.prepare cb list
+  r.passes cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases layerTexs
   let cp ← cb.beginCopyPass
   cp.downloadFromTexture
     { texture := tex, w := UInt32.ofNat w, h := UInt32.ofNat h }
@@ -265,5 +422,21 @@ def GpuRenderer.renderOffscreen (r : GpuRenderer) (clear : Color)
   tex.release
   dl.release
   return bytes
+
+/-- Release the renderer's per-window GPU resources (pooled layer textures,
+frame buffers, pipelines, sampler). SDL defers destruction of anything still
+referenced by in-flight frames; call before releasing the window. -/
+def GpuRenderer.dispose (r : GpuRenderer) : IO Unit := do
+  for e in (← r.pool.get) do
+    e.tex.release
+  r.pool.set #[]
+  let bufs ← r.buffers.get
+  for s in [bufs.quad, bufs.shadow, bufs.meshV, bufs.meshI,
+            bufs.glyphV, bufs.glyphI, bufs.layerV, bufs.layerI] do
+    if let some s := s then
+      s.buffer.release
+  if let some tb := bufs.transfer then
+    tb.release
+  r.buffers.set {}
 
 end Compose.Draw.Gpu

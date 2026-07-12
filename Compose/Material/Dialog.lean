@@ -29,7 +29,7 @@ composable def AlertDialog (onDismissRequest : IO Unit) (title : String)
   Dialog onDismissRequest do
     Surface (modifier := modifier.semantics (role := some .dialog)
         |>.sizeIn (minWidth := some 280) (maxWidth := some 560))
-      (shape := shapes.large) (color := some colors.surface) do
+      (shape := shapes.large) (color := some colors.surface) (elevation := 6) do
       Column (modifier := Modifier.padding (all := 24))
           (verticalArrangement := .spacedBy 16) do
         Text title (style := typo.titleLarge)

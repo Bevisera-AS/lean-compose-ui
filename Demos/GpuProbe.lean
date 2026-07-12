@@ -318,6 +318,48 @@ private def probeDisplayList (r : Compose.Draw.Gpu.GpuRenderer)
       if (px x y).1 > 100 then textHits := textHits + 1
   check s!"text run marked the target ({textHits} lit px in its box)" (textHits > 10)
 
+/-- ⑧ the M-c features end-to-end: real group opacity (no self-overlap
+double-blend), the analytic Gaussian shadow, exact rounded clipping of
+arbitrary content, and the ripple's masked circle quad. -/
+private def probeLayersShadows (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  IO.println "⑧ layers, shadows, rounded clip → offscreen pixels"
+  let (list, _) ← DrawScope.record {} do
+    -- group opacity: two overlapping red rects inside one 50 % layer
+    DrawScope.withLayer ⟨10, 10, 90, 50⟩ 0.5 do
+      DrawScope.drawRect (.solid .red) ⟨10, 10⟩ ⟨40, 30⟩
+      DrawScope.drawRect (.solid .red) ⟨30, 10⟩ ⟨40, 30⟩
+    -- a white analytic shadow on the black clear (σ = 4)
+    DrawScope.drawShape (.rrShadow (RoundRect.ofRect ⟨110, 10, 150, 50⟩) ⟨0, 0⟩ 8 .white)
+    -- rounded clip masks arbitrary content (a crisp rect) exactly
+    DrawScope.clipRoundRect (RoundRect.circular ⟨160, 10, 196, 46⟩ 12) do
+      DrawScope.drawRect (.solid .green) ⟨160, 10⟩ ⟨36, 36⟩
+    -- the bounded ripple: an oversized circle masked by the recorded rrect
+    DrawScope.clipRoundRect (RoundRect.circular ⟨10, 60, 46, 96⟩ 12) do
+      DrawScope.drawCircle (.solid .yellow) ⟨28, 78⟩ 30
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 220 110
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (x y : Nat) =>
+    let o := (y * 220 + x) * 4
+    if bgra then (bytes.get! (o+2), bytes.get! (o+1), bytes.get! o, bytes.get! (o+3))
+    else (bytes.get! o, bytes.get! (o+1), bytes.get! (o+2), bytes.get! (o+3))
+  let single := px 15 25    -- covered by the first rect only
+  let overlap := px 45 25   -- covered by both rects
+  check s!"layer: overlap does not double-blend (single r={single.1}, overlap r={overlap.1})"
+    (single == overlap)
+  check "layer: composite ≈ 50% red over black"
+    (120 ≤ single.1.toNat && single.1.toNat ≤ 136 && single.2.1 == 0)
+  check "layer: outside the content is clear" (px 85 45 == (0, 0, 0, 255))
+  check s!"shadow: umbra under the shape ≈ full (got {(px 130 30).1})" ((px 130 30).1 > 200)
+  let pen := (px 155 30).1.toNat   -- 5 px outside the right edge
+  check s!"shadow: penumbra outside the edge (got {pen})" (20 < pen && pen < 220)
+  check "shadow: far away clear" (px 210 30 == (0, 0, 0, 255))
+  check "rounded clip: interior kept (green @178,28)" (px 178 28 == (0, 255, 0, 255))
+  check "rounded clip: corner culled exactly (clear @162,12)" (px 162 12 == (0, 0, 0, 255))
+  check "rounded clip: edge midpoint kept (green @178,11)" (px 178 11 == (0, 255, 0, 255))
+  check "ripple: interior kept (yellow @28,78)" (px 28 78 == (255, 255, 0, 255))
+  check "ripple: rrect corner culled (clear @12,62)" (px 12 62 == (0, 0, 0, 255))
+
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
@@ -365,6 +407,7 @@ def run : IO UInt32 := do
   probeTransferCycle dev
   let gpuRenderer ← Compose.Draw.Gpu.GpuRenderer.create dev window
   probeDisplayList gpuRenderer engine font swapchainFmt
+  probeLayersShadows gpuRenderer swapchainFmt
   probePresentLoop dev window windowPipe ibuf
 
   dev.releaseWindow window

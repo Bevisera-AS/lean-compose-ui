@@ -1,5 +1,6 @@
 import Compose.Ui.Draw.Mesh
 import Compose.Ui.Draw.Brush
+import Compose.Ui.Draw.Gpu.Sdf
 
 /-!
 # Tessellation (`Compose/Ui/Draw/Tessellate.lean`)
@@ -242,6 +243,72 @@ def line (p0 p1 : Offset) (width : Float32) (color : Color) : Mesh :=
     let nrm := perp d
     strokeSilhouette #[(p0, nrm), (p1, nrm)] width color (closed := false)
 
+/-! ## Elevation shadow (feathered ring approximation) -/
+
+/-- Subdivide a closed silhouette so no segment is longer than `maxLen`
+(inserted points lerp positions and re-normalize lerped normals) — shadow
+rings sample a nonlinear falloff, so long straight edges need intermediate
+samples for the interpolation to track it. -/
+private def densify (samples : Array (Offset × Offset)) (maxLen : Float32) :
+    Array (Offset × Offset) := Id.run do
+  let n := samples.size
+  let mut out : Array (Offset × Offset) := Array.emptyWithCapacity (2 * n)
+  for i in [0:n] do
+    let (p, np) := samples[i]!
+    let (q, nq) := samples[(i + 1) % n]!
+    out := out.push (p, np)
+    let d := q - p
+    let len := (d.x * d.x + d.y * d.y).sqrt
+    let extra := (len / maxLen).toUInt64.toNat
+    for k in [1:extra + 1] do
+      let t := k.toFloat32 / (extra + 1).toFloat32
+      out := out.push (Offset.lerp p q t, norm (Offset.lerp np nq t))
+  return out
+
+/-- A Gaussian drop shadow of a rounded rect, tessellated: the offset shape's
+silhouette grows three outward rings at `σ`, `2σ`, `3σ` whose vertex alphas
+sample the *same* analytic shadow function the GPU shadow shader evaluates
+(`Gpu.shadow`, Evan Wallace's form — `#guard`-tested in `Gpu/Sdf.lean`), so
+the rasterizer's linear interpolation approximates the GPU result. The
+documented SDL-renderer shadow fallback; `σ = blur / 2`. Zero blur degrades
+to a hard offset fill; empty rect or transparent color → `Mesh.empty`. -/
+def roundRectShadow (rr : RoundRect) (offset : Offset) (blur : Float32)
+    (color : Color) : Mesh := Id.run do
+  if rr.rect.isEmpty || color.a <= 0 then return .empty
+  if blur <= 0 then return roundRectFill (rr.translate offset) color
+  let rr := (rr.translate offset).normalize
+  let sigma := max 0.5 (blur / 2)
+  let o : Offset := ⟨rr.rect.left, rr.rect.top⟩
+  let size : Size := ⟨rr.rect.width, rr.rect.height⟩
+  let corner := rr.topLeft.x    -- per-corner radii degrade to the top-left one
+  let alphaAt (p : Offset) : Float32 := color.a * Gpu.shadow p o size corner sigma
+  let sil := densify (roundRectSilhouette rr) (max sigma 2)
+  let n := sil.size
+  if n < 3 then return .empty
+  let centroid : Offset := ⟨o.x + size.width / 2, o.y + size.height / 2⟩
+  -- vertices: centroid, silhouette ring, then rings at +σ, +2σ, +3σ (the
+  -- outermost forced fully transparent for a clean edge).
+  let mut vs : Array DVertex := Array.emptyWithCapacity (4 * n + 1)
+  vs := vs.push ⟨centroid, color.withAlpha (alphaAt centroid)⟩
+  for (p, _) in sil do
+    vs := vs.push ⟨p, color.withAlpha (alphaAt p)⟩
+  for k in [1:4] do
+    for (p, nrm) in sil do
+      let q := p + nrm * (sigma * k.toFloat32)
+      vs := vs.push ⟨q, color.withAlpha (if k == 3 then 0 else alphaAt q)⟩
+  -- indices: interior fan + three ring bands.
+  let mut is : Array Int32 := Array.emptyWithCapacity (21 * n)
+  for i in [0:n] do
+    let j := (i + 1) % n
+    is := pushTri is 0 (1 + i) (1 + j)
+    for k in [0:3] do
+      let a := 1 + k * n + i
+      let b := 1 + k * n + j
+      let c := 1 + (k + 1) * n + j
+      let d := 1 + (k + 1) * n + i
+      is := pushTri (pushTri is a b c) a c d
+  return { vertices := vs, indices := is }
+
 /-! ## Circle clipped to a rounded rect (bounded ripple) -/
 
 /-- Signed distance of `p` to the left of the directed edge `a → b`
@@ -354,6 +421,11 @@ inductive ShapeSpec where
   | arcStroke (center : Offset) (radius startRad sweepRad width : Float32) (brush : Brush)
   /-- A straight line of pixel `width` (`line`). -/
   | line (p0 p1 : Offset) (width : Float32) (brush : Brush)
+  /-- A Gaussian drop shadow under a rounded rect, displaced by `offset` with
+  a blur of `blur` px (`σ = blur / 2`). The SDL backend tessellates it
+  (`roundRectShadow`); the GPU backend evaluates the analytic form in its
+  shadow shader. Recorded by `Modifier.shadow`. -/
+  | rrShadow (rr : RoundRect) (offset : Offset) (blur : Float32) (color : Color)
   deriving Repr, BEq, Inhabited
 
 /-- Tessellate the mesh a `ShapeSpec` describes (a pure function — the spec
@@ -369,6 +441,7 @@ def ShapeSpec.tessellate : ShapeSpec → Mesh
   | .arcStroke center radius startRad sweepRad width brush =>
     shapeMesh brush (Compose.Draw.arcStroke center radius startRad sweepRad width)
   | .line p0 p1 width brush => shapeMesh brush (Compose.Draw.line p0 p1 width)
+  | .rrShadow rr offset blur color => roundRectShadow rr offset blur color
 
 #guard ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
         == ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
@@ -447,6 +520,25 @@ private def approxOff (a b : Offset) (tol : Float32 := 0.05) : Bool :=
 #guard (arcStroke ⟨0, 0⟩ 10 0 0 4 .red).isEmpty
 #guard (line ⟨5, 5⟩ ⟨5, 5⟩ 2 .red).isEmpty
 #guard (line ⟨0, 0⟩ ⟨10, 0⟩ 0 .red).isEmpty
+
+-- Shadow mesh: well-formed; centroid of a large rect at small σ is nearly the
+-- full shadow color; the outermost ring is fully transparent; degenerate
+-- inputs produce the empty mesh.
+#guard (roundRectShadow (RoundRect.circular ⟨0, 0, 100, 100⟩ 8) ⟨0, 2⟩ 4 (Color.black.withAlpha 0.25)).indicesInRange
+#guard
+  let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 100, 100⟩) ⟨0, 0⟩ 4 Color.black
+  (m.vertices[0]!.color.a - 1).abs < 0.01
+#guard
+  let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 100, 100⟩) ⟨0, 0⟩ 4 Color.black
+  let n := (m.vertices.size - 1) / 4
+  m.vertices[1 + 3 * n]!.color.a == 0
+#guard (roundRectShadow (RoundRect.ofRect ⟨0, 0, 0, 0⟩) ⟨0, 2⟩ 4 .black).isEmpty
+#guard (roundRectShadow (RoundRect.ofRect ⟨0, 0, 10, 10⟩) ⟨0, 2⟩ 4 (Color.black.withAlpha 0)).isEmpty
+-- Zero blur degrades to the hard offset fill.
+#guard roundRectShadow (RoundRect.ofRect ⟨0, 0, 10, 10⟩) ⟨0, 2⟩ 0 .black
+        == roundRectFill (RoundRect.ofRect ⟨0, 2, 10, 12⟩) .black
+#guard (ShapeSpec.rrShadow (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) ⟨0, 2⟩ 4 .black).tessellate
+        == roundRectShadow (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) ⟨0, 2⟩ 4 .black
 
 -- Clipping a fully-contained polygon returns it unchanged (all inside).
 #guard (clipPolygon #[⟨1, 1⟩, ⟨2, 1⟩, ⟨2, 2⟩] #[⟨0, 0⟩, ⟨10, 0⟩, ⟨10, 10⟩, ⟨0, 10⟩]).size == 3

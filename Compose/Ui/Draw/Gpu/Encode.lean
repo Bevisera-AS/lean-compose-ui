@@ -30,12 +30,15 @@ Lowering per primitive:
   `src` fraction; the sampling mode picks the nearest or linear sampler at
   replay). Texture uploads happen before the encode (`Gpu.resolveImages`,
   walk-order indices like text).
-- `layer` (alpha `< 1` or transformed) → an **offscreen layer pass**: the
-  content encodes into its own command list with every coordinate shifted to
-  the layer's origin (`LayerEnc`; packed buffers are shared across passes),
-  and the parent list gets one `.layer` composite command. The content region
-  is the recorded bounds (∩ clip when untransformed) plus a 1 px AA margin,
+- `layer` (alpha `< 1`, transformed, or carrying a blur effect) → an
+  **offscreen layer pass**: the content encodes into its own command list
+  with every coordinate shifted to the layer's origin (`LayerEnc`; packed
+  buffers are shared across passes), and the parent list gets one `.layer`
+  composite command. The content region is the recorded bounds (∩ clip when
+  untransformed) plus a margin — 1 px AA, or a blur's `3σ + 1` spread —
   snapped to whole px so pixel-grid reasoning (text snapping) holds inside. A
+  blur's σ rides the `LayerEnc` (the renderer inserts two separable Gaussian
+  passes over the texture before it is composited). A
   composite transform is conjugated into the pass's coordinates and maps the
   composite quad's corners (`Affine.snapComposite` translations snap to the
   grid + nearest; others sample linearly); an enclosing clip scissors the
@@ -70,6 +73,11 @@ structure LayerEnc where
   Near-integer pure translations arrive pre-snapped to the grid
   (`Affine.snapComposite`) so the composite stays pixel-exact. -/
   transform : Option Affine := none
+  /-- Gaussian-blur standard deviation applied to the texture before the
+  composite (`0` = none; `LayerEffect.blur`, normalized). The renderer runs
+  two extra separable render passes; `bounds` already includes the `3σ + 1`
+  spread margin. -/
+  sigma : Float32 := 0
   /-- The layer's own render-pass commands. -/
   cmds : Array DrawCmd
   deriving Repr, BEq, Inhabited
@@ -490,7 +498,8 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
       pushImage st texIdx img src (dst.translate (s.origin + shift))
         (sampling == .linear) (s.alpha * extraAlpha) (scissorAt s.clip shift)
   | .layer s bounds props content =>
-    if props.transform.isNone && props.alpha ≥ 1.0 then
+    let effect := props.effect.normalize
+    if props.transform.isNone && props.alpha ≥ 1.0 && effect == .none then
       -- No compositing needed: flatten inline (records don't produce these;
       -- hand-built lists may).
       content.foldl (encodePrim texts images (extraAlpha * props.alpha) shift) st
@@ -507,18 +516,20 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
             (some (Affine.translation ⟨t.tx.round, t.ty.round⟩), false)
           else
             (some t, true)
-      -- Content region: bounds plus a 1 px AA margin, snapped to whole px
+      -- Content region: bounds plus a margin — 1 px AA, or a blur's `3σ + 1`
+      -- spread (the tails must render and composite) — snapped to whole px
       -- (kept ≥ 1×1 even when degenerate so the text-run walk stays aligned
       -- with `resolveTexts`). An enclosing clip crops untransformed content
       -- directly; under a transform it scissors the *composite* instead
       -- (target-coordinate clips apply to where pixels land).
+      let m := max 1 effect.spread
       let r := match s.clip, transform with
         | some c, none => Rect.intersect bounds c
         | _, _ => bounds
-      let l := (r.left + shift.x - 1).floor
-      let t := (r.top + shift.y - 1).floor
-      let rt := max ((r.right + shift.x + 1).ceil) (l + 1)
-      let bt := max ((r.bottom + shift.y + 1).ceil) (t + 1)
+      let l := (r.left + shift.x - m).floor
+      let t := (r.top + shift.y - m).floor
+      let rt := max ((r.right + shift.x + m).ceil) (l + 1)
+      let bt := max ((r.bottom + shift.y + m).ceil) (t + 1)
       let saved := st.cmds
       let st := content.foldl (encodePrim texts images extraAlpha (shift - ⟨l, t⟩))
         { st with cmds := #[] }
@@ -527,7 +538,8 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
         cmds := saved.push (.layer idx linear (scissorAt s.clip shift))
         layers := st.layers.push
           { bounds := ⟨l, t, rt, bt⟩, alpha := props.alpha * extraAlpha
-            transform, cmds := st.cmds } }
+            transform, sigma := match effect with | .blur sg => sg | .none => 0
+            cmds := st.cmds } }
 
 /-- Encode a display list against its resolved text runs and image texture
 indices (both in the same prim-walk order `Gpu.resolveTexts` /
@@ -625,6 +637,24 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   r.layers.size == 1 && r.cmds == #[.layer 0 true (some ⟨0, 0, 10, 10⟩)]
     && r.layers[0]!.bounds == (⟨7, 7, 25, 25⟩ : Rect)
     && r.layers[0]!.transform == some t && r.layers[0]!.alpha == 1
+-- A blur forces an offscreen pass even at alpha 1, carries its σ, and the
+-- content region grows by the 3σ + 1 spread (σ = 2 ⟹ margin 7); the content
+-- shifts by the inflated origin.
+#guard
+  let inner : Prim := .rect {} .red ⟨10, 10⟩ ⟨4, 4⟩
+  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ { effect := .blur 2 } #[inner]] #[]
+  r.layers.size == 1 && r.cmds == #[.layer 0 false none]
+    && r.layers[0]!.bounds == (⟨1, 1, 31, 31⟩ : Rect) && r.layers[0]!.sigma == 2
+    && r.layers[0]!.alpha == 1
+    && r.quads == (encode #[.rect {} .red ⟨9, 9⟩ ⟨4, 4⟩] #[]).quads
+-- A degenerate blur (σ ≤ 0) normalizes away — the layer flattens inline; an
+-- oversized σ caps at 16.
+#guard
+  let inner : Prim := .rect {} .red ⟨0, 0⟩ ⟨4, 4⟩
+  let r := encode #[.layer {} ⟨0, 0, 4, 4⟩ { effect := .blur 0 } #[inner]] #[]
+  let big := encode #[.layer {} ⟨0, 0, 4, 4⟩ { effect := .blur 99 } #[inner]] #[]
+  r.layers.isEmpty && r.cmds == #[.quads 0 1 none]
+    && big.layers[0]!.sigma == 16
 -- A near-integer pure translation snaps to the grid and composites nearest.
 #guard
   let r := encode #[.layer {} ⟨8, 8, 24, 24⟩

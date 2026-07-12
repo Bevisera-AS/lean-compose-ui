@@ -154,6 +154,11 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
         -- Layer-boundary transform + group alpha over the wrapper bounds
         -- (identity settings record nothing).
         DrawScope.withGraphicsLayer (Rect.ofOffsetSize off sz) g cont
+      | .blur radius =>
+        -- Gaussian blur through an offscreen layer over the wrapper bounds
+        -- (σ = radius/2 px, the shadow convention; GPU-only — SDL flattens
+        -- unblurred).
+        DrawScope.withBlur (Rect.ofOffsetSize off sz) (ctx.density.dpToPx radius / 2) cont
       | .drawBehind block =>
         DrawScope.translate off (DrawScope.withSize sz block)
         cont

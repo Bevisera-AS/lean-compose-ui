@@ -317,19 +317,22 @@ alpha and transform — real group opacity (no double-blending where the
 content overlaps itself) and layer-boundary rotate/scale/translate: content
 records untransformed, executors render it to a texture and map only the
 composite. `bounds` is the *content* region in local coordinates: content is
-composited within it (plus a 1 px AA margin), a documented deviation from
-Compose's unclipped `graphicsLayer`. Identity transform at alpha `≥ 1`
-records no layer. The layer's own alpha/transform are *not* folded into the
-recorded content — executors apply them at composite time (the ambient alpha
-stays folded into content as usual, so a layer primitive's `PrimState.alpha`
-is ignored by executors). Backs `Modifier.graphicsLayer`; mirrors
+composited within it (plus a margin — 1 px AA, or the `effect`'s spread), a
+documented deviation from Compose's unclipped `graphicsLayer`. Identity
+transform at alpha `≥ 1` with no effect records no layer (`effect` normalizes
+first: blur σ ≤ 0 is no effect, σ caps at 16). The layer's own
+alpha/transform/effect are *not* folded into the recorded content — executors
+apply them at composite time (the ambient alpha stays folded into content as
+usual, so a layer primitive's `PrimState.alpha` is ignored by executors).
+Backs `Modifier.graphicsLayer` and `Modifier.blur`; mirrors
 `graphicsLayer { ... }`. -/
-def withGraphicsLayer (bounds : Rect) (g : GraphicsLayerScope) (body : DrawM α) :
-    DrawM α := do
+def withGraphicsLayer (bounds : Rect) (g : GraphicsLayerScope) (body : DrawM α)
+    (effect : LayerEffect := .none) : DrawM α := do
   let ctx ← read
   let target := bounds.translate ctx.translation
   let transform := g.toAffine target
-  if transform.isNone && g.alpha ≥ 1.0 then
+  let effect := effect.normalize
+  if transform.isNone && g.alpha ≥ 1.0 && effect == .none then
     body
   else
     let sub ← IO.mkRef #[]
@@ -345,14 +348,24 @@ def withGraphicsLayer (bounds : Rect) (g : GraphicsLayerScope) (body : DrawM α)
       else
         { c with sink := sub }) body
     ctx.sink.modify
-      (·.push (.layer (stamp ctx) target { alpha := g.alpha, transform } (← sub.get)))
+      (·.push (.layer (stamp ctx) target { alpha := g.alpha, transform, effect } (← sub.get)))
     return r
 
 /-- Record `body` as an offscreen layer composited once at alpha `a` (see
-`withGraphicsLayer` — this is its transform-free case). `a ≥ 1` records no
-layer. Backs `Modifier.alpha`; mirrors `graphicsLayer { alpha = a }`. -/
-def withLayer (bounds : Rect) (a : Float32) (body : DrawM α) : DrawM α :=
-  withGraphicsLayer bounds { alpha := a } body
+`withGraphicsLayer` — this is its transform-free case). `a ≥ 1` with no
+`effect` records no layer. Backs `Modifier.alpha`; mirrors
+`graphicsLayer { alpha = a }`. -/
+def withLayer (bounds : Rect) (a : Float32) (body : DrawM α)
+    (effect : LayerEffect := .none) : DrawM α :=
+  withGraphicsLayer bounds { alpha := a } body (effect := effect)
+
+/-- Record `body` as an offscreen layer Gaussian-blurred with standard
+deviation `sigma` (device px, capped at 16; `σ ≤ 0` records no layer) before
+compositing — even at full alpha. GPU-only: the SDL backend renders the
+content unblurred (documented). `bounds` is the content region; the blurred
+composite spreads `3σ + 1` px past it. Backs `Modifier.blur`. -/
+def withBlur (bounds : Rect) (sigma : Float32) (body : DrawM α) : DrawM α :=
+  withGraphicsLayer bounds {} body (effect := .blur sigma)
 
 /-- Declare the size of the region `body` draws into (readable via
 `DrawScope.size`); the draw walk wraps `Modifier.drawBehind` blocks with the

@@ -9,8 +9,9 @@ software renderer under the dummy video driver, reads them back with
 `Renderer.readPixels`, and probes individual pixels — the approach lean-sdl3's
 own suite proves works headless. Covers: solid/overlapping fills, rounded-rect
 corners, circle fill + alpha blend, clip nesting + restore, translate, alpha
-scaling, and gradient sampling (linear endpoints; radial/sweep on the
-per-vertex fallback's near-exact circle-fan cases).
+scaling, gradient sampling (linear endpoints; radial/sweep on the per-vertex
+fallback's near-exact circle-fan cases), and the documented SDL layer
+approximations (alpha flatten double-blends; blur renders unblurred).
 
 Run: `SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy lake exe test`.
 -/
@@ -181,5 +182,23 @@ def run : IO Unit := do
       (colorNear (← shot.readPixel 15 30) 128 0 0)
     check "layer flatten: overlap double-blends to ≈ 75% red (SDL approximation)"
       (colorNear (← shot.readPixel 45 30) 191 0 0)
+
+  -- 10. blur fallback on SDL: `withBlur` content renders *unblurred* — the
+  -- documented approximation this pins (the GPU backend runs the separable
+  -- Gaussian passes instead, asserted by gpu-probe ⑭): edges stay crisp and
+  -- nothing spreads past them.
+  do
+    let ren ← mkRen 128 128
+    clearBlack ren
+    DrawScope.run ren {} do
+      DrawScope.withBlur ⟨0, 0, 100, 100⟩ 4 do
+        drawRect (.solid Color.red) ⟨10, 10⟩ ⟨40, 40⟩
+    let shot ← ren.readPixels
+    check "blur fallback: content renders solid (unblurred)"
+      (colorNear (← shot.readPixel 30 30) 255 0 0)
+    check "blur fallback: the edge stays crisp"
+      (colorNear (← shot.readPixel 11 30) 255 0 0)
+    check "blur fallback: nothing spreads outside"
+      (colorNear (← shot.readPixel 54 30) 0 0 0)
 
 end Tests.Draw

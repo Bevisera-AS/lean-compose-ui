@@ -23,8 +23,11 @@ yields premultiplied texels), then one `textureAffine` composite maps the
 region's corners through the layer transform with `.blendPremultiplied` and
 the group alpha as color+alpha mod (scaling all four premultiplied channels).
 SDL clip state is per render target, so the clip tracker resets across every
-`setTarget`. Works headless under the dummy video driver — the whole test
-suite runs on this backend.
+`setTarget`. Layer *effects* (`LayerEffect.blur`) are ignored — content
+renders unblurred on this backend (a documented approximation, like the
+rounded-clip story; a CPU Gaussian on the software path buys nothing the GPU
+backend doesn't already verify). Works headless under the dummy video
+driver — the whole test suite runs on this backend.
 -/
 
 namespace Compose.Draw

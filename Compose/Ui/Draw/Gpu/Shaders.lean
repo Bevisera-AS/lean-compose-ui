@@ -18,13 +18,18 @@ accepts MSL source) and the three M-b graphics pipelines:
 - **layer**: indexed textured triangles compositing an offscreen layer — the
   texel is already premultiplied, so the fragment just scales by the group
   alpha carried in the vertex color.
+- **blur**: one direction of a separable Gaussian over a layer texture
+  (`LayerEffect.blur`) — vertex-buffer-free, geometry from a vertex uniform,
+  kernel parameters from the codebase's one fragment uniform.
 
-All pipelines blend premultiplied (`one / oneMinusSrcAlpha`); colors travel
-non-premultiplied in vertex data and fragments premultiply after coverage
-(except `layer`, whose input is premultiplied), so interpolation matches the
-SDL backend's non-premultiplied vertex colors. Uniforms: one 16-byte
+All pipelines blend premultiplied (`one / oneMinusSrcAlpha`) except `blur`,
+which overwrites its cleared target; colors travel non-premultiplied in
+vertex data and fragments premultiply after coverage (except `layer` and
+`blur`, whose inputs are premultiplied), so interpolation matches the SDL
+backend's non-premultiplied vertex colors. Uniforms: one 16-byte
 `Globals { float2 viewport }` at vertex `[[buffer(0)]]`, pushed once per
-render pass (layer passes remap NDC to their texture's extent).
+render pass (layer passes remap NDC to their texture's extent); the blur
+passes push their own `BlurVert`/`BlurParams` pair instead.
 -/
 
 namespace Compose.Draw.Gpu
@@ -319,6 +324,67 @@ fragment float4 layer_fragment(TexOut in [[stage_in]],
 }
 "
 
+/-- The blur pipeline's MSL: a **vertex-buffer-free** full-region quad
+(corners from `vertex_id`, geometry entirely from the `BlurVert` vertex
+uniform — the region's extent in the target plus the source texture's UV
+scale) whose fragment runs one direction of a separable Gaussian. Taps pair
+up through the linear sampler (one bilinear fetch at
+`i + w(i+1)/(w(i)+w(i+1))` weighs texels `i` and `i + 1` exactly — twins
+`Gpu.Sdf.blurWeight`/`blurTapOffset`), accumulating premultiplied texels and
+normalizing by the accumulated weight, so the discrete kernel always sums to
+one. `BlurParams` arrives via `pushFragmentUniformData` (fragment
+`[[buffer(0)]]`, probe-verified): `dir` is one texel step in UV space along
+the pass direction, `taps` the per-side texel reach (`⌈3σ⌉`). The pipeline
+does not blend (it overwrites its cleared target). -/
+private def blurMsl : String := mslPrelude ++ "
+struct BlurVert {
+  float2 viewport;
+  float2 extent;
+  float2 uvScale;
+  float2 pad;
+};
+
+struct BlurOut {
+  float4 pos [[position]];
+  float2 uv;
+};
+
+vertex BlurOut blur_vertex(uint vid [[vertex_id]],
+                           constant BlurVert& g [[buffer(0)]]) {
+  float2 corner = float2(float(vid & 1u), float(vid >> 1u));
+  BlurOut out;
+  out.pos = to_ndc(corner * g.extent, g.viewport);
+  out.uv = corner * g.uvScale;
+  return out;
+}
+
+struct BlurParams {
+  float2 dir;
+  float sigma;
+  float taps;
+};
+
+fragment float4 blur_fragment(BlurOut in [[stage_in]],
+                              constant BlurParams& p [[buffer(0)]],
+                              texture2d<float> src [[texture(0)]],
+                              sampler smp [[sampler(0)]]) {
+  float4 acc = src.sample(smp, in.uv);
+  float wsum = 1.0;
+  float inv2s2 = 1.0 / (2.0 * p.sigma * p.sigma);
+  int n = int(p.taps);
+  for (int i = 1; i <= n; i += 2) {
+    float w0 = exp(-float(i) * float(i) * inv2s2);        // Gpu.Sdf.blurWeight
+    float w1 = exp(-float(i + 1) * float(i + 1) * inv2s2);
+    float w = w0 + w1;
+    float off = float(i) + w1 / w;                        // Gpu.Sdf.blurTapOffset
+    acc += (src.sample(smp, in.uv + p.dir * off)
+          + src.sample(smp, in.uv - p.dir * off)) * w;
+    wsum += 2.0 * w;
+  }
+  return acc / wsum;
+}
+"
+
 /-- The 16-byte `Globals` uniform (viewport size + pad). -/
 def packGlobals (w h : Float32) : ByteArray := Id.run do
   let push (b : ByteArray) (f : Float32) : ByteArray :=
@@ -328,6 +394,25 @@ def packGlobals (w h : Float32) : ByteArray := Id.run do
   return push (push (push (push (ByteArray.emptyWithCapacity 16) w) h) 0) 0
 
 #guard (packGlobals 800 600).size == 16
+
+/-- The 32-byte `BlurVert` vertex uniform: target viewport, region extent,
+source UV scale (+ pad). -/
+def packBlurVert (viewportW viewportH extentW extentH uvW uvH : Float32) : ByteArray := Id.run do
+  let mut b := ByteArray.emptyWithCapacity 32
+  for v in [viewportW, viewportH, extentW, extentH, uvW, uvH, 0, 0] do
+    b := pushF32 b v
+  return b
+
+/-- The 16-byte `BlurParams` fragment uniform: one-texel UV step along the
+pass direction, σ, and the per-side texel reach. -/
+def packBlurParams (dirU dirV sigma taps : Float32) : ByteArray := Id.run do
+  let mut b := ByteArray.emptyWithCapacity 16
+  for v in [dirU, dirV, sigma, taps] do
+    b := pushF32 b v
+  return b
+
+#guard (packBlurVert 256 128 80 40 0.3125 0.3125).size == 32
+#guard (packBlurParams 0.00390625 0 4 12).size == 16
 
 /-- Premultiplied-alpha blending — the one blend state every pipeline uses. -/
 private def premulBlend : ColorTargetBlendState :=
@@ -349,6 +434,9 @@ structure Pipelines where
   glyph : GraphicsPipeline
   /-- Indexed premultiplied layer-composite quads. -/
   layer : GraphicsPipeline
+  /-- Vertex-buffer-free separable Gaussian blur (one direction per pass,
+  no blending — overwrites its cleared target). -/
+  blur : GraphicsPipeline
 
 /-- Compile the MSL shaders and build the three pipelines against `target`
 (the swapchain's native format for on-screen rendering; rgba8 for offscreen
@@ -436,6 +524,18 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
       targetInfo }
   layerVs.release
   layerFs.release
-  return { quad := quad, shadow := shadow, mesh := mesh, glyph := glyph, layer := layer }
+  -- blur: no vertex buffers (corners from `vertex_id`; geometry from the
+  -- vertex uniform), fragment uniform + sampler, blending off (the pass
+  -- overwrites its cleared target).
+  let blurVs ← shader blurMsl "blur_vertex" .vertex (uniforms := 1)
+  let blurFs ← shader blurMsl "blur_fragment" .fragment (samplers := 1) (uniforms := 1)
+  let blur ← dev.createGraphicsPipeline
+    { vertexShader := blurVs, fragmentShader := blurFs
+      primitiveType := .triangleStrip
+      targetInfo := { colorTargetDescriptions := #[{ format := target }] } }
+  blurVs.release
+  blurFs.release
+  return { quad := quad, shadow := shadow, mesh := mesh, glyph := glyph
+           layer := layer, blur := blur }
 
 end Compose.Draw.Gpu

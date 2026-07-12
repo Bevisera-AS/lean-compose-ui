@@ -37,6 +37,10 @@ Probed, in order:
    `Brush.colorAt` twins on rects (the cases the SDL fallback renders
    coarsely), the sweep seam stays clean, IGN dithering is on for gradient
    fills (and only them — solid quads stay byte-exact).
+12. Vertex-buffer-free pipelines + `pushFragmentUniformData` (M-i
+   prerequisites, probed standalone before the blur pipeline was wired).
+13. Layer blur (M-i): separable Gaussian passes on a line impulse — spread,
+   energy conservation, tails, near-identity at tiny σ, group alpha.
 
 Exit code is the number of failed checks; informational verdicts (cycle
 semantics, y-convention, winding) print as notes for the M-b design.
@@ -291,6 +295,79 @@ private def probePresentLoop (dev : Device) (window : Sdl.Window)
       presented := presented + 1
   note s!"presented {presented} frames; waitAndAcquire returned none {noneCount}×"
   check "presented at least one frame" (presented > 0)
+
+/-- ⑬ (probed *before* the blur pipeline was wired into the renderer, which
+depends on both facts): a pipeline with **no vertex buffers at all** (corners
+from `vertex_id` only) is accepted, and `pushFragmentUniformData` binds at the
+fragment stage's `[[buffer(0)]]` — the codebase's first fragment uniform.
+Probing this found a liveness rule instead of an SDL fact: binds don't retain,
+so a pipeline local must stay reachable past its draw or Lean's RC frees it
+right after `bindPipeline` (SDL debug validation then reads the freed struct
+and aborts with a nonsense "missing vertex sampler" assert). -/
+private def probeFragmentUniform (dev : Device) : IO Unit := do
+  IO.println "⑬ vertex-buffer-free pipeline + pushFragmentUniformData"
+  let src := "
+#include <metal_stdlib>
+using namespace metal;
+
+struct VOut { float4 pos [[position]]; };
+
+vertex VOut uv_vertex(uint vid [[vertex_id]]) {
+  float2 corner = float2(float(vid & 1u), float(vid >> 1u));
+  VOut out;
+  out.pos = float4(corner * 2.0 - 1.0, 0.0, 1.0);
+  return out;
+}
+
+struct FragColor { float4 color; };
+
+fragment float4 uv_fragment(VOut in [[stage_in]],
+                            constant FragColor& c [[buffer(0)]]) {
+  return c.color;
+}
+"
+  let vs ← dev.createShader
+    { code := src.toUTF8, entrypoint := "uv_vertex", format := .msl, stage := .vertex }
+  let fs ← dev.createShader
+    { code := src.toUTF8, entrypoint := "uv_fragment", format := .msl, stage := .fragment
+      numUniformBuffers := 1 }
+  let pipe ← dev.createGraphicsPipeline
+    { vertexShader := vs, fragmentShader := fs
+      primitiveType := .triangleStrip
+      targetInfo := { colorTargetDescriptions := #[{ format := .r8g8b8a8Unorm }] } }
+  vs.release
+  fs.release
+  check "pipeline with zero vertex buffers created" true
+  let tex ← dev.createTexture
+    { format := .r8g8b8a8Unorm, usage := .colorTarget, width := 8, height := 8 }
+  let dl ← dev.createTransferBuffer .download (8 * 8 * 4)
+  let cb ← dev.acquireCommandBuffer
+  -- The uniform under test: (0.25, 0.5, 0.75, 1) — recognizably non-trivial.
+  cb.pushFragmentUniformData 0
+    (pushF32 (pushF32 (pushF32 (pushF32 (ByteArray.emptyWithCapacity 16) 0.25) 0.5) 0.75) 1)
+  let rp ← cb.beginRenderPass
+    #[{ texture := tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 1⟩ }]
+  rp.bindPipeline pipe
+  rp.drawPrimitives 4 1 0 0
+  rp.finish
+  let cp ← cb.beginCopyPass
+  cp.downloadFromTexture { texture := tex, w := 8, h := 8 } { buffer := dl }
+  cp.finish
+  let fence ← cb.submitAndAcquireFence
+  dev.waitForFences true #[fence]
+  let bytes ← dl.read
+  -- The explicit releases double as liveness anchors: a bind does NOT retain
+  -- (SDL debug validation reads the pipeline struct at draw time), so the
+  -- pipeline must stay reachable past the draw — Lean's RC would otherwise
+  -- free a dead local right after `bindPipeline`. Found the hard way.
+  pipe.release
+  tex.release
+  dl.release
+  let o := (4 * 8 + 4) * 4
+  let near := fun (got : UInt8) (want : Nat) =>
+    max got.toNat want - min got.toNat want ≤ 1
+  check s!"fragment uniform reached [[buffer(0)]] (got {bytes.get! o},{bytes.get! (o+1)},{bytes.get! (o+2)})"
+    (near (bytes.get! o) 64 && near (bytes.get! (o+1)) 128 && near (bytes.get! (o+2)) 191)
 
 /-- ⑦ the framework path end-to-end: record a display list with the public
 `DrawScope` ops, render it through the real GPU renderer offscreen, and
@@ -580,6 +657,56 @@ private def probeGradients (r : Compose.Draw.Gpu.GpuRenderer)
   check "frame stats: all four fills took the quad path"
     (stats.quads == 4 && stats.meshTriangles == 0)
 
+/-- ⑭ layer blur (M-i) end-to-end: `withBlur` content renders into a pooled
+texture, bounces through the separable H/V Gaussian passes, and composites.
+A 1 px white line under σ = 4 is a clean impulse response — the discrete
+normalized kernel puts `255/wsum ≈ 25` at the peak, `≈ 15` at ±σ, `≈ 3` at
+±2σ, nothing at ±4σ, and preserves the column integral (`≈ 255`). σ = 0.5
+must be a near-identity on solid interiors (the kernel normalizes), and blur
+composes with group alpha and spreads past the recorded bounds (the `3σ + 1`
+margin). -/
+private def probeBlur (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  IO.println "⑭ layer blur → separable Gaussian passes → offscreen pixels"
+  let (list, _) ← DrawScope.record {} do
+    -- impulse: a 1 px white line, σ = 4
+    DrawScope.withBlur ⟨10, 10, 90, 70⟩ 4 do
+      DrawScope.drawRect (.solid .white) ⟨10, 40⟩ ⟨80, 1⟩
+    -- near-identity: a solid block, σ = 0.5
+    DrawScope.withBlur ⟨100, 10, 160, 70⟩ 0.5 do
+      DrawScope.drawRect (.solid .white) ⟨100, 20⟩ ⟨40, 30⟩
+    -- blur composes with group alpha; tails spread past the recorded bounds
+    DrawScope.withLayer ⟨170, 30, 190, 50⟩ 0.5 (effect := .blur 3) do
+      DrawScope.drawRect (.solid .white) ⟨170, 30⟩ ⟨20, 20⟩
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 200 90
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (x y : Nat) =>
+    let o := (y * 200 + x) * 4
+    if bgra then (bytes.get! (o+2), bytes.get! (o+1), bytes.get! o, bytes.get! (o+3))
+    else (bytes.get! o, bytes.get! (o+1), bytes.get! (o+2), bytes.get! (o+3))
+  let v := fun (x y : Nat) => (px x y).1.toNat
+  check s!"impulse: peak ≈ 25 (got {v 50 40})" (18 ≤ v 50 40 && v 50 40 ≤ 33)
+  check s!"impulse: ±σ ≈ 15 (got {v 50 36}/{v 50 44})"
+    (12 ≤ v 50 36 && v 50 36 ≤ 22 && 12 ≤ v 50 44 && v 50 44 ≤ 22)
+  check s!"impulse: ±2σ ≈ 3 (got {v 50 32}/{v 50 48})"
+    (1 ≤ v 50 32 && v 50 32 ≤ 8 && 1 ≤ v 50 48 && v 50 48 ≤ 8)
+  check s!"impulse: ±4σ gone (got {v 50 24}/{v 50 56})" (v 50 24 ≤ 1 && v 50 56 ≤ 1)
+  let mut energy := 0
+  for y in [24:57] do
+    energy := energy + v 50 y
+  check s!"impulse: column energy preserved within 10% (got {energy})"
+    (229 ≤ energy && energy ≤ 281)
+  check s!"σ=0.5: interior is identity (got {v 120 35})" (v 120 35 ≥ 253)
+  check s!"σ=0.5: 4 px outside stays dark (got {v 120 54})" (v 120 54 ≤ 2)
+  check s!"blur × alpha 0.5: block center ≈ 127 (got {v 180 40})"
+    (110 ≤ v 180 40 && v 180 40 ≤ 142)
+  check s!"blur spreads past the recorded bounds (got {v 194 40} @ 4 px out)"
+    (v 194 40 ≥ 5 && v 194 40 ≤ 40)
+  check "background untouched" (px 5 5 == (0, 0, 0, 255))
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: three layers" (stats.layers == 3)
+
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
@@ -632,6 +759,8 @@ def run : IO UInt32 := do
   probeImages gpuRenderer swapchainFmt
   probeTransforms gpuRenderer engine font swapchainFmt
   probeGradients gpuRenderer swapchainFmt
+  probeFragmentUniform dev
+  probeBlur gpuRenderer swapchainFmt
   probePresentLoop dev window windowPipe ibuf
 
   dev.releaseWindow window

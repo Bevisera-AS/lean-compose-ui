@@ -254,6 +254,10 @@ inductive DrawElem where
   graphics layer: rotate/scale/translate about a pivot plus group alpha,
   applied at composite time. Mirrors `Modifier.graphicsLayer`. -/
   | graphicsLayer (g : Draw.GraphicsLayerScope)
+  /-- Gaussian-blur the content (and everything inner) through an offscreen
+  layer (σ = `radius / 2` px). GPU-only; the SDL backend renders unblurred.
+  Mirrors `Modifier.blur`. -/
+  | blur (radius : Dp)
   /-- Arbitrary drawing behind the content at the wrapper's coordinates.
   Mirrors `Modifier.drawBehind`. -/
   | drawBehind (block : Draw.DrawM Unit)
@@ -275,8 +279,11 @@ instance : BEq DrawElem where
     | .clip s, .clip s' => s == s'
     | .alpha a, .alpha a' => a == a'
     | .graphicsLayer g, .graphicsLayer g' => g == g'
+    | .blur r, .blur r' => r == r'
     | _, _ => false
 
+#guard (DrawElem.blur 4) == (DrawElem.blur 4)
+#guard (DrawElem.blur 4) != (DrawElem.blur 8)
 #guard (DrawElem.background .red .rectangle) == (DrawElem.background .red .rectangle)
 #guard (DrawElem.background .red .rectangle) != (DrawElem.background .blue .rectangle)
 #guard (DrawElem.shadow 2 .rectangle .black) == (DrawElem.shadow 2 .rectangle .black)
@@ -528,6 +535,15 @@ def graphicsLayer (rotationZ : Float32 := 0) (scaleX : Float32 := 1)
     (m : Modifier := {}) : Modifier :=
   m.append (.draw (.graphicsLayer
     { alpha, rotationZ, scaleX, scaleY, translationX, translationY, transformOrigin }))
+
+/-- Gaussian-blur content and children through an offscreen layer, with a
+standard deviation of `radius / 2` px (the `Modifier.shadow` blur convention;
+capped at σ 16). `radius ≤ 0` records nothing. **GPU backend only** — the SDL
+software backend draws the content unblurred (a documented approximation,
+DESIGN.md). Compared structurally, so animating the radius invalidates
+exactly this element's draw. Mirrors `Modifier.blur`. -/
+def blur (radius : Dp) (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.blur radius))
 
 /-- Draw behind the content with full `DrawM` access. Mirrors
 `Modifier.drawBehind`. -/

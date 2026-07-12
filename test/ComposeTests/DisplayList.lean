@@ -89,6 +89,17 @@ private def layersAndShadows : IO Unit := do
       DrawScope.drawRect (.solid .red) ⟨0, 0⟩ ⟨2, 2⟩
   checkBriefs "full-alpha layer elided" l
     [ "rect @(0,0) #ff0000ff tl=(0,0) sz=2x2" ]
+  -- `withBlur` records a layer even at full alpha (the blur is the point);
+  -- σ ≤ 0 records nothing; σ normalizes (caps at 16).
+  let l ← rec do
+    DrawScope.withBlur ⟨0, 0, 20, 20⟩ 4 do
+      DrawScope.drawRect (.solid .red) ⟨1, 1⟩ ⟨4, 4⟩
+    DrawScope.withBlur ⟨0, 0, 20, 20⟩ 0 do
+      DrawScope.drawRect (.solid .blue) ⟨0, 0⟩ ⟨2, 2⟩
+  checkBriefs "blur layer" l
+    [ "layer @(0,0) bounds=(0,0,20,20) a=1 blur=4\n"
+        ++ "  rect @(0,0) #ff0000ff tl=(1,1) sz=4x4"
+    , "rect @(0,0) #0000ffff tl=(0,0) sz=2x2" ]
   -- The shadow spec records like any shape (SDL tessellates it, GPU renders
   -- the analytic form).
   let l ← rec do
@@ -178,6 +189,19 @@ private def composedScene : IO Unit := do
         (briefs.any fun b =>
           b.startsWith s!"layer @(0,20) bounds=(0,20,20,30) a={Draw.fmtF 0.5}"
             && (b.splitOn "\n").any (·.trimAscii == "rect @(0,20) #0000ffff tl=(0,0) sz=20x10"))
+  -- `Modifier.blur` through the real draw walk: a blur layer over the wrapper
+  -- bounds with σ = radius/2 px (density 1 in tests).
+  runComposeTest
+    (Box (modifier := Modifier.blur 8 |>.size 30 20 |>.background Color.red))
+    do
+      awaitIdle
+      let t ← uiTest
+      let density ← t.ctx.density
+      let (list, _) ← DrawScope.record density t.ctx.root.drawTree
+      check "Modifier.blur records a blur layer over the wrapper bounds"
+        ((list.map (·.brief)).any fun b =>
+          b.startsWith "layer @(0,0) bounds=(0,0,30,20) a=1 blur=4"
+            && (b.splitOn "\n").any (·.trimAscii == "rect @(0,0) #ff0000ff tl=(0,0) sz=30x20"))
 
 /-- The DisplayList group. -/
 def run : IO Unit := do

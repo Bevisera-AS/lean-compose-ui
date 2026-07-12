@@ -118,6 +118,39 @@ def ign (x y : Float32) : Float32 :=
 #guard (ign 100.5 200.5 - 0.477245).abs < 1e-4
 #guard ign 0.5 0.5 >= 0 && ign 0.5 0.5 < 1
 
+/-! ## Separable Gaussian blur (the M-i layer-effect pipeline) -/
+
+/-- One Gaussian tap weight at texel offset `i` (unnormalized — the blur
+fragment accumulates `wsum` and divides, so the discrete kernel sums to one
+regardless of where the tails truncate). -/
+def blurWeight (i sigma : Float32) : Float32 :=
+  ((-(i * i) / (2 * sigma * sigma)).toFloat.exp).toFloat32
+
+/-- The bilinear-sampling offset of the paired taps `(i, i + 1)`: one linear
+fetch at `i + w(i+1) / (w(i) + w(i+1))` weighs the two texels exactly
+`w(i) : w(i+1)`, halving the sample count (the classic linear-tap-pairing
+trick; requires the linear sampler). -/
+def blurTapOffset (i sigma : Float32) : Float32 :=
+  i + blurWeight (i + 1) sigma / (blurWeight i sigma + blurWeight (i + 1) sigma)
+
+-- Center weight is 1; weights fall monotonically; the 3σ tail is negligible.
+#guard blurWeight 0 4 == 1
+#guard blurWeight 1 4 > blurWeight 2 4 && blurWeight 2 4 > blurWeight 4 4
+#guard blurWeight 12 4 < 0.012
+-- Pinned outputs catch MSL constant typos (like the ign pins).
+#guard (blurWeight 1 4 - 0.969233).abs < 1e-4
+#guard (blurWeight 4 4 - 0.606531).abs < 1e-4
+-- The paired offset always lands between its two texels, nearer the heavier.
+#guard (blurTapOffset 1 4 - 1.476579).abs < 1e-4
+#guard (blurTapOffset 3 4 - 3.445515).abs < 1e-4
+#guard blurTapOffset 5 4 > 5 && blurTapOffset 5 4 < 5.5
+-- The truncated discrete kernel carries the Gaussian's full mass: center +
+-- 2·Σ₁..³σ ≈ σ·√(2π) (the continuous normalizer) within a few per mille.
+#guard
+  let wsum := 1 + 2 * (List.range 12).foldl
+    (fun acc i => acc + blurWeight (Float32.ofNat (i + 1)) 4) 0
+  (wsum - 4 * 2.50662827).abs < 0.03
+
 /-! ## Analytic Gaussian shadow (Evan Wallace) -/
 
 /-- The Gaussian PDF with standard deviation `sigma`. -/

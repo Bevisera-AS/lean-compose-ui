@@ -102,6 +102,18 @@ composable def transformsSection : Composable Unit := do
           |>.size 28 28 |>.background (Color.hex 0xFFB00020) (.rounded 14))
     Text "spin · tilt · press"
 
+/-- Layer blur (M-i): the same two-circle motif sharp and under
+`Modifier.blur` — Gaussian-blurred on the GPU backend; the SDL backend draws
+it unblurred (the documented fallback). -/
+composable def effectsSection : Composable Unit := do
+  let motif : Draw.DrawM Unit := do
+    Draw.DrawScope.drawCircle (.solid (Color.hex 0xFFBB86FC)) ⟨20, 24⟩ 12
+    Draw.DrawScope.drawCircle (.solid (Color.hex 0xFF03DAC6)) ⟨40, 24⟩ 12
+  Row (horizontalArrangement := .spacedBy 12) (verticalAlignment := .centerVertically) do
+    Box (modifier := (Modifier.size 60 48).drawBehind motif)
+    Box (modifier := (Modifier.blur 8 |>.size 60 48).drawBehind motif)
+    Text "sharp · blurred (GPU)"
+
 /-- The dark-theme strip: the same controls on the dark baseline palette. -/
 composable def darkSection (checked : MutableState Bool)
     (on : MutableState Bool) : Composable Unit := do
@@ -138,11 +150,13 @@ composable def widgetsUi : Composable Unit := do
       HorizontalDivider
       transformsSection
       HorizontalDivider
+      effectsSection
+      HorizontalDivider
       darkSection checked on
 
 end Demos.Widgets
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  Compose.runApp "compose widgets" 480 630 Demos.Widgets.widgetsUi
+  Compose.runApp "compose widgets" 480 700 Demos.Widgets.widgetsUi
     { clearColor := Compose.ColorScheme.light.surface }

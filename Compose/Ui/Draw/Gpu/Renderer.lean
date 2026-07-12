@@ -12,8 +12,9 @@ shrink) → one transfer-buffer write + copy pass (`cycle := true` throughout �
 probe-verified to preserve in-flight data) → acquire the swapchain texture
 (blocking or not per `mayBlock`; `none` still submits the copy work and
 reports a skipped frame) → one render pass per offscreen layer
-(innermost-first, cleared transparent) then the target pass, each replaying
-its command list → submit (present is implicit).
+(innermost-first, cleared transparent; blurred layers append two separable
+Gaussian passes bouncing through a second pooled texture) then the target
+pass, each replaying its command list → submit (present is implicit).
 
 Layer textures come from a per-window pool: dimensions quantized up to 64 px,
 first-fit ≥ the request, entries released after sitting idle for
@@ -152,6 +153,18 @@ private structure PoolEntry where
 /-- Frames a pooled layer texture may sit idle before release. -/
 private def poolTrimAge : Nat := 120
 
+/-- The pooled textures backing one encoded layer: the content texture the
+composite samples (with its pool dimensions — first-fit, so ≥ the request),
+and, for blurred layers (`LayerEnc.sigma > 0`), a second pooled ping texture
+the separable passes bounce through (content → ping → content). -/
+private structure LayerTex where
+  tex : Texture
+  w : UInt32
+  h : UInt32
+  blurTex : Option Texture := none
+  blurW : UInt32 := 0
+  blurH : UInt32 := 0
+
 /-- Per-window GPU renderer state. -/
 structure GpuRenderer where
   /-- The shared device. -/
@@ -225,33 +238,44 @@ private def quantize64 (x : Float32) : UInt32 :=
   let n := max 1 x.toUInt32
   (n + 63) / 64 * 64
 
-/-- Acquire one pooled texture per encoded layer (first-fit ≥ the quantized
-request, creating on miss), then age and trim the pool: entries idle past
-`poolTrimAge` frames are released. Returns the textures with their (pool)
-dimensions, parallel to `layers`. -/
+/-- First-fit one unused pooled texture ≥ the quantized request (creating on
+miss), marking it used. Returns the updated pool and the texture with its
+(pool) dimensions. -/
+private def poolAcquire (dev : Device) (fmt : TextureFormat) (pool : Array PoolEntry)
+    (w h : UInt32) : IO (Array PoolEntry × Texture × UInt32 × UInt32) := do
+  let mut found : Option (Nat × PoolEntry) := none
+  let mut j := 0
+  for e in pool do
+    if found.isNone && !e.used && e.w ≥ w && e.h ≥ h then
+      found := some (j, e)
+    j := j + 1
+  match found with
+  | some (i, e) =>
+    return (pool.modify i ({ · with used := true, idle := 0 }), e.tex, e.w, e.h)
+  | none =>
+    let tex ← dev.createTexture
+      { format := fmt, usage := TextureUsageFlags.sampler ||| .colorTarget
+        width := w, height := h }
+    return (pool.push { tex, w, h, used := true }, tex, w, h)
+
+/-- Acquire the pooled textures of every encoded layer (blurred layers take a
+second, ping texture for the separable passes), then age and trim the pool:
+entries idle past `poolTrimAge` frames are released. Parallel to `layers`. -/
 private def acquireLayerTextures (r : GpuRenderer) (fmt : TextureFormat)
-    (layers : Array LayerEnc) : IO (Array (Texture × UInt32 × UInt32)) := do
+    (layers : Array LayerEnc) : IO (Array LayerTex) := do
   let mut pool := (← r.pool.get).map fun e => { e with used := false }
-  let mut out : Array (Texture × UInt32 × UInt32) := Array.emptyWithCapacity layers.size
+  let mut out : Array LayerTex := Array.emptyWithCapacity layers.size
   for l in layers do
     let w := quantize64 l.bounds.width
     let h := quantize64 l.bounds.height
-    let mut found : Option (Nat × PoolEntry) := none
-    let mut j := 0
-    for e in pool do
-      if found.isNone && !e.used && e.w ≥ w && e.h ≥ h then
-        found := some (j, e)
-      j := j + 1
-    match found with
-    | some (i, e) =>
-      pool := pool.modify i ({ · with used := true, idle := 0 })
-      out := out.push (e.tex, e.w, e.h)
-    | none =>
-      let tex ← r.dev.createTexture
-        { format := fmt, usage := TextureUsageFlags.sampler ||| .colorTarget
-          width := w, height := h }
-      pool := pool.push { tex, w, h, used := true }
-      out := out.push (tex, w, h)
+    let (pool', tex, tw, th) ← poolAcquire r.dev fmt pool w h
+    pool := pool'
+    if l.sigma > 0 then
+      let (pool'', btex, bw, bh) ← poolAcquire r.dev fmt pool w h
+      pool := pool''
+      out := out.push { tex, w := tw, h := th, blurTex := some btex, blurW := bw, blurH := bh }
+    else
+      out := out.push { tex, w := tw, h := th }
   let mut kept : Array PoolEntry := #[]
   for e in pool do
     if e.used then
@@ -270,14 +294,14 @@ transform (a transformed layer renders axis-aligned into its texture; only
 this quad rotates/scales), with UVs covering the content's fraction of the
 pooled texture and the group alpha in the vertex color. -/
 private def layerComposites (layers : Array LayerEnc)
-    (texs : Array (Texture × UInt32 × UInt32)) : ByteArray × ByteArray := Id.run do
+    (texs : Array LayerTex) : ByteArray × ByteArray := Id.run do
   let mut verts := ByteArray.empty
   let mut idx := ByteArray.empty
   let mut i := 0
   for l in layers do
     let (u, v) := match texs[i]? with
-      | some (_, tw, th) =>
-        (l.bounds.width / Float32.ofNat tw.toNat, l.bounds.height / Float32.ofNat th.toNat)
+      | some lt =>
+        (l.bounds.width / Float32.ofNat lt.w.toNat, l.bounds.height / Float32.ofNat lt.h.toNat)
       | none => (1, 1)
     let b := l.bounds
     let m := l.transform.getD .identity
@@ -305,7 +329,7 @@ private def clampScissor (s : Sdl.Rect) (w h : Int32) : Sdl.Rect :=
 buffers lazily on kind switches, apply scissors on change, one draw per
 command. `layerTexs` backs `.layer` composite commands. -/
 private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
-    (atlases : Array Texture) (layerTexs : Array (Texture × UInt32 × UInt32))
+    (atlases : Array Texture) (layerTexs : Array LayerTex)
     (imageTexs : Array Texture) (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
   let full : Sdl.Rect := ⟨0, 0, w, h⟩
   -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 5 image / 9 none
@@ -369,9 +393,9 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
         kind := 4
         boundLayer := none
       if boundLayer != some (idx, linear) then
-        if let some (tex, _, _) := layerTexs[idx]? then
+        if let some lt := layerTexs[idx]? then
           rp.bindFragmentSamplers 0
-            #[{ texture := tex, sampler := if linear then r.samplerLinear else r.sampler }]
+            #[{ texture := lt.tex, sampler := if linear then r.samplerLinear else r.sampler }]
           boundLayer := some (idx, linear)
       rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
     | .image first count tex linear _ =>
@@ -398,8 +422,7 @@ Returns the encoded frame, its atlas texture table, and the layer textures,
 ready for `GpuRenderer.passes`. -/
 private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
     (list : DisplayList) :
-    IO (EncodeResult × Array Texture × Array (Texture × UInt32 × UInt32)
-        × Array Texture) := do
+    IO (EncodeResult × Array Texture × Array LayerTex × Array Texture) := do
   let (texts, atlases) ← resolveTexts list
   let (imageIdxs, imageTexs) ← resolveImages r.dev cb list
   let enc := encode list texts imageIdxs
@@ -469,27 +492,63 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
 
 /-- Record the frame's render passes on `cb`: one transparent-cleared pass
 per offscreen layer (innermost-first — composites of inner layers replay
-inside outer ones), then the clear-and-replay pass into `target`. Each pass
-pushes its own `Globals` viewport so NDC maps to its texture's extent. -/
+inside outer ones), plus two separable Gaussian passes per *blurred* layer
+(content → ping → content, so the composite samples the content texture
+unchanged), then the clear-and-replay pass into `target`. Each pass pushes
+its own `Globals` viewport so NDC maps to its texture's extent (blur passes
+push their `BlurVert`/`BlurParams` pair instead). -/
 private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     (target : Texture) (w h : UInt32) (clear : Color) (enc : EncodeResult)
-    (atlases : Array Texture) (layerTexs : Array (Texture × UInt32 × UInt32))
+    (atlases : Array Texture) (layerTexs : Array LayerTex)
     (imageTexs : Array Texture) : IO Unit := do
   let bufs ← r.buffers.get
   let mut i := 0
   for l in enc.layers do
-    if let some (tex, tw, th) := layerTexs[i]? then
+    if let some lt := layerTexs[i]? then
       cb.pushVertexUniformData 0
-        (packGlobals (Float32.ofNat tw.toNat) (Float32.ofNat th.toNat))
+        (packGlobals (Float32.ofNat lt.w.toNat) (Float32.ofNat lt.h.toNat))
       -- `cycle`: the pooled texture is reused every frame; with two frames in
       -- flight the previous frame may still be sampling it — cycling swaps in
       -- fresh backing at pass begin (loadOp is `.clear`, so nothing is lost).
       let rp ← cb.beginRenderPass
-        #[{ texture := tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
+        #[{ texture := lt.tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
             cycle := true }]
       replay r rp l.cmds atlases layerTexs imageTexs bufs
-        (Int32.ofNat tw.toNat) (Int32.ofNat th.toNat)
+        (Int32.ofNat lt.w.toNat) (Int32.ofNat lt.h.toNat)
       rp.finish
+      if l.sigma > 0 then
+        if let some ping := lt.blurTex then
+          -- Separable Gaussian: H blurs content → ping, V blurs ping → back
+          -- into the content texture (its `cycle` is safe — the V pass fully
+          -- rewrites it before anything recorded later samples it; the H
+          -- pass's read of the pre-cycle backing was recorded earlier).
+          -- Regions outside the content extent are cleared transparent, so
+          -- the taps' clamp-to-edge never reads stale texels.
+          let bw := l.bounds.width
+          let bh := l.bounds.height
+          let taps := Float32.ofNat (min 48 (max 1 (3 * l.sigma).ceil.toUInt32.toNat))
+          let texW := Float32.ofNat lt.w.toNat
+          let texH := Float32.ofNat lt.h.toNat
+          let pingW := Float32.ofNat lt.blurW.toNat
+          let pingH := Float32.ofNat lt.blurH.toNat
+          cb.pushVertexUniformData 0 (packBlurVert pingW pingH bw bh (bw / texW) (bh / texH))
+          cb.pushFragmentUniformData 0 (packBlurParams (1 / texW) 0 l.sigma taps)
+          let hp ← cb.beginRenderPass
+            #[{ texture := ping, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
+                cycle := true }]
+          hp.bindPipeline r.pipelines.blur
+          hp.bindFragmentSamplers 0 #[{ texture := lt.tex, sampler := r.samplerLinear }]
+          hp.drawPrimitives 4 1 0 0
+          hp.finish
+          cb.pushVertexUniformData 0 (packBlurVert texW texH bw bh (bw / pingW) (bh / pingH))
+          cb.pushFragmentUniformData 0 (packBlurParams 0 (1 / pingH) l.sigma taps)
+          let vp ← cb.beginRenderPass
+            #[{ texture := lt.tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
+                cycle := true }]
+          vp.bindPipeline r.pipelines.blur
+          vp.bindFragmentSamplers 0 #[{ texture := ping, sampler := r.samplerLinear }]
+          vp.drawPrimitives 4 1 0 0
+          vp.finish
     i := i + 1
   cb.pushVertexUniformData 0
     (packGlobals (Float32.ofNat w.toNat) (Float32.ofNat h.toNat))

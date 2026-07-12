@@ -39,16 +39,56 @@ structure PrimState where
   alpha : Float32 := 1.0
   deriving Repr, BEq, Inhabited
 
-/-- Composite-time properties of an offscreen layer: the group alpha and an
-optional affine transform, both applied once when the layer's texture is
-composited (`transform` in render-target coordinates — the layer-boundary
-transform model, like Compose's `graphicsLayer`). `effect` (blur) joins in a
-later wave. -/
+/-- A pixel effect applied to a layer's texture before it is composited.
+Rendered by the GPU backend only (separable Gaussian render passes); the SDL
+backend draws the content unblurred — a documented approximation, like its
+rounded-clip story. Backdrop blur (sampling what's *behind* the layer) is out
+of scope. -/
+inductive LayerEffect where
+  /-- No effect — the texture composites as rendered. -/
+  | none
+  /-- Gaussian blur with standard deviation `sigma` (device px). -/
+  | blur (sigma : Float32)
+  deriving Repr, BEq, Inhabited
+
+namespace LayerEffect
+
+/-- Canonical form for recording: a non-positive `sigma` is no effect, and
+`sigma` caps at 16 (the GPU pass samples `3σ` texels per side; larger blurs
+would want a downsample stage — deferred). -/
+def normalize : LayerEffect → LayerEffect
+  | .blur sigma => if sigma <= 0 then .none else .blur (min sigma 16)
+  | .none => .none
+
+/-- How far (px) the effect can spread content past its geometry: a Gaussian's
+tails are negligible beyond `3σ` (+1 px AA). Inflates layer damage bounds and
+the encoder's composite-region margin. -/
+def spread : LayerEffect → Float32
+  | .none => 0
+  | .blur sigma => 3 * sigma + 1
+
+#guard normalize (.blur 0) == .none
+#guard normalize (.blur (-2)) == .none
+#guard normalize (.blur 4) == .blur 4
+#guard normalize (.blur 99) == .blur 16
+#guard normalize .none == .none
+#guard spread .none == 0
+#guard spread (.blur 4) == 13
+
+end LayerEffect
+
+/-- Composite-time properties of an offscreen layer: the group alpha, an
+optional affine transform, and a pixel effect — all applied once when the
+layer's texture is composited (`transform` in render-target coordinates — the
+layer-boundary transform model, like Compose's `graphicsLayer`; `effect`
+processes the texture before the composite maps it). -/
 structure LayerProps where
   /-- Group alpha applied once at composite. -/
   alpha : Float32 := 1
   /-- Composite transform (`none` = axis-aligned at the layer bounds). -/
   transform : Option Affine := none
+  /-- Pixel effect on the layer texture (GPU-only; SDL renders unaffected). -/
+  effect : LayerEffect := .none
   deriving Repr, BEq, Inhabited
 
 /-- A recorded text run: the live `Ttf.Text` handle (backends draw through
@@ -197,6 +237,9 @@ partial def Prim.brief : Prim → String
       ++ (match props.transform with
           | some t => s!" t=[{fmtF t.a},{fmtF t.b},{fmtF t.c},{fmtF t.d},{fmtF t.tx},{fmtF t.ty}]"
           | none => "")
+      ++ (match props.effect with
+          | .blur sigma => s!" blur={fmtF sigma}"
+          | .none => "")
       ++ "\n"
       ++ String.intercalate "\n" (content.map (fun p => "  " ++ p.brief)).toList
 
@@ -210,6 +253,8 @@ partial def Prim.brief : Prim → String
 #guard (Prim.shape { clip := some ⟨0, 0, 40, 40⟩ }
           (.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .blue)) none).brief
         == "shape @(0,0) clip=(0,0,40,40) rrFill rr(0,0,40,40)r8 #0000ffff"
+#guard (Prim.layer {} ⟨0, 0, 20, 20⟩ { effect := .blur 4 } #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]).brief
+        == "layer @(0,0) bounds=(0,0,20,20) a=1 blur=4\n  rect @(0,0) #ff0000ff tl=(0,0) sz=4x4"
 
 /-- All primitives (including layer content, recursively) satisfy `p` —
 the well-formedness walker the IR test group uses. -/
@@ -248,9 +293,10 @@ partial def Prim.bounds : Prim → Option Rect
       match p.bounds with
       | none => return st.clip    -- unknown content extent
       | some b => acc := some ((acc.getD b).union b)
-    let u := acc.getD .zero
-    -- A composite transform maps where the pixels land (AABB of the mapped
-    -- content union); the enclosing clip still bounds the composite.
+    -- An effect spreads pixels in the texture (pre-transform); a composite
+    -- transform then maps where they land (AABB of the mapped union); the
+    -- enclosing clip still bounds the composite.
+    let u := (acc.getD .zero).inflate props.effect.spread
     return some (clipBounds st (match props.transform with
       | some t => t.mapRect u
       | none => u))
@@ -277,6 +323,12 @@ def DisplayList.bounds (list : DisplayList) : Option Rect := Id.run do
         == some ⟨10, 10, 30, 30⟩
 #guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { transform := some (.translation ⟨5, 0⟩) }
           #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds == some ⟨15, 10, 35, 30⟩
+-- A blur spreads the content union by 3σ + 1 (pre-transform).
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { effect := .blur 4 }
+          #[.rect {} .red ⟨15, 15⟩ ⟨20, 20⟩]).bounds == some ⟨2, 2, 48, 48⟩
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩
+          { transform := some (.translation ⟨5, 0⟩), effect := .blur 1 }
+          #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds == some ⟨11, 6, 39, 34⟩
 #guard DisplayList.bounds #[.rect {} .red ⟨0, 0⟩ ⟨10, 10⟩, .rect {} .blue ⟨40, 40⟩ ⟨10, 10⟩]
         == some ⟨0, 0, 50, 50⟩
 #guard DisplayList.bounds #[] == some .zero

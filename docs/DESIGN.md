@@ -310,8 +310,9 @@ drawText (run : TextRun) (topLeft)          -- via TextLayout.draw
 drawImage (img : ImageBitmap) (dst) (src := none) (sampling := .linear)
 clipRect (r : Rect) (body) ; clipRoundRect (rr) (body) ; clipPath (path) (body)
 translate (o : Offset) (body) ; withAlpha (a) (body)
-withGraphicsLayer (bounds) (g : GraphicsLayerScope) (body)  -- group alpha + transform
-withLayer (bounds) (alpha) (body)          -- its transform-free case
+withGraphicsLayer (bounds) (g : GraphicsLayerScope) (body) (effect := .none)
+withLayer (bounds) (alpha) (body) (effect := .none)  -- its transform-free case
+withBlur (bounds) (sigma) (body)           -- Gaussian layer effect, GPU-only
 ```
 
 `Brush` = `solid Color` | `linearGradient` | `radialGradient (center, radius)`
@@ -407,7 +408,8 @@ texture at full quality and map only the composite (so SDL text and GPU SDF
 quads never rasterize rotated; the cost is texture-sampled transformed
 content). `Modifier.graphicsLayer` compares structurally, so animating a
 parameter redraws without re-tessellating (meshes key on the untransformed
-shape). Clip semantics: clips *inside* the layer bake into the texture and
+shape). `LayerProps` also carries a `LayerEffect` (see **Blur** below) —
+`.blur σ` forces a layer even at full alpha. Clip semantics: clips *inside* the layer bake into the texture and
 rotate with it; *enclosing* clips are stripped from the recorded content and
 scissor the composite instead (they are target-coordinate regions — they
 apply where pixels land); enclosing *rounded* clips degrade to that rect
@@ -426,6 +428,25 @@ fractionally through the linear sampler. **Hit testing is not transformed**
 (documented on the modifier; `invert?` is ready for the follow-up). Parity in
 practice: 90°/snapped composites are byte-exact across backends; fractional
 angles differ only in bilinear edge phase (mean ≈ 1.3, gated).
+
+**Blur** (`LayerEffect.blur`, GPU-only): `Modifier.blur (radius : Dp)` /
+`DrawScope.withBlur (bounds) (sigma)` record a layer whose texture is
+Gaussian-blurred before compositing (σ = radius/2 px, the shadow convention;
+σ ≤ 0 normalizes away, σ caps at 16 — larger blurs would want a downsample
+stage, deferred). Bounds — damage and the encoder's composite region — grow
+by the `3σ + 1` spread so the tails render and composite. On the GPU each
+blurred layer takes a second pooled texture and two extra render passes
+(content → ping → content): a **vertex-buffer-free** pipeline (corners from
+`vertex_id`, geometry from a vertex uniform, kernel via the codebase's one
+fragment uniform — `pushFragmentUniformData`, probe-verified) runs one
+direction of the separable kernel per pass, pairing taps through the linear
+sampler (one bilinear fetch weighs two texels — `Gpu.Sdf.blurWeight`/
+`blurTapOffset` twins) and normalizing by the accumulated weight, premul
+in/premul out. The SDL backend renders blur-layer content **unblurred** (a
+documented approximation, pixel-pinned; a CPU Gaussian would verify nothing
+the GPU probe doesn't). Backdrop blur (sampling behind the layer) is out of
+scope. Verified by `gpu-probe` ⑭ (impulse response, energy conservation,
+near-identity at tiny σ); excluded from `gpu-parity` (GPU-only by design).
 
 **The IR**: each `Prim` (crisp `rect` / `shape` with a `ShapeSpec` +
 optional cached mesh / raw `mesh` / `text` run / `image` / `layer` with
@@ -449,7 +470,8 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   segments per corner, min 4). Untransformed layers flatten by folding alpha
   (documented double-blend approximation, pinned by a pixel test);
   *transformed* layers render to real pooled offscreen targets and composite
-  via `textureAffine` (see **Transforms**); elevation shadows
+  via `textureAffine` (see **Transforms**); layer *effects* are ignored —
+  blur content renders unblurred (see **Blur**); elevation shadows
   tessellate as rings 3σ inward and outward of the silhouette whose vertex
   alphas sample the same analytic shadow function the GPU evaluates
   (`roundRectShadow`).
@@ -466,9 +488,10 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   instanced **analytic Gaussian shadows** (Evan Wallace's closed-form erf
   integral, twinned in `Sdf.lean`); `layer` prims → **real offscreen layer
   passes** (group opacity composites once — no double blend; a transform maps
-  the composite quad's corners, nearest when `snapComposite` else linear),
-  textures from a per-window pool (64 px-quantized, first-fit, trimmed after
-  120 idle frames). One shared `Gpu.Device` per process; MSL shaders compiled at
+  the composite quad's corners, nearest when `snapComposite` else linear; a
+  blur effect adds two separable Gaussian passes through a second pooled
+  texture), textures from a per-window pool (64 px-quantized, first-fit,
+  trimmed after 120 idle frames). One shared `Gpu.Device` per process; MSL shaders compiled at
   runtime; premultiplied blending with non-premultiplied vertex colors
   (interpolation matches SDL's). Clips are per-command integer scissors with
   SDL's exact floor/ceil expansion, plus an in-shader rounded mask on every

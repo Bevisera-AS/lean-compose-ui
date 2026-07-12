@@ -191,6 +191,14 @@ suite); the `_root_.main` entry is in `Demos/FilesMain.lean`. -/
 lean_exe «demo-files» where
   root := `Demos.FilesMain
 
+/-- M-b GPU spike: probes the SDL_GPU runtime facts the GPU renderer backend
+depends on (MSL-source shaders, firstInstance, `gpuDrawData` conventions,
+transfer-buffer cycle, present loop). Real driver only — SDL_GPU has no
+dummy-video backend — so it is not in the headless suite; run
+`lake exe gpu-probe` locally (`Demos/GpuProbe.lean`). -/
+lean_exe «gpu-probe» where
+  root := `Demos.GpuProbe
+
 /-- M12 demo *libraries* (model + UI, no `_root_.main`): the reusable modules
 the demo exes wrap and the MT suites import. Declared as their own
 `default_target` lib (like `CellsEngine`) so `lake build` compiles them, runs

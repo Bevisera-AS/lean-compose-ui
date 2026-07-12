@@ -30,6 +30,13 @@ import Compose.Ui.Draw.DisplayList
 import Compose.Ui.Draw.Scope
 import Compose.Ui.Draw.Backend
 import Compose.Ui.Draw.SdlBackend
+import Compose.Ui.Draw.Gpu.Sdf
+import Compose.Ui.Draw.Gpu.Instance
+import Compose.Ui.Draw.Gpu.Encode
+import Compose.Ui.Draw.Gpu.Shaders
+import Compose.Ui.Draw.Gpu.TextEngine
+import Compose.Ui.Draw.Gpu.Renderer
+import Compose.Ui.Draw.GpuBackend
 import Compose.Ui.Input.Pointer
 import Compose.Ui.Input.Keyboard
 import Compose.Ui.Semantics

@@ -4,6 +4,7 @@ import Compose.Ui.Overlay
 import Compose.Ui.Input.Router
 import Compose.Ui.Draw.Scope
 import Compose.Ui.Draw.SdlBackend
+import Compose.Ui.Draw.GpuBackend
 
 namespace Compose
 
@@ -98,8 +99,9 @@ def windowCoordSize (dp : Dp) (displayScale pixelDensity : Float32) : Int32 :=
 
 /-- Resolve and build the window's rendering backend: an explicit
 `config.backend` wins, else the `COMPOSE_BACKEND` env var (`gpu`/`sdl`), else
-`.sdlRenderer`. The GPU backend arm lands in milestone M-b — selecting it
-throws a clear error for now. -/
+`.sdlRenderer`. The GPU backend needs a real driver (SDL_GPU has no
+dummy-video backend); when its device creation throws we warn and fall back
+to the SDL renderer, so `COMPOSE_BACKEND=gpu` is safe everywhere. -/
 def makeBackend (window : Sdl.Window) (config : AppConfig) : IO Draw.RenderBackend := do
   let kind ← match config.backend with
     | some k => pure k
@@ -111,9 +113,12 @@ def makeBackend (window : Sdl.Window) (config : AppConfig) : IO Draw.RenderBacke
   | .sdlRenderer =>
     return Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
   | .gpu =>
-    throw (IO.userError
-      "Compose: the GPU backend lands in a later milestone — unset COMPOSE_BACKEND \
-       or pass backend := some .sdlRenderer")
+    try
+      Draw.GpuBackend.create window
+    catch e =>
+      IO.eprintln s!"Compose: GPU backend unavailable ({e.toString}); \
+        falling back to the SDL renderer"
+      return Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
 
 /-- Build the per-window half of `bootstrap` on an *existing* scheduler and
 wake event (`Compose.application` shares one pair across all its windows):

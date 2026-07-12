@@ -35,7 +35,7 @@ imports layers above it in this list:
 | core | `Compose/Core/*` | `Color`, geometry (`Offset`/`Size`/`Rect`/`RoundRect`), `Dp`/`Sp`/`Density` — pure, SDL-free |
 | runtime | `Compose/Runtime/*` | state, slot tree, composer, effects, coroutines, frame clock, `composable` macro — **UI-free and SDL-free**, testable with a test applier |
 | animation | `Compose/Animation/*` | easing, springs, specs, `Animatable`, `animate*AsState`, `Transition` — depends on runtime only |
-| ui | `Compose/Ui/*` | constraints/layout, modifiers, draw (tessellation + SDL renderer backend), text, input, window/app loop, overlays |
+| ui | `Compose/Ui/*` | constraints/layout, modifiers, draw (display-list IR; SDL renderer + SDL_GPU backends), text, input, window/app loop, overlays |
 | foundation | `Compose/Foundation/*` | `Row`/`Column`/`Box`/`Spacer`, scroll, lazy lists, gesture detectors, interaction sources |
 | material | `Compose/Material/*` | theme + widget set |
 | demos | `Demos/*` | the seven 7GUIs tasks + gallery |
@@ -331,10 +331,24 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   against a round-rect for bounded ripples; adaptive `⌈π/2 · r / 2px⌉`
   segments per corner, min 4). Layers flatten by folding alpha (documented
   double-blend approximation).
-- **GPU backend** (SDL_GPU, GPUI-style SDF instancing) — lands per the
-  renderer plan (milestone M-b): renders `ShapeSpec`s analytically, honors
-  `PrimState.rounded` on all content, real offscreen layers and shadows.
-  No dummy-driver support, so it is never the test backend.
+- **`GpuBackend.lean`** (SDL_GPU, GPUI-style SDF instancing; `Gpu/*.lean`) —
+  a pure encoder (`Encode.lean`) lowers the list into per-pipeline buffers +
+  a flat `DrawCmd` list: axis-aligned rounded geometry under solid/two-stop
+  brushes → instanced **SDF quads** (analytic coverage, math `#guard`-twinned
+  in `Sdf.lean`); arcs, angled lines, the clipped ripple, multi-stop
+  gradients → the **mesh pipeline** reusing the same CPU tessellation as SDL;
+  text → **glyph-atlas quads** from SDL_ttf's GPU engine, snapped once per
+  run at the rounded run origin (the resize text-shimmer fix). One shared
+  `Gpu.Device` per process; MSL shaders compiled at runtime; premultiplied
+  blending with non-premultiplied vertex colors (interpolation matches SDL's).
+  Clips are per-command integer scissors with SDL's exact floor/ceil
+  expansion (M-b); the quad instances carry a rounded clip mask that takes
+  over in M-c, with real offscreen layers and analytic Gaussian shadows.
+  No dummy-driver support, so it is never the test backend: the IR goldens
+  cover it headless, and `lake exe gpu-probe` (runtime facts + offscreen
+  pixel asserts through the real renderer) plus `scripts/smoke-gpu.sh` gate
+  it on a real driver. `makeBackend` falls back to SDL with a warning when
+  no GPU device exists.
 
 **Clip stack**: rectangular clips compose by pure intersection at record
 time. `clipRoundRect` records the bounds clip AND (a) passes the rrect down

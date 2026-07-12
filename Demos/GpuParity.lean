@@ -192,6 +192,36 @@ def run : IO UInt32 := do
         DrawScope.drawCircle (.solid .yellow) ⟨35, 92⟩ 40)
     (meanTol := 0.5) (grossTol := 0.005)
 
+  -- Vector paths (M-e1): fills and the provisional stroke lower to the SAME
+  -- band-sweep/silhouette mesh on both backends, so geometry, winding, and
+  -- color bugs show at full magnitude. What remains is the two triangle
+  -- rasterizers' sub-pixel phase on thin AA geometry (feather ramps, bands at
+  -- curve extrema — observed shifted mean ≈ 1.1), the same family as the
+  -- mesh-drawn "gradients" (1.6) and "aa shapes" (2.0) scenes.
+  scene "paths" ⟨0, 0, 0, 1⟩
+    (do
+      DrawScope.drawPath (.solid .yellow) (Path.build (fillRule := .evenOdd) do
+        PathM.addOval ⟨10, 10, 70, 70⟩
+        PathM.addOval ⟨25, 25, 55, 55⟩)
+      DrawScope.drawPath (.solid .red) (Path.build (body := do
+        let pt (k : Nat) : Offset :=
+          let pi : Float := 3.14159265358979323846
+          let a := -pi / 2 + k.toFloat * 4 * pi / 5
+          ⟨110 + 28 * (Float.cos a).toFloat32, 50 + 28 * (Float.sin a).toFloat32⟩
+        PathM.moveTo (pt 0)
+        for k in [1:5] do
+          PathM.lineTo (pt k)
+        PathM.close))
+      DrawScope.drawPath (.gradient .red .blue ⟨150, 0⟩ ⟨215, 0⟩) (Path.build do
+        PathM.moveTo ⟨155, 60⟩
+        PathM.cubicTo ⟨150, 15⟩ ⟨215, 15⟩ ⟨205, 60⟩
+        PathM.cubicTo ⟨215, 105⟩ ⟨150, 105⟩ ⟨155, 60⟩
+        PathM.close)
+      DrawScope.drawPath (.solid .white) (Path.build do
+        PathM.moveTo ⟨10, 90⟩; PathM.lineTo ⟨40, 112⟩; PathM.lineTo ⟨70, 90⟩)
+        (.stroke 3))
+    (meanTol := 1.5) (grossTol := 0.01)
+
   -- Text: same coordinates, two engine-bound handles. The GPU snaps the run
   -- origin to whole pixels (integers here, so no offset) and both rasterize
   -- through SDL_ttf — differences are glyph-blending only.

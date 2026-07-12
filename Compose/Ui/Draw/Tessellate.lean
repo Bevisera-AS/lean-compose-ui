@@ -1,5 +1,6 @@
 import Compose.Ui.Draw.Mesh
 import Compose.Ui.Draw.Brush
+import Compose.Ui.Draw.PathFill
 import Compose.Ui.Draw.Gpu.Sdf
 
 /-!
@@ -435,6 +436,9 @@ inductive ShapeSpec where
   (`roundRectShadow`); the GPU backend evaluates the analytic form in its
   shadow shader. Recorded by `Modifier.shadow`. -/
   | rrShadow (rr : RoundRect) (offset : Offset) (blur : Float32) (color : Color)
+  /-- An arbitrary vector path filled under its fill rule (`pathFillMesh` —
+  the band-sweep tessellation is the path rasterization on *both* backends). -/
+  | pathFill (path : Path) (brush : Brush)
   deriving Repr, BEq, Inhabited
 
 /-- Tessellate the mesh a `ShapeSpec` describes (a pure function — the spec
@@ -451,6 +455,7 @@ def ShapeSpec.tessellate : ShapeSpec → Mesh
     shapeMesh brush (Compose.Draw.arcStroke center radius startRad sweepRad width)
   | .line p0 p1 width brush => shapeMesh brush (Compose.Draw.line p0 p1 width)
   | .rrShadow rr offset blur color => roundRectShadow rr offset blur color
+  | .pathFill path brush => shapeMesh brush (fun c => pathFillMesh path c)
 
 #guard ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
         == ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .red)
@@ -491,6 +496,7 @@ def ShapeSpec.bounds : ShapeSpec → Rect
     (Rect.mk (min p0.x p1.x) (min p0.y p1.y) (max p0.x p1.x) (max p0.y p1.y)).inflate (w / 2 + 1)
   | .rrShadow rr off blur _ =>
     (rr.rect.translate off).inflate (3 * max 0.5 (blur / 2) + 1)
+  | .pathFill path _ => path.bounds.inflate 1
 
 #guard (ShapeSpec.rrFill (RoundRect.ofRect ⟨10, 10, 30, 30⟩) (.solid .red)).bounds
         == (⟨9, 9, 31, 31⟩ : Rect)
@@ -508,7 +514,10 @@ def ShapeSpec.bounds : ShapeSpec → Rect
     .circleStroke ⟨30, 30⟩ 15 4 (.solid .red),
     .arcStroke ⟨30, 30⟩ 15 0.5 2.5 4 (.solid .red),
     .line ⟨5, 40⟩ ⟨50, 8⟩ 3 (.solid .red),
-    .rrShadow (RoundRect.circular ⟨10, 10, 50, 40⟩ 8) ⟨0, 2⟩ 6 .black]
+    .rrShadow (RoundRect.circular ⟨10, 10, 50, 40⟩ 8) ⟨0, 2⟩ 6 .black,
+    .pathFill (Path.build do
+      PathM.moveTo ⟨10, 10⟩; PathM.quadTo ⟨45, 5⟩ ⟨45, 40⟩; PathM.lineTo ⟨10, 40⟩
+      PathM.close) (.solid .red)]
   specs.all fun spec =>
     match spec.tessellate.bounds with
     | none => true

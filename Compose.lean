@@ -24,6 +24,8 @@ import Compose.Animation.Transition
 import Compose.Ui.Constraints
 import Compose.Ui.Measure
 import Compose.Ui.Draw.Mesh
+import Compose.Ui.Draw.Path
+import Compose.Ui.Draw.PathFill
 import Compose.Ui.Draw.Tessellate
 import Compose.Ui.Draw.Brush
 import Compose.Ui.Draw.DisplayList

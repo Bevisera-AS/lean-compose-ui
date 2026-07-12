@@ -305,6 +305,7 @@ report conservative device-space damage bounds per prim and per frame
 ```lean
 drawRect / drawRoundRect / drawCircle / drawLine / drawArc
   (brush : Brush) (style : Fill | Stroke width) …
+drawPath (brush) (path : Path) (style)      -- arbitrary vector paths (M-e1)
 drawText (run : TextRun) (topLeft)          -- via TextLayout.draw
 clipRect (r : Rect) (body) ; clipRoundRect (rr) (body)
 translate (o : Offset) (body) ; withAlpha (a) (body)
@@ -312,6 +313,25 @@ withLayer (bounds) (alpha) (body)          -- group opacity (records a layer)
 ```
 
 `Brush` = `solid Color` | `linearGradient` (vertex colors make gradients free).
+
+**Vector paths** (`Path.lean`, `PathFill.lean`): a `Path` is an immutable
+verb array (`moveTo/lineTo/quadTo/cubicTo/close`, absolute coordinates) plus
+a `FillRule` (`nonZero`/`evenOdd`), built with the `Path.build` `StateM`
+builder (rel variants, `arcTo` lowered to cubics with `k = 4/3·tan(θ/4)` —
+not a verb — and `addRect/addOval/addRoundRect`). Fills tessellate through a
+pure **band-sweep**: flatten (adaptive de Casteljau, tol 0.25 px, depth-capped)
+→ winding-signed non-horizontal edges → cut the y range at every endpoint and
+pairwise intersection (O(edges²) discovery — icon scale) → per band, sort
+actives by x at the midline and emit one trapezoid per inside span → feather
+1 px on each boundary segment's unfilled side (side classified by the exact
+winding oracle `Path.contains`, which also pins the tessellator via the
+`pathFillAgreesWithOracle` `#guard` corpus + runtime fuzz). Holes, both fill
+rules, and self-intersection all fall out of the winding accumulation; the
+worst numeric failure is a sliver band, not a crash. The mesh IS the path
+rasterization on **both** backends (`ShapeSpec.pathFill` rides `Prim.shape`
+and the node mesh cache; GPU `lowerShape` sends it to the mesh pipeline — a
+stencil-cover GPU path is possible future work). `drawPath`'s stroke style is
+provisional (per-contour feathered polyline) until the real stroker (M-e2).
 
 **The IR**: each `Prim` (crisp `rect` / `shape` with a `ShapeSpec` +
 optional cached mesh / raw `mesh` / `text` run / `layer`) is stamped with a

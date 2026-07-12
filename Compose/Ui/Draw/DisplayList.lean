@@ -129,6 +129,9 @@ def ShapeSpec.brief : ShapeSpec → String
   | .arcStroke c r s0 s1 w b => s!"arcStroke c={fmtOff c} r={fmtF r} {fmtF s0}..{fmtF s1} w={fmtF w} {b.brief}"
   | .line p0 p1 w b => s!"line {fmtOff p0}→{fmtOff p1} w={fmtF w} {b.brief}"
   | .rrShadow rr off blur c => s!"rrShadow {fmtRR rr} off={fmtOff off} blur={fmtF blur} {fmtColor c}"
+  | .pathFill p b =>
+    let rule := match p.fillRule with | .nonZero => "nonZero" | .evenOdd => "evenOdd"
+    s!"pathFill v={p.verbs.size} {fmtRect p.bounds} {rule} {b.brief}"
 
 /-- One-line golden form of a primitive's ambient state (omitting defaults). -/
 def PrimState.brief (st : PrimState) : String :=

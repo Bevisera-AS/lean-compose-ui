@@ -29,3 +29,19 @@ Status: complete — all milestones (M0–M15, MT, MG) have landed.
 
 Parallelization: M1 ∥ M3 · then M2 ∥ M4 · M5 · then M6 ∥ M7 ∥ M8 ·
 M9 · then M10 ∥ M11 · MT · then M12 ∥ M13 · M14.
+
+## Renderer capability expansion
+
+Post-MG waves closing the gap to Skia/Impeller-class renderers (plan approved
+2026-07-12). Same acceptance per wave: zero-warning build, headless suite,
+`smoke-demos.sh`, `smoke-gpu.sh`.
+
+| # | Wave | Contents | Status |
+|---|---|---|---|
+| M-e1 | Path fill | `Path` verb model + `Path.build` (arcs lower to cubics), adaptive flatten, winding oracle; band-sweep fill tessellator + 1-px feather (`PathFill.lean`), oracle `#guard` corpus + fuzz; `ShapeSpec.pathFill` through both backends; `drawPath` (provisional stroke); `PathDraw` group, gpu-probe step ⑨, gpu-parity "paths" scene | ✅ |
+| M-e2 | Stroker | joins/caps/miter-limit/dashing (`PathStroke.lean`), outline filled by the M-e1 sweep; `clipPath` | — |
+| M-f | Images | `ImageBitmap` (BMP+PNG via SDL 3.4 `loadSurface`), `Prim.image`, texture caches both backends, `Image` composable + `ContentScale` | — |
+| M-g | Transforms | `Affine`, `graphicsLayer` (rotate/scale at layer boundaries), real SDL offscreen layers, `snapComposite` text heuristic | — |
+| M-h | Gradients | radial/sweep brushes, GPU quad `gradKind` packing, IGN dithering | — |
+| M-i | Blur | `LayerEffect.blur`, separable Gaussian layer passes (GPU-only) | — |
+| M-j | Subpixel text | shared run-origin snap on both backends, fractional-origin parity scene | — |

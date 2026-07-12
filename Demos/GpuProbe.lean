@@ -25,6 +25,8 @@ Probed, in order:
 7. The whole framework path end-to-end: a `DrawScope.record`ed display list
    (crisp rect, rounded fill, circle, arc mesh, clipped rect, text) rendered
    through `GpuRenderer.renderOffscreen` with pixel asserts.
+8. Vector paths (M-e1): band-sweep-tessellated fills (even-odd donut hole,
+   non-zero self-intersecting star) through the mesh pipeline.
 
 Exit code is the number of failed checks; informational verdicts (cycle
 semantics, y-convention, winding) print as notes for the M-b design.
@@ -364,6 +366,40 @@ private def probeLayersShadows (r : Compose.Draw.Gpu.GpuRenderer)
   check "frame stats: one layer, one shadow instance, quads present"
     (stats.layers == 1 && stats.shadows == 1 && stats.quads > 0)
 
+/-- ⑨ vector paths (M-e1): `drawPath` fills lower to band-sweep meshes on the
+GPU mesh pipeline — the donut hole and the fill-rule discrimination must
+survive the whole encode/replay path. -/
+private def probePaths (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  IO.println "⑨ path fills → mesh pipeline → offscreen pixels"
+  let donut := Path.build (fillRule := .evenOdd) do
+    PathM.addOval ⟨10, 10, 70, 70⟩
+    PathM.addOval ⟨25, 25, 55, 55⟩
+  let star := Path.build (body := do
+    let pt (k : Nat) : Offset :=
+      let pi : Float := 3.14159265358979323846
+      let a := -pi / 2 + k.toFloat * 4 * pi / 5
+      ⟨130 + 30 * (Float.cos a).toFloat32, 45 + 30 * (Float.sin a).toFloat32⟩
+    PathM.moveTo (pt 0)
+    for k in [1:5] do
+      PathM.lineTo (pt k)
+    PathM.close)
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawPath (.solid .yellow) donut
+    DrawScope.drawPath (.solid .red) star
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 180 90
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (x y : Nat) =>
+    let o := (y * 180 + x) * 4
+    if bgra then (bytes.get! (o+2), bytes.get! (o+1), bytes.get! o, bytes.get! (o+3))
+    else (bytes.get! o, bytes.get! (o+1), bytes.get! (o+2), bytes.get! (o+3))
+  check "donut: ring filled (yellow @40,17)" (px 40 17 == (255, 255, 0, 255))
+  check "donut: even-odd hole clear (@40,40)" (px 40 40 == (0, 0, 0, 255))
+  check "donut: outside clear (@5,5)" (px 5 5 == (0, 0, 0, 255))
+  check "star: non-zero center filled (red @130,45)" (px 130 45 == (255, 0, 0, 255))
+  check "star: top arm filled (red @130,25)" (px 130 25 == (255, 0, 0, 255))
+  check "star: between arms clear (@130,78)" (px 130 78 == (0, 0, 0, 255))
+
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
@@ -412,6 +448,7 @@ def run : IO UInt32 := do
   let gpuRenderer ← Compose.Draw.Gpu.GpuRenderer.create dev window
   probeDisplayList gpuRenderer engine font swapchainFmt
   probeLayersShadows gpuRenderer swapchainFmt
+  probePaths gpuRenderer swapchainFmt
   probePresentLoop dev window windowPipe ibuf
 
   dev.releaseWindow window

@@ -4,6 +4,7 @@ import ComposeTests.Harness
 import ComposeTests.Runtime
 import ComposeTests.MacroSuite
 import ComposeTests.Draw
+import ComposeTests.PathDraw
 import ComposeTests.DisplayList
 import ComposeTests.Layout
 import ComposeTests.Scheduler
@@ -49,6 +50,7 @@ def main : IO UInt32 := do
   Harness.group "Runtime" Runtime.run
   Harness.group "Macro" MacroSuite.run
   Harness.group "Draw" Draw.run
+  Harness.group "PathDraw" PathDraw.run
   Harness.group "DisplayList" DisplayList.run
   Harness.group "Layout" Layout.run
   Harness.group "Scheduler" Scheduler.run

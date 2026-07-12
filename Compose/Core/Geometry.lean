@@ -25,6 +25,20 @@ def distance (a b : Offset) : Float32 := (distanceSquared a b).sqrt
 
 def lerp (a b : Offset) (t : Float32) : Offset := a + (b - a) * t
 
+/-- Distance from `p` to the closed segment `a`–`b` (clamped projection; a
+degenerate segment is its point). -/
+def distToSegment (p a b : Offset) : Float32 :=
+  let d := b - a
+  let len2 := d.dot d
+  if len2 <= 1e-9 then distance p a
+  else
+    let t := min 1 (max 0 (dot (p - a) d / len2))
+    distance p (a + d * t)
+
+#guard distToSegment ⟨5, 3⟩ ⟨0, 0⟩ ⟨10, 0⟩ == 3       -- above the middle
+#guard distToSegment ⟨-3, 4⟩ ⟨0, 0⟩ ⟨10, 0⟩ == 5      -- beyond an endpoint
+#guard distToSegment ⟨7, 7⟩ ⟨2, 2⟩ ⟨2, 2⟩ == distance ⟨7, 7⟩ ⟨2, 2⟩
+
 #guard (⟨1, 2⟩ + ⟨3, 4⟩ : Offset) == ⟨4, 6⟩
 #guard (⟨3, 4⟩ - ⟨1, 2⟩ : Offset) == ⟨2, 2⟩
 #guard ((⟨1, 2⟩ : Offset) * (2 : Float32)) == ⟨2, 4⟩

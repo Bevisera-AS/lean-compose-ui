@@ -177,7 +177,7 @@ private def composedScene : IO Unit := do
       check "Modifier.alpha records a layer over the wrapper bounds"
         (briefs.any fun b =>
           b.startsWith s!"layer @(0,20) bounds=(0,20,20,30) a={Draw.fmtF 0.5}"
-            && (b.splitOn "\n").any (·.trim == "rect @(0,20) #0000ffff tl=(0,0) sz=20x10"))
+            && (b.splitOn "\n").any (·.trimAscii == "rect @(0,20) #0000ffff tl=(0,0) sz=20x10"))
 
 /-- The DisplayList group. -/
 def run : IO Unit := do

@@ -165,6 +165,20 @@ def drawLine (brush : Brush) (p0 p1 : Offset) (width : Float32) : DrawM Unit := 
   countTessellation
   drawShape (.line p0 p1 width brush)
 
+/-- Draw an arbitrary vector `path`. Fill records a `ShapeSpec.pathFill`
+(exact band-sweep tessellation on both backends); stroke is provisional —
+each flattened contour stroked as a feathered polyline (butt caps, averaged
+normals at vertices) until the real stroker lands (M-e2). Mirrors
+`DrawScope.drawPath`. -/
+def drawPath (brush : Brush) (path : Path) (style : DrawStyle := .fill) : DrawM Unit := do
+  countTessellation
+  match style with
+  | .fill => drawShape (.pathFill path brush)
+  | .stroke w =>
+    let mesh := path.flatten.foldl (init := Mesh.empty) fun acc (pts, closed) =>
+      acc.append (shapeMesh brush fun c => strokeSilhouette (polylineNormals pts closed) w c closed)
+    drawMesh mesh
+
 /-! ## Scoping combinators -/
 
 /-- Restrict drawing to `r` (intersected with any enclosing clip), in local

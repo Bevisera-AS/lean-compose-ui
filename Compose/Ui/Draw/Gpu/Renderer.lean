@@ -5,7 +5,8 @@ import Compose.Ui.Draw.Gpu.TextEngine
 /-!
 # GPU frame renderer (`Compose/Ui/Draw/Gpu/Renderer.lean`)
 
-Per-window GPU state and the frame lifecycle: resolve text (IO) → encode
+Per-window GPU state and the frame lifecycle: resolve text + images (IO —
+uncached bitmaps upload into a process-wide texture cache) → encode
 (pure) → acquire layer textures from the pool + grow GPU buffers (2×, never
 shrink) → one transfer-buffer write + copy pass (`cycle := true` throughout —
 probe-verified to preserve in-flight data) → acquire the swapchain texture
@@ -47,6 +48,78 @@ def getDevice : IO Device := do
   deviceRef.set (some d)
   return d
 
+/-- Process-wide image texture cache: `ImageBitmap.id` → its premultiplied
+GPU texture (one shared device, so textures work across windows). Never
+evicted — images are immutable and id-keyed; textures live until process
+exit. -/
+private initialize imageTexCache : IO.Ref (Array (Nat × Texture)) ← IO.mkRef #[]
+
+/-- Upload one bitmap as a premultiplied `r8g8b8a8Unorm` texture: staging
+bytes from `ImageBitmap.premultipliedBytes`, one copy pass on `cb` (before
+the frame's render passes), transfer buffer released immediately. -/
+private def uploadImage (dev : Device) (cb : CommandBuffer)
+    (img : Compose.Draw.ImageBitmap) : IO Texture := do
+  let w := UInt32.ofNat (max 1 img.width)
+  let h := UInt32.ofNat (max 1 img.height)
+  let tex ← dev.createTexture
+    { format := .r8g8b8a8Unorm, usage := .sampler, width := w, height := h }
+  let bytes ← img.premultipliedBytes
+  if !bytes.isEmpty then
+    let tb ← dev.createTransferBuffer .upload (UInt32.ofNat bytes.size)
+    tb.write bytes (cycle := false)
+    let cp ← cb.beginCopyPass
+    cp.uploadToTexture { buffer := tb }
+      { texture := tex, w := UInt32.ofNat img.width, h := UInt32.ofNat img.height }
+      (cycle := false)
+    cp.finish
+    tb.release
+  return tex
+
+private partial def collectImages (dev : Device) (cb : CommandBuffer)
+    (idxs : IO.Ref (Array Nat)) (table : IO.Ref (Array (Nat × Texture))) :
+    Prim → IO Unit
+  | .image _ img _ _ _ => do
+    -- Already in this frame's table?
+    let mut found : Option Nat := none
+    let mut j := 0
+    for (id, _) in (← table.get) do
+      if found.isNone && id == img.id then
+        found := some j
+      j := j + 1
+    match found with
+    | some i => idxs.modify (·.push i)
+    | none =>
+      -- Process cache, uploading on miss.
+      let tex ← do
+        let mut hit : Option Texture := none
+        for (id, t) in (← imageTexCache.get) do
+          if hit.isNone && id == img.id then
+            hit := some t
+        match hit with
+        | some t => pure t
+        | none =>
+          let t ← uploadImage dev cb img
+          imageTexCache.modify (·.push (img.id, t))
+          pure t
+      let i := (← table.get).size
+      table.modify (·.push (img.id, tex))
+      idxs.modify (·.push i)
+  | .layer _ _ _ content => do
+    for p in content do
+      collectImages dev cb idxs table p
+  | _ => pure ()
+
+/-- Resolve every image primitive in `list` (walk order = encode order): the
+per-primitive index into the returned frame texture table, uploading uncached
+bitmaps into the process-wide cache via copy passes on `cb`. -/
+def resolveImages (dev : Device) (cb : CommandBuffer) (list : DisplayList) :
+    IO (Array Nat × Array Texture) := do
+  let idxs ← IO.mkRef (#[] : Array Nat)
+  let table ← IO.mkRef (#[] : Array (Nat × Texture))
+  for p in list do
+    collectImages dev cb idxs table p
+  return (← idxs.get, (← table.get).map (·.2))
+
 /-- One GPU buffer with its current byte capacity. -/
 private structure Slot where
   buffer : Buffer
@@ -62,6 +135,8 @@ private structure FrameBuffers where
   glyphI : Option Slot := none
   layerV : Option Slot := none
   layerI : Option Slot := none
+  imageV : Option Slot := none
+  imageI : Option Slot := none
   transfer : Option TransferBuffer := none
 
 /-- One pooled offscreen layer texture (64 px-quantized dimensions). -/
@@ -89,6 +164,9 @@ structure GpuRenderer where
   /-- Glyph-atlas / layer sampler (nearest — both are drawn 1:1
   pixel-snapped). -/
   sampler : Sampler
+  /-- Linear/clamp-to-edge sampler (scaled image draws; transformed layers
+  and blur reuse it in later waves). -/
+  samplerLinear : Sampler
   /-- Frame buffers (mutable: grown across frames). -/
   private buffers : IO.Ref FrameBuffers
   /-- Offscreen layer texture pool. -/
@@ -101,6 +179,10 @@ def GpuRenderer.create (dev : Device) (window : Sdl.Window) : IO GpuRenderer := 
            pipelines := ← Pipelines.create dev fmt
            sampler := ← dev.createSampler
              { minFilter := .nearest, magFilter := .nearest
+               addressModeU := .clampToEdge, addressModeV := .clampToEdge
+               addressModeW := .clampToEdge }
+           samplerLinear := ← dev.createSampler
+             { minFilter := .linear, magFilter := .linear
                addressModeU := .clampToEdge, addressModeV := .clampToEdge
                addressModeW := .clampToEdge }
            buffers := ← IO.mkRef {}
@@ -221,15 +303,18 @@ buffers lazily on kind switches, apply scissors on change, one draw per
 command. `layerTexs` backs `.layer` composite commands. -/
 private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
     (atlases : Array Texture) (layerTexs : Array (Texture × UInt32 × UInt32))
-    (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
+    (imageTexs : Array Texture) (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
   let full : Sdl.Rect := ⟨0, 0, w, h⟩
-  let mut kind : Nat := 9       -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 9 none
+  -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 5 image / 9 none
+  let mut kind : Nat := 9
   let mut scissor : Option Sdl.Rect := none
   let mut atlas : Option Nat := none
   let mut boundLayer : Option Nat := none
+  let mut boundImage : Option (Nat × Bool) := none
   for cmd in cmds do
     let want := match cmd with
-      | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ s => s
+      | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ s
+      | .image _ _ _ _ s => s
     if want != scissor then
       rp.setScissor (clampScissor (want.getD full) w h)
       scissor := want
@@ -285,6 +370,23 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
           rp.bindFragmentSamplers 0 #[{ texture := tex, sampler := r.sampler }]
           boundLayer := some idx
       rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
+    | .image first count tex linear _ =>
+      -- Rides the layer pipeline (premultiplied sample × alpha) with its own
+      -- vertex/index buffers and a per-command sampler choice.
+      if kind != 5 then
+        rp.bindPipeline r.pipelines.layer
+        if let some s := bufs.imageV then
+          rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+        if let some s := bufs.imageI then
+          rp.bindIndexBuffer { buffer := s.buffer } .u32
+        kind := 5
+        boundImage := none
+      if boundImage != some (tex, linear) then
+        if let some t := imageTexs[tex]? then
+          rp.bindFragmentSamplers 0
+            #[{ texture := t, sampler := if linear then r.samplerLinear else r.sampler }]
+          boundImage := some (tex, linear)
+      rp.drawIndexedPrimitives (UInt32.ofNat count) 1 (UInt32.ofNat first)
 
 /-- Resolve text, encode `list`, acquire the frame's layer textures, grow the
 frame buffers, and record the transfer-buffer write + copy pass on `cb`.
@@ -292,9 +394,11 @@ Returns the encoded frame, its atlas texture table, and the layer textures,
 ready for `GpuRenderer.passes`. -/
 private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
     (list : DisplayList) :
-    IO (EncodeResult × Array Texture × Array (Texture × UInt32 × UInt32)) := do
+    IO (EncodeResult × Array Texture × Array (Texture × UInt32 × UInt32)
+        × Array Texture) := do
   let (texts, atlases) ← resolveTexts list
-  let enc := encode list texts
+  let (imageIdxs, imageTexs) ← resolveImages r.dev cb list
+  let enc := encode list texts imageIdxs
   frameStats.set enc.stats
   let layerTexs ← acquireLayerTextures r
     (← r.dev.getSwapchainTextureFormat r.window) enc.layers
@@ -308,7 +412,9 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
   let giOff := gvOff + align16 enc.glyphVerts.size
   let lvOff := giOff + align16 enc.glyphIdx.size
   let liOff := lvOff + align16 lVerts.size
-  let total := liOff + align16 lIdx.size
+  let ivOff := liOff + align16 lIdx.size
+  let iiOff := ivOff + align16 enc.imageVerts.size
+  let total := iiOff + align16 enc.imageIdx.size
   if total > 0 then
     let mut bufs ← r.buffers.get
     bufs := { bufs with
@@ -319,7 +425,9 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
       glyphV := ← ensureSlot r.dev bufs.glyphV .vertex enc.glyphVerts.size
       glyphI := ← ensureSlot r.dev bufs.glyphI .index enc.glyphIdx.size
       layerV := ← ensureSlot r.dev bufs.layerV .vertex lVerts.size
-      layerI := ← ensureSlot r.dev bufs.layerI .index lIdx.size }
+      layerI := ← ensureSlot r.dev bufs.layerI .index lIdx.size
+      imageV := ← ensureSlot r.dev bufs.imageV .vertex enc.imageVerts.size
+      imageI := ← ensureSlot r.dev bufs.imageI .index enc.imageIdx.size }
     let tb ← match bufs.transfer with
       | some tb =>
         if tb.size.toNat ≥ total then pure tb
@@ -335,9 +443,10 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
     let put (b : ByteArray) (off : Nat) (bytes : ByteArray) : ByteArray :=
       padTo b off ++ bytes
     let staging := padTo
-      (put (put (put (put (put (put (put enc.quads
+      (put (put (put (put (put (put (put (put (put enc.quads
         shOff enc.shadows) mvOff enc.meshVerts) miOff enc.meshIdx)
         gvOff enc.glyphVerts) giOff enc.glyphIdx) lvOff lVerts) liOff lIdx)
+        ivOff enc.imageVerts) iiOff enc.imageIdx)
       total
     tb.write staging (cycle := true)
     let cp ← cb.beginCopyPass
@@ -349,8 +458,10 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
     uploadRegion cp tb giOff enc.glyphIdx bufs.glyphI
     uploadRegion cp tb lvOff lVerts bufs.layerV
     uploadRegion cp tb liOff lIdx bufs.layerI
+    uploadRegion cp tb ivOff enc.imageVerts bufs.imageV
+    uploadRegion cp tb iiOff enc.imageIdx bufs.imageI
     cp.finish
-  return (enc, atlases, layerTexs)
+  return (enc, atlases, layerTexs, imageTexs)
 
 /-- Record the frame's render passes on `cb`: one transparent-cleared pass
 per offscreen layer (innermost-first — composites of inner layers replay
@@ -358,8 +469,8 @@ inside outer ones), then the clear-and-replay pass into `target`. Each pass
 pushes its own `Globals` viewport so NDC maps to its texture's extent. -/
 private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     (target : Texture) (w h : UInt32) (clear : Color) (enc : EncodeResult)
-    (atlases : Array Texture) (layerTexs : Array (Texture × UInt32 × UInt32)) :
-    IO Unit := do
+    (atlases : Array Texture) (layerTexs : Array (Texture × UInt32 × UInt32))
+    (imageTexs : Array Texture) : IO Unit := do
   let bufs ← r.buffers.get
   let mut i := 0
   for l in enc.layers do
@@ -372,7 +483,7 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
       let rp ← cb.beginRenderPass
         #[{ texture := tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
             cycle := true }]
-      replay r rp l.cmds atlases layerTexs bufs
+      replay r rp l.cmds atlases layerTexs imageTexs bufs
         (Int32.ofNat tw.toNat) (Int32.ofNat th.toNat)
       rp.finish
     i := i + 1
@@ -381,7 +492,7 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
   let rp ← cb.beginRenderPass
     #[{ texture := target, loadOp := .clear
         clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩ }]
-  replay r rp enc.cmds atlases layerTexs bufs
+  replay r rp enc.cmds atlases layerTexs imageTexs bufs
     (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
   rp.finish
 
@@ -390,7 +501,7 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
 def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
     (mayBlock : Bool) : IO Bool := do
   let cb ← r.dev.acquireCommandBuffer
-  let (enc, atlases, layerTexs) ← r.prepare cb list
+  let (enc, atlases, layerTexs, imageTexs) ← r.prepare cb list
   let sc? ← if mayBlock then cb.waitAndAcquireSwapchainTexture r.window
             else cb.acquireSwapchainTexture r.window
   match sc? with
@@ -398,7 +509,7 @@ def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
     cb.submit
     return false
   | some sc =>
-    r.passes cb sc.texture sc.width sc.height clear enc atlases layerTexs
+    r.passes cb sc.texture sc.width sc.height clear enc atlases layerTexs imageTexs
     cb.submit
     return true
 
@@ -414,8 +525,8 @@ def GpuRenderer.renderOffscreen (r : GpuRenderer) (clear : Color)
       width := UInt32.ofNat w, height := UInt32.ofNat h }
   let dl ← r.dev.createTransferBuffer .download (UInt32.ofNat (w * h * 4))
   let cb ← r.dev.acquireCommandBuffer
-  let (enc, atlases, layerTexs) ← r.prepare cb list
-  r.passes cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases layerTexs
+  let (enc, atlases, layerTexs, imageTexs) ← r.prepare cb list
+  r.passes cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases layerTexs imageTexs
   let cp ← cb.beginCopyPass
   cp.downloadFromTexture
     { texture := tex, w := UInt32.ofNat w, h := UInt32.ofNat h }
@@ -437,7 +548,8 @@ def GpuRenderer.dispose (r : GpuRenderer) : IO Unit := do
   r.pool.set #[]
   let bufs ← r.buffers.get
   for s in [bufs.quad, bufs.shadow, bufs.meshV, bufs.meshI,
-            bufs.glyphV, bufs.glyphI, bufs.layerV, bufs.layerI] do
+            bufs.glyphV, bufs.glyphI, bufs.layerV, bufs.layerI,
+            bufs.imageV, bufs.imageI] do
     if let some s := s then
       s.buffer.release
   if let some tb := bufs.transfer then

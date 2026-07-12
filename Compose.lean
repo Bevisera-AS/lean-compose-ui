@@ -29,6 +29,7 @@ import Compose.Ui.Draw.PathFill
 import Compose.Ui.Draw.PathStroke
 import Compose.Ui.Draw.Tessellate
 import Compose.Ui.Draw.Brush
+import Compose.Ui.Draw.Image
 import Compose.Ui.Draw.DisplayList
 import Compose.Ui.Draw.Scope
 import Compose.Ui.Draw.Backend
@@ -64,6 +65,7 @@ import Compose.Foundation.Gestures
 import Compose.Foundation.Interaction
 import Compose.Foundation.Scroll
 import Compose.Foundation.Lazy
+import Compose.Foundation.Image
 import Compose.Animation.Visibility
 import Compose.Material.Text
 import Compose.Material.Theme

@@ -9,9 +9,11 @@ Executes a recorded `DisplayList` against an `SDL_Renderer` — the direct-SDL
 emission that used to live inside `DrawScope`, byte-for-byte: solid rects take
 the crisp `fillRect` fast path, shapes rasterize their cached mesh (tessellating
 on a cache miss) through `Renderer.geometry` with translation/alpha folded into
-the vertices, text runs draw through the renderer text engine, and the resolved
-rect clip is applied to SDL's single render clip rect only when it changes
-between primitives. Layers flatten by folding their alpha into the content
+the vertices, text runs draw through the renderer text engine, images draw
+through per-backend cached textures (`createTextureFromSurface` on first use of
+an `ImageBitmap.id`, never evicted — textures die with the renderer), and the
+resolved rect clip is applied to SDL's single render clip rect only when it
+changes between primitives. Layers flatten by folding their alpha into the content
 (the documented double-blend approximation; the GPU backend composites them
 offscreen instead). Works headless under the dummy video driver — the whole
 test suite runs on this backend.
@@ -55,6 +57,29 @@ private def meshToGeometry (m : Mesh) (translation : Offset) (alpha : Float32) :
        texCoord := ⟨0, 0⟩ } : Sdl.Vertex)
   (verts, m.indices)
 
+/-- Per-backend image texture cache: `ImageBitmap.id` → the uploaded texture.
+Never evicted (id-keyed, images are immutable); the textures die with the
+renderer. -/
+def ImageTextures := IO.Ref (Array (Nat × Texture))
+
+/-- A fresh, empty image texture cache. -/
+def ImageTextures.new : IO ImageTextures :=
+  IO.mkRef #[]
+
+/-- The cached texture for `img`, uploading via `createTextureFromSurface` on
+first use (blend mode set once — the straight-alpha surface becomes a
+blendable texture). -/
+private def obtainTexture (r : Renderer) (cache : ImageTextures)
+    (img : ImageBitmap) : IO Texture := do
+  let entries ← (cache : IO.Ref _).get
+  for (id, tex) in entries do
+    if id == img.id then
+      return tex
+  let tex ← r.createTextureFromSurface img.surface
+  tex.setBlendMode .blend
+  (cache : IO.Ref _).modify (·.push (img.id, tex))
+  return tex
+
 /-- Apply `clip` to SDL's single render clip rect iff it differs from the
 currently applied one (tracked in `applied`). -/
 private def applyClip (r : Renderer) (applied : IO.Ref (Option Rect))
@@ -73,7 +98,7 @@ private def emitMesh (r : Renderer) (m : Mesh) (origin : Offset) (alpha : Float3
 /-- Execute one primitive; `extraAlpha` is the flattened alpha of enclosing
 `layer`s. -/
 private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
-    (extraAlpha : Float32) : Prim → IO Unit
+    (images : ImageTextures) (extraAlpha : Float32) : Prim → IO Unit
   | .rect st color topLeft size => do
     applyClip r applied st.clip
     let col := color.withAlpha (color.a * st.alpha * extraAlpha)
@@ -93,38 +118,52 @@ private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
     let c := run.color
     run.text.setColorFloat ⟨c.r, c.g, c.b, c.a * st.alpha * extraAlpha⟩
     run.text.drawRenderer st.origin.x st.origin.y
+  | .image st img src dst sampling => do
+    applyClip r applied st.clip
+    let tex ← obtainTexture r images img
+    -- Per-draw (mod state persists per texture): the sampling mode and the
+    -- resolved alpha.
+    tex.setScaleMode (match sampling with | .nearest => .nearest | .linear => .linear)
+    tex.setAlphaModFloat (st.alpha * extraAlpha)
+    let d := dst.translate st.origin
+    let toF (x : Rect) : Sdl.FRect := ⟨x.left, x.top, x.width, x.height⟩
+    r.texture tex (src.map toF) (some (toF d))
   | .layer _ _ alpha content => do
     -- Flatten: fold the layer alpha into the content (today's double-blend
     -- approximation of group opacity; DESIGN.md). The GPU backend composites
     -- a real offscreen layer instead.
     for p in content do
-      execPrim r applied (extraAlpha * alpha) p
+      execPrim r applied images (extraAlpha * alpha) p
 
 /-- Execute a recorded display list against `r`, restoring an unclipped
-renderer afterwards. -/
-def execute (r : Renderer) (list : DisplayList) : IO Unit := do
+renderer afterwards. `images` is the backend's persistent texture cache
+(pass a fresh one for single-shot execution). -/
+def execute (r : Renderer) (list : DisplayList) (images : ImageTextures) :
+    IO Unit := do
   let applied ← IO.mkRef (none : Option Rect)
   for p in list do
-    execPrim r applied 1.0 p
+    execPrim r applied images 1.0 p
   applyClip r applied none
 
 /-- Package `renderer` as a `RenderBackend` (see `Backend.lean`): render =
 clear → execute → present (always presents — SDL_Renderer never blocks on
 acquire). -/
-def create (renderer : Renderer) : RenderBackend where
-  kind := .sdlRenderer
-  createTextEngine := Sdl.Ttf.createRendererTextEngine renderer
-  render := fun clear list _mayBlock => do
-    let (cr, cg, cb, ca) := clear.toBytes
-    renderer.setDrawColor cr cg cb ca
-    renderer.clear
-    execute renderer list
-    renderer.present
-    return true
-  coordinatesFromWindow := fun x y => renderer.coordinatesFromWindow x y
-  setVSync := fun target => renderer.setVSync target
-  sdlRenderer? := some renderer
-  dispose := pure ()
+def create (renderer : Renderer) : IO RenderBackend := do
+  let images ← ImageTextures.new
+  return {
+    kind := .sdlRenderer
+    createTextEngine := Sdl.Ttf.createRendererTextEngine renderer
+    render := fun clear list _mayBlock => do
+      let (cr, cg, cb, ca) := clear.toBytes
+      renderer.setDrawColor cr cg cb ca
+      renderer.clear
+      execute renderer list images
+      renderer.present
+      return true
+    coordinatesFromWindow := fun x y => renderer.coordinatesFromWindow x y
+    setVSync := fun target => renderer.setVSync target
+    sdlRenderer? := some renderer
+    dispose := pure () }
 
 end SdlBackend
 
@@ -133,7 +172,7 @@ single-shot entry point low-level draw tests use (the app shell records via
 `DrawScope.record` and renders through its window's `RenderBackend` instead). -/
 def DrawScope.run (renderer : Renderer) (density : Density := {}) (body : DrawM α) : IO α := do
   let (list, a) ← DrawScope.record density body
-  SdlBackend.execute renderer list
+  SdlBackend.execute renderer list (← SdlBackend.ImageTextures.new)
   return a
 
 end Compose.Draw

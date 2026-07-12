@@ -40,7 +40,7 @@ Post-MG waves closing the gap to Skia/Impeller-class renderers (plan approved
 |---|---|---|---|
 | M-e1 | Path fill | `Path` verb model + `Path.build` (arcs lower to cubics), adaptive flatten, winding oracle; band-sweep fill tessellator + 1-px feather (`PathFill.lean`), oracle `#guard` corpus + fuzz; `ShapeSpec.pathFill` through both backends; `drawPath` (provisional stroke); `PathDraw` group, gpu-probe step ⑨, gpu-parity "paths" scene | ✅ |
 | M-e2 | Stroker | joins/caps/miter-limit/dashing (`PathStroke.lean`), stroke-to-fill through the M-e1 sweep; `clipPath` (exact dual-winding path fills, `pathFillClipped`); SDL backend rounds mesh vertices to whole pixels (software-rasterizer truncation fix) | ✅ |
-| M-f | Images | `ImageBitmap` (BMP+PNG via SDL 3.4 `loadSurface`), `Prim.image`, texture caches both backends, `Image` composable + `ContentScale` | — |
+| M-f | Images | `ImageBitmap` (BMP+PNG via SDL 3.4 `loadSurface`; `ofPixels` generator; rgba32 straight alpha, id-keyed), `Prim.image`/`drawImage`, never-evict texture caches on both backends (GPU: premultiplied upload, layer pipeline + linear sampler), `Image` composable + `ContentScale` (`Foundation/Image.lean`) | ✅ |
 | M-g | Transforms | `Affine`, `graphicsLayer` (rotate/scale at layer boundaries), real SDL offscreen layers, `snapComposite` text heuristic | — |
 | M-h | Gradients | radial/sweep brushes, GPU quad `gradKind` packing, IGN dithering | — |
 | M-i | Blur | `LayerEffect.blur`, separable Gaussian layer passes (GPU-only) | — |

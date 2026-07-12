@@ -111,14 +111,14 @@ def makeBackend (window : Sdl.Window) (config : AppConfig) : IO Draw.RenderBacke
       | _ => pure RenderBackendKind.sdlRenderer
   match kind with
   | .sdlRenderer =>
-    return Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
+    Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
   | .gpu =>
     try
       Draw.GpuBackend.create window
     catch e =>
       IO.eprintln s!"Compose: GPU backend unavailable ({e.toString}); \
         falling back to the SDL renderer"
-      return Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
+      Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
 
 /-- Build the per-window half of `bootstrap` on an *existing* scheduler and
 wake event (`Compose.application` shares one pair across all its windows):

@@ -1,4 +1,5 @@
 import Compose.Ui.Draw.Tessellate
+import Compose.Ui.Draw.Image
 import Sdl.Ttf.Text
 
 /-!
@@ -14,9 +15,9 @@ rounded clip, alpha — into a `PrimState` stamped on each primitive, so
 executors need no transform/clip stack and each primitive is independently
 replayable (golden-testable, and the seed of future damage tracking).
 
-The one SDL type here is the live `Sdl.Ttf.Text` handle a `TextRun` carries
-(both backends draw text through SDL_ttf); the module is free of
-`Sdl.Renderer` and `Sdl.Gpu`. There is no direct Compose analog — Compose
+The SDL types here are the live `Sdl.Ttf.Text` handle a `TextRun` carries
+(both backends draw text through SDL_ttf) and the `Sdl.Surface` inside an
+`image`'s `ImageBitmap`; the module is free of `Sdl.Renderer` and `Sdl.Gpu`. There is no direct Compose analog — Compose
 records into Skia's `Picture`/`DisplayListCanvas`; this list plays that role.
 -/
 
@@ -68,6 +69,10 @@ inductive Prim where
   | mesh (st : PrimState) (m : Mesh)
   /-- A shaped text run drawn with its top-left at `st.origin`. -/
   | text (st : PrimState) (run : TextRun)
+  /-- A bitmap draw: (a `src` portion of) `img` stretched onto `dst` (local
+  coordinates). Executors resolve `img.id` through their texture caches. -/
+  | image (st : PrimState) (img : ImageBitmap) (src : Option Rect) (dst : Rect)
+      (sampling : Sampling)
   /-- An offscreen layer: `content` composited once at `alpha` (fixes group
   opacity double-blending on backends with render-to-texture; the SDL
   backend flattens by folding `alpha` into the content — today's behavior).
@@ -79,7 +84,8 @@ instance : Inhabited Prim := ⟨.mesh {} .empty⟩
 
 /-- The ambient state stamped on a primitive. -/
 def Prim.state : Prim → PrimState
-  | .rect st .. | .shape st .. | .mesh st .. | .text st .. | .layer st .. => st
+  | .rect st .. | .shape st .. | .mesh st .. | .text st .. | .image st ..
+  | .layer st .. => st
 
 /-- A recorded frame: primitives in paint order (back to front). -/
 abbrev DisplayList := Array Prim
@@ -164,6 +170,10 @@ partial def Prim.brief : Prim → String
     s!"shape {st.brief} {spec.brief}{if cached.isSome then " cached" else ""}"
   | .mesh st m => s!"mesh {st.brief} v={m.vertexCount} t={m.triangleCount}"
   | .text st run => s!"text {st.brief} {fmtColor run.color} \"{run.string}\""
+  | .image st img src dst sampling =>
+    s!"image {st.brief} id={img.id} {img.width}x{img.height} dst={fmtRect dst}"
+      ++ (match src with | some s => s!" src={fmtRect s}" | none => "")
+      ++ (if sampling == .nearest then " nearest" else "")
   | .layer st bounds alpha content =>
     s!"layer {st.brief} bounds={fmtRect bounds} a={fmtF alpha}\n"
       ++ String.intercalate "\n" (content.map (fun p => "  " ++ p.brief)).toList
@@ -205,6 +215,7 @@ partial def Prim.bounds : Prim → Option Rect
     | some b => some (clipBounds st (b.translate st.origin))
     | none => some .zero          -- no vertices: draws nothing
   | .text st _ => st.clip
+  | .image st _ _ dst _ => some (clipBounds st (dst.translate st.origin))
   | .layer st _ _ content => Id.run do
     let mut acc : Option Rect := none
     for p in content do

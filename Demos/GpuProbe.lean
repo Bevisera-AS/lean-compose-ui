@@ -27,6 +27,9 @@ Probed, in order:
    through `GpuRenderer.renderOffscreen` with pixel asserts.
 8. Vector paths (M-e1): band-sweep-tessellated fills (even-odd donut hole,
    non-zero self-intersecting star) through the mesh pipeline.
+9. Images (M-f): `ImageBitmap` upload through the process texture cache,
+   textured quads on the layer pipeline (nearest scaling, source rects,
+   ambient alpha).
 
 Exit code is the number of failed checks; informational verdicts (cycle
 semantics, y-convention, winding) print as notes for the M-b design.
@@ -400,6 +403,45 @@ private def probePaths (r : Compose.Draw.Gpu.GpuRenderer)
   check "star: top arm filled (red @130,25)" (px 130 25 == (255, 0, 0, 255))
   check "star: between arms clear (@130,78)" (px 130 78 == (0, 0, 0, 255))
 
+/-- ⑩ images (M-f): a 2×2 `ImageBitmap` uploads on first use (premultiplied
+staging + copy pass) and draws as textured quads on the layer pipeline —
+nearest scaling, source-rect cuts, and the ambient alpha fold must survive
+the resolve/encode/replay path. -/
+private def probeImages (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  IO.println "⑩ image upload + textured quads → offscreen pixels"
+  let img ← ImageBitmap.ofPixels 2 2 fun x y =>
+    match x, y with
+    | 0, 0 => .red
+    | 1, 0 => .green
+    | 0, 1 => .blue
+    | _, _ => .white
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawImage img ⟨10, 10, 50, 50⟩ (sampling := .nearest)
+    DrawScope.drawImage img ⟨70, 10, 110, 50⟩ (src := some ⟨1, 0, 2, 1⟩)
+      (sampling := .nearest)
+    DrawScope.withAlpha 0.5 do
+      DrawScope.drawImage img ⟨130, 10, 170, 50⟩ (src := some ⟨1, 1, 2, 2⟩)
+        (sampling := .nearest)
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 190 60
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (x y : Nat) =>
+    let o := (y * 190 + x) * 4
+    if bgra then (bytes.get! (o+2), bytes.get! (o+1), bytes.get! o, bytes.get! (o+3))
+    else (bytes.get! o, bytes.get! (o+1), bytes.get! (o+2), bytes.get! (o+3))
+  check "image: quadrant red (@20,20)" (px 20 20 == (255, 0, 0, 255))
+  check "image: quadrant green (@40,20)" (px 40 20 == (0, 255, 0, 255))
+  check "image: quadrant blue (@20,40)" (px 20 40 == (0, 0, 255, 255))
+  check "image: quadrant white (@40,40)" (px 40 40 == (255, 255, 255, 255))
+  check "image: src rect all green (@90,30)" (px 90 30 == (0, 255, 0, 255))
+  check "image: outside dst clear (@60,30)" (px 60 30 == (0, 0, 0, 255))
+  let gray := px 150 30
+  check s!"image: ambient alpha folds (got {gray.1})"
+    (120 ≤ gray.1.toNat && gray.1.toNat ≤ 136 && gray.1 == gray.2.1)
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: three image quads" (stats.images == 3)
+
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
@@ -449,6 +491,7 @@ def run : IO UInt32 := do
   probeDisplayList gpuRenderer engine font swapchainFmt
   probeLayersShadows gpuRenderer swapchainFmt
   probePaths gpuRenderer swapchainFmt
+  probeImages gpuRenderer swapchainFmt
   probePresentLoop dev window windowPipe ibuf
 
   dev.releaseWindow window

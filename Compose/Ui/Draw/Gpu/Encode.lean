@@ -22,6 +22,11 @@ Lowering per primitive:
   `screen = origin + (x, −y)`, probe-verified).
 - `rrShadow` → **shadow instances** (the analytic Gaussian shader; blur `≤ 0`
   degrades to a hard offset fill quad, matching the tessellator).
+- `image` → **textured quads on the layer pipeline** (image textures hold
+  premultiplied pixels, exactly what its fragment samples; UVs cover the
+  `src` fraction; the sampling mode picks the nearest or linear sampler at
+  replay). Texture uploads happen before the encode (`Gpu.resolveImages`,
+  walk-order indices like text).
 - `layer` (alpha `< 1`) → an **offscreen layer pass**: the content encodes
   into its own command list with every coordinate shifted to the layer's
   origin (`LayerEnc`; packed buffers are shared across passes), and the
@@ -77,6 +82,13 @@ structure EncodeResult where
   /-- Glyph triangle indices (u32 LE, absolute into `glyphVerts`). -/
   glyphIdx : ByteArray := .empty
   glyphIdxCount : Nat := 0
+  /-- Packed image vertices (`texVertexStride` bytes each — the layer
+  pipeline's layout). -/
+  imageVerts : ByteArray := .empty
+  imageVertCount : Nat := 0
+  /-- Image triangle indices (u32 LE, absolute into `imageVerts`). -/
+  imageIdx : ByteArray := .empty
+  imageIdxCount : Nat := 0
   /-- Draws in paint order. -/
   cmds : Array DrawCmd := #[]
   /-- Offscreen layers, innermost-first (their render order; `DrawCmd.layer`
@@ -84,6 +96,8 @@ structure EncodeResult where
   layers : Array LayerEnc := #[]
   /-- Text runs consumed so far. -/
   textsConsumed : Nat := 0
+  /-- Image primitives consumed so far. -/
+  imagesConsumed : Nat := 0
 
 /-- Convert a float clip to an integer scissor, expanding to whole pixels
 exactly like the SDL backend's clip rect (floor min corner, ceil max). -/
@@ -198,6 +212,43 @@ private def pushGlyphSeq (color : Color) (alpha : Float32) (origin : Offset)
       return { st with cmds := st.cmds.push (.glyphs first seq.indices.size seq.atlas scissor) }
   | _ => return { st with cmds := st.cmds.push (.glyphs first seq.indices.size seq.atlas scissor) }
 
+/-- Append one image draw: a textured quad at `dst` with UVs covering the
+`src` fraction of the texture (the whole texture when `none`), the folded
+alpha in the vertex color (the layer pipeline multiplies the premultiplied
+sample by `color.a`). Extends the trailing `image` command when texture,
+sampling, and scissor all match. -/
+private def pushImage (st : EncodeResult) (texIdx : Nat) (img : ImageBitmap)
+    (src : Option Rect) (dst : Rect) (linear : Bool) (alpha : Float32)
+    (scissor : Option Sdl.Rect) : EncodeResult := Id.run do
+  if dst.width <= 0 || dst.height <= 0 then return st
+  let (u0, v0, u1, v1) := match src with
+    | some s =>
+      let iw := Float32.ofNat img.width
+      let ih := Float32.ofNat img.height
+      (s.left / iw, s.top / ih, s.right / iw, s.bottom / ih)
+    | none => (0, 0, 1, 1)
+  let c := Color.white.withAlpha alpha
+  let base := st.imageVertCount
+  let first := st.imageIdxCount
+  let mut verts := st.imageVerts
+  verts := packTexVertex verts ⟨dst.left, dst.top⟩ ⟨u0, v0⟩ c
+  verts := packTexVertex verts ⟨dst.right, dst.top⟩ ⟨u1, v0⟩ c
+  verts := packTexVertex verts ⟨dst.left, dst.bottom⟩ ⟨u0, v1⟩ c
+  verts := packTexVertex verts ⟨dst.right, dst.bottom⟩ ⟨u1, v1⟩ c
+  let mut idx := st.imageIdx
+  for j in ([0, 1, 2, 1, 3, 2] : List Nat) do
+    idx := pushU32 idx (UInt32.ofNat (base + j))
+  let st := { st with
+    imageVerts := verts, imageVertCount := base + 4
+    imageIdx := idx, imageIdxCount := first + 6 }
+  match st.cmds.back? with
+  | some (.image f count tex lin s) =>
+    if tex == texIdx && lin == linear && s == scissor then
+      return { st with cmds := st.cmds.set! (st.cmds.size - 1) (.image f (count + 6) tex lin s) }
+    else
+      return { st with cmds := st.cmds.push (.image first 6 texIdx linear scissor) }
+  | _ => return { st with cmds := st.cmds.push (.image first 6 texIdx linear scissor) }
+
 /-! ## Shape lowering -/
 
 /-- Lower a brush to the quad fill encoding: gradient endpoints plus the
@@ -311,8 +362,8 @@ private def maskQuad (q : QuadInstance) (rounded : Option RoundRect)
 current pass's (zero for the main pass; a layer's negated snapped origin
 inside its content); `extraAlpha` is the folded alpha of enclosing
 `alpha ≥ 1` layers. -/
-private partial def encodePrim (texts : Array ResolvedRun) (extraAlpha : Float32)
-    (shift : Offset) (st : EncodeResult) : Prim → EncodeResult
+private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
+    (extraAlpha : Float32) (shift : Offset) (st : EncodeResult) : Prim → EncodeResult
   | .rect s color topLeft size =>
     if size.isEmpty then st
     else
@@ -380,11 +431,19 @@ private partial def encodePrim (texts : Array ResolvedRun) (extraAlpha : Float32
       -- is integral, so snapping commutes with the layer displacement).
       let origin : Offset := ⟨(s.origin.x + shift.x).round, (s.origin.y + shift.y).round⟩
       seqs.foldl (pushGlyphSeq run.color (s.alpha * extraAlpha) origin (scissorAt s.clip shift)) st
+  | .image s img src dst sampling =>
+    let imgIdx := st.imagesConsumed
+    let st := { st with imagesConsumed := imgIdx + 1 }
+    match images[imgIdx]? with
+    | none => st
+    | some texIdx =>
+      pushImage st texIdx img src (dst.translate (s.origin + shift))
+        (sampling == .linear) (s.alpha * extraAlpha) (scissorAt s.clip shift)
   | .layer s bounds alpha content =>
     if alpha ≥ 1.0 then
       -- No compositing needed: flatten inline (records don't produce these;
       -- hand-built lists may).
-      content.foldl (encodePrim texts (extraAlpha * alpha) shift) st
+      content.foldl (encodePrim texts images (extraAlpha * alpha) shift) st
     else Id.run do
       -- Composite region: bounds ∩ clip plus a 1 px AA margin, snapped to
       -- whole px (kept ≥ 1×1 even when degenerate so the text-run walk stays
@@ -397,7 +456,7 @@ private partial def encodePrim (texts : Array ResolvedRun) (extraAlpha : Float32
       let rt := max ((r.right + shift.x + 1).ceil) (l + 1)
       let bt := max ((r.bottom + shift.y + 1).ceil) (t + 1)
       let saved := st.cmds
-      let st := content.foldl (encodePrim texts extraAlpha (shift - ⟨l, t⟩))
+      let st := content.foldl (encodePrim texts images extraAlpha (shift - ⟨l, t⟩))
         { st with cmds := #[] }
       let idx := st.layers.size
       return { st with
@@ -405,10 +464,12 @@ private partial def encodePrim (texts : Array ResolvedRun) (extraAlpha : Float32
         layers := st.layers.push
           { bounds := ⟨l, t, rt, bt⟩, alpha := alpha * extraAlpha, cmds := st.cmds } }
 
-/-- Encode a display list against its resolved text runs (in the same
-prim-walk order `Gpu.resolveTexts` produced them). -/
-def encode (list : DisplayList) (texts : Array ResolvedRun) : EncodeResult :=
-  list.foldl (encodePrim texts 1.0 .zero) {}
+/-- Encode a display list against its resolved text runs and image texture
+indices (both in the same prim-walk order `Gpu.resolveTexts` /
+`Gpu.resolveImages` produced them). -/
+def encode (list : DisplayList) (texts : Array ResolvedRun)
+    (images : Array Nat := #[]) : EncodeResult :=
+  list.foldl (encodePrim texts images 1.0 .zero) {}
 
 -- One crisp rect → one quad instance, one command, no tessellation output.
 #guard
@@ -518,21 +579,24 @@ structure FrameStats where
   meshTriangles : Nat := 0
   glyphs : Nat := 0
   layers : Nat := 0
+  images : Nat := 0
   deriving Repr, BEq, Inhabited
 
 /-- One-line debug form. -/
 def FrameStats.brief (s : FrameStats) : String :=
   s!"draws={s.drawCalls} quads={s.quads} shadows={s.shadows} \
-meshTris={s.meshTriangles} glyphs={s.glyphs} layers={s.layers}"
+meshTris={s.meshTriangles} glyphs={s.glyphs} layers={s.layers} images={s.images}"
 
-/-- Compute an encoded frame's statistics (glyph quads are 6 indices each). -/
+/-- Compute an encoded frame's statistics (glyph and image quads are 6
+indices each). -/
 def EncodeResult.stats (r : EncodeResult) : FrameStats :=
   { drawCalls := r.cmds.size + r.layers.foldl (· + ·.cmds.size) 0
     quads := r.quadCount
     shadows := r.shadowCount
     meshTriangles := r.meshIdxCount / 3
     glyphs := r.glyphIdxCount / 6
-    layers := r.layers.size }
+    layers := r.layers.size
+    images := r.imageIdxCount / 6 }
 
 -- Merged rects: one draw, two instances.
 #guard

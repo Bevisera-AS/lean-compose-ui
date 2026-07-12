@@ -36,7 +36,7 @@ imports layers above it in this list:
 | runtime | `Compose/Runtime/*` | state, slot tree, composer, effects, coroutines, frame clock, `composable` macro — **UI-free and SDL-free**, testable with a test applier |
 | animation | `Compose/Animation/*` | easing, springs, specs, `Animatable`, `animate*AsState`, `Transition` — depends on runtime only |
 | ui | `Compose/Ui/*` | constraints/layout, modifiers, draw (display-list IR; SDL renderer + SDL_GPU backends), text, input, window/app loop, overlays |
-| foundation | `Compose/Foundation/*` | `Row`/`Column`/`Box`/`Spacer`, scroll, lazy lists, gesture detectors, interaction sources |
+| foundation | `Compose/Foundation/*` | `Row`/`Column`/`Box`/`Spacer`, `Image`, scroll, lazy lists, gesture detectors, interaction sources |
 | material | `Compose/Material/*` | theme + widget set |
 | demos | `Demos/*` | the seven 7GUIs tasks + gallery |
 
@@ -307,6 +307,7 @@ drawRect / drawRoundRect / drawCircle / drawLine / drawArc
   (brush : Brush) (style : Fill | Stroke width) …
 drawPath (brush) (path : Path) (style : PathStyle)  -- .fill | .stroke (s : Stroke)
 drawText (run : TextRun) (topLeft)          -- via TextLayout.draw
+drawImage (img : ImageBitmap) (dst) (src := none) (sampling := .linear)
 clipRect (r : Rect) (body) ; clipRoundRect (rr) (body) ; clipPath (path) (body)
 translate (o : Offset) (body) ; withAlpha (a) (body)
 withLayer (bounds) (alpha) (body)          -- group opacity (records a layer)
@@ -361,8 +362,32 @@ true pixel-center coverage, gap-free by construction, and measurably tighter
 GPU↔SDL parity than raw truncation. The GPU backend keeps the exact
 fractional mesh.
 
+**Images** (`Image.lean`, `Foundation/Image.lean`): an `ImageBitmap` wraps an
+`Sdl.Surface` converted once to `rgba32` **straight alpha** with a
+process-unique `id` (`BEq` = handle identity — the texture-cache key on both
+backends). `ImageBitmap.load` decodes BMP+PNG via SDL 3.4's `loadSurface`;
+`ofPixels` generates bitmaps for tests/demos with no binary assets.
+`Prim.image` carries the bitmap, an optional source rect, the destination
+rect, and a `Sampling` (`nearest`/`linear`). The SDL backend draws through a
+per-backend never-evicted texture cache (`createTextureFromSurface` on first
+use — probe-tested under the dummy driver — then per-draw scale mode + alpha
+mod); the GPU backend uploads on miss into a process-wide cache
+(**premultiplied** `r8g8b8a8Unorm` staging via a one-time `readPixel` loop —
+a bulk `Surface.pixels` binding upstream is the noted fast-follow) and draws
+textured quads through the **layer pipeline** (its fragment — premultiplied
+sample × alpha — is exactly an image draw; the glyph shader would bleed under
+linear filtering), choosing a second linear/clamp-to-edge sampler per
+command. Cropping content scales cut with the source rect, so no clip is
+needed; under a rounded clip images degrade to the rect scissor (the same
+documented story as meshes/glyphs). The `Image` composable measures to the
+bitmap's intrinsic size clamped to constraints and places pixels per
+`ContentScale` (`fit`/`crop`/`fillBounds`/`none`, pure `resolve` `#guard`s).
+Parity in practice: nearest draws are byte-exact across backends; linear
+disagrees by ≤ 1 channel step (both gated in `gpu-parity`).
+
 **The IR**: each `Prim` (crisp `rect` / `shape` with a `ShapeSpec` +
-optional cached mesh / raw `mesh` / `text` run / `layer`) is stamped with a
+optional cached mesh / raw `mesh` / `text` run / `image` / `layer`) is
+stamped with a
 `PrimState` — accumulated translation, resolved rect-clip intersection, the
 innermost rounded clip, folded alpha — so executors need no stacks.
 `ShapeSpec` holds the fully resolved tessellation inputs and doubles as the

@@ -74,7 +74,7 @@ private def compare (name : String) (r : Compose.Draw.Gpu.GpuRenderer) (bgra : B
   let (cr, cg, cb, ca) := clear.toBytes
   ren.setDrawColor cr cg cb ca
   ren.clear
-  SdlBackend.execute ren sdlList
+  SdlBackend.execute ren sdlList (← SdlBackend.ImageTextures.new)
   let shot ← ren.readPixels
   let mut gpu : Array Px := Array.emptyWithCapacity (W * H)
   let mut sdl : Array Px := Array.emptyWithCapacity (W * H)
@@ -241,6 +241,35 @@ def run : IO UInt32 := do
         DrawScope.drawPath (.solid .green) (Path.build do
           PathM.addRect ⟨120, 5, 215, 45⟩))
     (meanTol := 1.5) (grossTol := 0.01)
+
+  -- Images, nearest: 1:1 and integer-scaled nearest draws are pixel-exact on
+  -- both backends (SDL nearest texture copy vs GPU nearest sampler) — tight
+  -- tolerances; residual is the readback path only.
+  let quadImg ← ImageBitmap.ofPixels 2 2 fun x y =>
+    match x, y with
+    | 0, 0 => .red
+    | 1, 0 => .green
+    | 0, 1 => .blue
+    | _, _ => .white
+  let rampImg ← ImageBitmap.ofPixels 8 8 fun x y =>
+    { r := Float32.ofNat x / 7, g := Float32.ofNat y / 7, b := 0.5, a := 1 }
+  scene "images nearest" ⟨0, 0, 0, 1⟩
+    (do
+      DrawScope.drawImage quadImg ⟨10, 10, 50, 50⟩ (sampling := .nearest)
+      DrawScope.drawImage rampImg ⟨60, 10, 68, 18⟩ (sampling := .nearest)   -- 1:1
+      DrawScope.drawImage quadImg ⟨80, 10, 120, 50⟩ (src := some ⟨1, 0, 2, 1⟩)
+        (sampling := .nearest)
+      DrawScope.withAlpha 0.5 do
+        DrawScope.drawImage quadImg ⟨130, 10, 170, 50⟩ (src := some ⟨1, 1, 2, 2⟩)
+          (sampling := .nearest))
+    (meanTol := 0.3) (grossTol := 0.002)
+
+  -- Images, linear: both backends filter bilinearly (GPU clamp-to-edge
+  -- premultiplied sampling vs SDL's software filter) and agree within one
+  -- channel step in practice (measured mean 0.20, max 1).
+  scene "images linear" ⟨0, 0, 0, 1⟩
+    (DrawScope.drawImage rampImg ⟨20, 20, 100, 100⟩)
+    (meanTol := 0.5) (grossTol := 0.005)
 
   -- Text: same coordinates, two engine-bound handles. The GPU snaps the run
   -- origin to whole pixels (integers here, so no offset) and both rasterize

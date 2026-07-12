@@ -53,6 +53,20 @@ composable def progressSection (amount : MutableState Float32) : Composable Unit
     LinearProgressIndicator (modifier := Modifier.sizeIn (maxWidth := some 160))
     CircularProgressIndicator
 
+/-- Generated-bitmap strip (M-f): the `Image` composable over an `ofPixels`
+checkerboard at different content scales and samplings — no binary assets. -/
+composable def imagesSection : Composable Unit := do
+  let img ← remember (Draw.ImageBitmap.ofPixels 8 8 fun x y =>
+    if (x + y) % 2 == 0 then Color.hex 0xFF6200EE else .white)
+  Row (horizontalArrangement := .spacedBy 12) (verticalAlignment := .centerVertically) do
+    Image img (modifier := Modifier.size 48 48) (contentScale := .fillBounds)
+      (sampling := .nearest) (desc := some "checkerboard nearest")
+    Image img (modifier := Modifier.size 48 48) (contentScale := .fillBounds)
+      (desc := some "checkerboard linear")
+    Image img (modifier := Modifier.size 64 40) (contentScale := .crop)
+      (sampling := .nearest) (desc := some "checkerboard crop")
+    Image img (desc := some "checkerboard natural")
+
 /-- The dark-theme strip: the same controls on the dark baseline palette. -/
 composable def darkSection (checked : MutableState Bool)
     (on : MutableState Bool) : Composable Unit := do
@@ -82,6 +96,8 @@ composable def widgetsUi : Composable Unit := do
       togglesSection checked choice on
       HorizontalDivider
       progressSection amount
+      HorizontalDivider
+      imagesSection
       HorizontalDivider
       darkSection checked on
 

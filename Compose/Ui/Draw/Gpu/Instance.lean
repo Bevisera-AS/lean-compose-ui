@@ -168,6 +168,11 @@ inductive DrawCmd where
   /-- Composite offscreen layer `idx` (an index into the frame's layer table)
   as one premultiplied textured quad at the layer's bounds. -/
   | layer (idx : Nat) (scissor : Option Sdl.Rect)
+  /-- `count` image indices starting at index `first`, sampling the frame's
+  image texture `tex` (an index into the resolved image table) with the
+  linear or nearest sampler. Rides the layer pipeline — image textures hold
+  premultiplied pixels. -/
+  | image (first count : Nat) (tex : Nat) (linear : Bool) (scissor : Option Sdl.Rect)
   deriving Repr, BEq, Inhabited
 
 /-! ## Resolved text input

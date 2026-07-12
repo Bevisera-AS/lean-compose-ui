@@ -196,6 +196,15 @@ def drawPath (brush : Brush) (path : Path) (style : PathStyle := .fill) : DrawM 
     | none => drawShape (.pathFill path brush)
   | .stroke s => drawShape (.pathStroke path s brush)
 
+/-- Draw (a `src` portion of) an image stretched onto the `dst` rectangle
+(local coordinates; `src` defaults to the whole image). The ambient alpha
+folds into the draw at execute time. Non-linear scaling picks between
+`.linear` filtering (the default) and `.nearest` (crisp pixel art). Mirrors
+`DrawScope.drawImage`. -/
+def drawImage (img : ImageBitmap) (dst : Rect) (src : Option Rect := none)
+    (sampling : Sampling := .linear) : DrawM Unit :=
+  emit (.image · img src dst sampling)
+
 /-! ## Scoping combinators -/
 
 /-- Restrict drawing to `r` (intersected with any enclosing clip), in local

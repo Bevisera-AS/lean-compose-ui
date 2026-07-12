@@ -31,6 +31,10 @@ open Sdl.Gpu
 windows; MSL shader format, debug mode via `COMPOSE_GPU_DEBUG`). -/
 private initialize deviceRef : IO.Ref (Option Device) ← IO.mkRef none
 
+/-- The last prepared frame's batch statistics — the GPU analog of the debug
+`tessellationCount` counter (shared across windows, like it). -/
+initialize frameStats : IO.Ref FrameStats ← IO.mkRef {}
+
 /-- The shared device, created on first use. Throws where SDL_GPU has no
 backend (always under the dummy video driver — the GPU backend is real-driver
 only). -/
@@ -291,6 +295,7 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
     IO (EncodeResult × Array Texture × Array (Texture × UInt32 × UInt32)) := do
   let (texts, atlases) ← resolveTexts list
   let enc := encode list texts
+  frameStats.set enc.stats
   let layerTexs ← acquireLayerTextures r
     (← r.dev.getSwapchainTextureFormat r.window) enc.layers
   let (lVerts, lIdx) := layerComposites enc.layers layerTexs

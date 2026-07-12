@@ -359,6 +359,10 @@ private def probeLayersShadows (r : Compose.Draw.Gpu.GpuRenderer)
   check "rounded clip: edge midpoint kept (green @178,11)" (px 178 11 == (0, 255, 0, 255))
   check "ripple: interior kept (yellow @28,78)" (px 28 78 == (255, 255, 0, 255))
   check "ripple: rrect corner culled (clear @12,62)" (px 12 62 == (0, 0, 0, 255))
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: one layer, one shadow instance, quads present"
+    (stats.layers == 1 && stats.shadows == 1 && stats.quads > 0)
 
 def run : IO UInt32 := do
   IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="

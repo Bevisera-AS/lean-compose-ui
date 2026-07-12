@@ -165,4 +165,60 @@ partial def Prim.allWellFormed (p : Prim → Bool) : Prim → Bool
   | prim@(.layer _ _ _ content) => p prim && content.all (Prim.allWellFormed p)
   | prim => p prim
 
+/-! ## Damage bounds -/
+
+/-- Intersect conservative bounds with the primitive's resolved clip. -/
+private def clipBounds (st : PrimState) (r : Rect) : Rect :=
+  match st.clip with
+  | some c => r.intersect c
+  | none => r
+
+/-- Conservative device-space damage bounds: `some r` = the primitive can only
+touch pixels inside `r` (possibly degenerate when it draws nothing); `none` =
+unknown extent (a text run — its size lives behind the live handle, so only an
+enclosing clip bounds it). A layer reports its content's union: the SDL
+flatten paints wherever the content does, and the GPU composite blends to a
+no-op outside it. Damage-tracking groundwork — nothing consumes this
+per-frame yet. -/
+partial def Prim.bounds : Prim → Option Rect
+  | .rect st _ topLeft size =>
+    some (clipBounds st (Rect.ofOffsetSize (st.origin + topLeft) size))
+  | .shape st spec _ => some (clipBounds st (spec.bounds.translate st.origin))
+  | .mesh st m =>
+    match m.bounds with
+    | some b => some (clipBounds st (b.translate st.origin))
+    | none => some .zero          -- no vertices: draws nothing
+  | .text st _ => st.clip
+  | .layer st _ _ content => Id.run do
+    let mut acc : Option Rect := none
+    for p in content do
+      match p.bounds with
+      | none => return st.clip    -- unknown content extent
+      | some b => acc := some ((acc.getD b).union b)
+    return some (clipBounds st (acc.getD .zero))
+
+/-- Union damage bounds of a recorded frame: `some r` = the frame only touches
+`r` (degenerate when nothing draws); `none` = unknown — repaint everything.
+(`DisplayList` is an `abbrev`, so call this by name, not dot notation.) -/
+def DisplayList.bounds (list : DisplayList) : Option Rect := Id.run do
+  let mut acc : Option Rect := none
+  for p in list do
+    match p.bounds with
+    | none => return none
+    | some b => acc := some ((acc.getD b).union b)
+  return some (acc.getD .zero)
+
+#guard (Prim.rect { origin := ⟨5, 5⟩ } .red ⟨1, 1⟩ ⟨10, 10⟩).bounds == some ⟨6, 6, 16, 16⟩
+#guard (Prim.rect { clip := some ⟨0, 0, 10, 10⟩ } .red ⟨5, 5⟩ ⟨20, 20⟩).bounds
+        == some ⟨5, 5, 10, 10⟩
+#guard (Prim.shape { origin := ⟨100, 0⟩ }
+          (.rrFill (RoundRect.ofRect ⟨10, 10, 30, 30⟩) (.solid .red)) none).bounds
+        == some ⟨109, 9, 131, 31⟩
+#guard (Prim.mesh {} .empty).bounds == some .zero
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩ 0.5 #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds
+        == some ⟨10, 10, 30, 30⟩
+#guard DisplayList.bounds #[.rect {} .red ⟨0, 0⟩ ⟨10, 10⟩, .rect {} .blue ⟨40, 40⟩ ⟨10, 10⟩]
+        == some ⟨0, 0, 50, 50⟩
+#guard DisplayList.bounds #[] == some .zero
+
 end Compose.Draw

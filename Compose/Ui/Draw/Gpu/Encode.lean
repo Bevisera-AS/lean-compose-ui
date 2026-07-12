@@ -501,4 +501,50 @@ def encode (list : DisplayList) (texts : Array ResolvedRun) : EncodeResult :=
   let r := encode #[arc, arc] #[]
   r.cmds.size == 1 && (match r.cmds[0]! with | .mesh 0 n none => n == r.meshIdxCount | _ => false)
 
+/-! ## Frame statistics -/
+
+/-- Batch statistics of one encoded frame — the GPU analog of
+`tessellationCount` (`Gpu.frameStats` holds the last prepared frame's).
+`drawCalls` counts replayed commands across the target pass and every layer
+pass; each is one GPU draw. -/
+structure FrameStats where
+  drawCalls : Nat := 0
+  quads : Nat := 0
+  shadows : Nat := 0
+  meshTriangles : Nat := 0
+  glyphs : Nat := 0
+  layers : Nat := 0
+  deriving Repr, BEq, Inhabited
+
+/-- One-line debug form. -/
+def FrameStats.brief (s : FrameStats) : String :=
+  s!"draws={s.drawCalls} quads={s.quads} shadows={s.shadows} \
+meshTris={s.meshTriangles} glyphs={s.glyphs} layers={s.layers}"
+
+/-- Compute an encoded frame's statistics (glyph quads are 6 indices each). -/
+def EncodeResult.stats (r : EncodeResult) : FrameStats :=
+  { drawCalls := r.cmds.size + r.layers.foldl (· + ·.cmds.size) 0
+    quads := r.quadCount
+    shadows := r.shadowCount
+    meshTriangles := r.meshIdxCount / 3
+    glyphs := r.glyphIdxCount / 6
+    layers := r.layers.size }
+
+-- Merged rects: one draw, two instances.
+#guard
+  let r := encode #[.rect {} .red ⟨0, 0⟩ ⟨1, 1⟩, .rect {} .blue ⟨2, 0⟩ ⟨1, 1⟩] #[]
+  r.stats == { drawCalls := 1, quads := 2 }
+-- A translucent layer: its content draw + the composite draw, one layer.
+#guard
+  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ 0.5 #[.rect {} .red ⟨10, 10⟩ ⟨4, 4⟩]] #[]
+  r.stats == { drawCalls := 2, quads := 1, layers := 1 }
+-- Shadows and meshes count their own pipelines.
+#guard
+  let sh : Prim := .shape {}
+    (.rrShadow (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) ⟨0, 2⟩ 4 .black) none
+  let arc : Prim := .shape {} (.arcStroke ⟨50, 50⟩ 20 0 3 4 (.solid .blue)) none
+  let r := encode #[sh, arc] #[]
+  r.stats.shadows == 1 && r.stats.drawCalls == 2
+    && r.stats.meshTriangles == r.meshIdxCount / 3 && r.stats.meshTriangles > 0
+
 end Compose.Draw.Gpu

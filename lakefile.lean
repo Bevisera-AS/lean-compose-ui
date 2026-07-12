@@ -199,6 +199,12 @@ dummy-video backend — so it is not in the headless suite; run
 lean_exe «gpu-probe» where
   root := `Demos.GpuProbe
 
+/-- M-d parity diff: renders identical display lists through the GPU renderer
+(offscreen) and the software SDL backend and asserts per-scene pixel-difference
+bounds. Real driver only; `scripts/smoke-gpu.sh` runs it (`Demos/GpuParity.lean`). -/
+lean_exe «gpu-parity» where
+  root := `Demos.GpuParity
+
 /-- M12 demo *libraries* (model + UI, no `_root_.main`): the reusable modules
 the demo exes wrap and the MT suites import. Declared as their own
 `default_target` lib (like `CellsEngine`) so `lake build` compiles them, runs

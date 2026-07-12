@@ -36,6 +36,11 @@ as demos.
   state layers + bounded ripple, `Button`/`Checkbox`/`RadioButton`/`Switch`/
   `Slider`/`ProgressIndicator`/`TextField`, scroll, lazy lists, popups,
   dropdown menus, dialogs.
+- **Two render backends** — SDL_Renderer with feathered CPU tessellation
+  (runs headless — all tests use it), and an SDL_GPU backend
+  (`COMPOSE_BACKEND=gpu`) rendering instanced SDF shapes, analytic Gaussian
+  elevation shadows, real offscreen layers for group opacity, and exact
+  rounded clipping, from the same recorded display list.
 - **Desktop components** — declarative multi-window `application` with
   `Window`/`DialogWindow`, an in-window `MenuBar`, `ContextMenuArea`,
   `TooltipArea`, and a system `Tray`.

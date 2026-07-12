@@ -114,6 +114,26 @@ private def wellFormedness : IO Unit := do
         | _ => true)
   check "recorded prims are well-formed (alpha in range, clips normalized, indices in range)" ok
 
+private def damageBounds : IO Unit := do
+  -- Recorded prims report conservative damage bounds (Prim.bounds): crisp
+  -- rects exactly, shapes via ShapeSpec.bounds ∩ clip, layers via their
+  -- content's union; the frame union covers everything drawn.
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.translate ⟨10, 10⟩ do
+      DrawScope.drawRect (.solid .red) ⟨0, 0⟩ ⟨20, 10⟩
+    DrawScope.clipRect ⟨0, 0, 30, 30⟩ do
+      DrawScope.drawCircle (.solid .blue) ⟨40, 20⟩ 15
+    DrawScope.withLayer ⟨50, 50, 90, 90⟩ 0.5 do
+      DrawScope.drawRect (.solid .green) ⟨60, 60⟩ ⟨10, 10⟩
+  check "crisp rect bounds are its extent"
+    (list[0]!.bounds == some ⟨10, 10, 30, 20⟩)
+  check "shape bounds are the AA-inflated geometry ∩ clip"
+    (list[1]!.bounds == some ⟨24, 4, 30, 30⟩)
+  check "layer bounds are its content's union"
+    (list[2]!.bounds == some ⟨60, 60, 70, 70⟩)
+  check "frame union covers everything drawn"
+    (Draw.DisplayList.bounds list == some ⟨10, 4, 70, 70⟩)
+
 private def composedScene : IO Unit := do
   -- Record what the real draw walk emits for a small composed tree: a crisp
   -- rect for a plain background, a cached rrFill spec for a rounded one, and
@@ -165,6 +185,7 @@ def run : IO Unit := do
   scenario "record: translation/clip/alpha resolve onto prims" ambientState
   scenario "record: layers and shadows" layersAndShadows
   scenario "record: well-formedness invariants" wellFormedness
+  scenario "record: conservative damage bounds" damageBounds
   scenario "record: composed scene emits rects, cached shapes, text" composedScene
 
 end Tests.DisplayList

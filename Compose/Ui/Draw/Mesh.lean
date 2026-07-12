@@ -80,6 +80,16 @@ alpha multiplier into vertex colors). -/
 def scaleAlpha (m : Mesh) (a : Float32) : Mesh :=
   { m with vertices := m.vertices.map fun v => { v with color := v.color.withAlpha (v.color.a * a) } }
 
+/-- Bounding rect of the mesh's vertices (`none` when there are no vertices).
+Feather-ring vertices are included, so this bounds everything the mesh can
+touch. -/
+def bounds (m : Mesh) : Option Rect := Id.run do
+  let some v0 := m.vertices[0]? | return none
+  let mut r : Rect := ⟨v0.pos.x, v0.pos.y, v0.pos.x, v0.pos.y⟩
+  for v in m.vertices do
+    r := ⟨min r.left v.pos.x, min r.top v.pos.y, max r.right v.pos.x, max r.bottom v.pos.y⟩
+  return some r
+
 #guard empty.isEmpty
 #guard empty.vertexCount == 0
 #guard empty.triangleCount == 0
@@ -98,6 +108,9 @@ private def tri (o : Offset) (c : Color) : Mesh :=
 #guard (append (tri ⟨0, 0⟩ .red) empty) == tri ⟨0, 0⟩ .red
 #guard ((tri ⟨0, 0⟩ .red).translate ⟨2, 3⟩).vertices[0]!.pos == ⟨2, 3⟩
 #guard ((tri ⟨0, 0⟩ (Color.white.withAlpha 1.0)).scaleAlpha 0.5).vertices[0]!.color.a == 0.5
+#guard (empty : Mesh).bounds == none
+#guard (tri ⟨2, 3⟩ .red).bounds == some ⟨2, 3, 3, 4⟩
+#guard (append (tri ⟨0, 0⟩ .red) (tri ⟨5, 5⟩ .blue)).bounds == some ⟨0, 0, 6, 6⟩
 
 end Mesh
 

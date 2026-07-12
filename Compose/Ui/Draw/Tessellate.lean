@@ -266,12 +266,16 @@ private def densify (samples : Array (Offset × Offset)) (maxLen : Float32) :
   return out
 
 /-- A Gaussian drop shadow of a rounded rect, tessellated: the offset shape's
-silhouette grows three outward rings at `σ`, `2σ`, `3σ` whose vertex alphas
-sample the *same* analytic shadow function the GPU shadow shader evaluates
-(`Gpu.shadow`, Evan Wallace's form — `#guard`-tested in `Gpu/Sdf.lean`), so
-the rasterizer's linear interpolation approximates the GPU result. The
-documented SDL-renderer shadow fallback; `σ = blur / 2`. Zero blur degrades
-to a hard offset fill; empty rect or transparent color → `Mesh.empty`. -/
+silhouette grows three outward rings at `σ`, `2σ`, `3σ` and three inward
+rings (down to `3σ` inside, capped so they stay within the shape), all vertex
+alphas sampling the *same* analytic shadow function the GPU shadow shader
+evaluates (`Gpu.shadow`, Evan Wallace's form — `#guard`-tested in
+`Gpu/Sdf.lean`), so the rasterizer's linear interpolation approximates the
+GPU result on both sides of the edge — without the inner rings a large
+shadow's interior would ramp linearly from the centroid instead of saturating
+within `3σ` of the edge. The documented SDL-renderer shadow fallback;
+`σ = blur / 2`. Zero blur degrades to a hard offset fill; empty rect or
+transparent color → `Mesh.empty`. -/
 def roundRectShadow (rr : RoundRect) (offset : Offset) (blur : Float32)
     (color : Color) : Mesh := Id.run do
   if rr.rect.isEmpty || color.a <= 0 then return .empty
@@ -286,22 +290,27 @@ def roundRectShadow (rr : RoundRect) (offset : Offset) (blur : Float32)
   let n := sil.size
   if n < 3 then return .empty
   let centroid : Offset := ⟨o.x + size.width / 2, o.y + size.height / 2⟩
-  -- vertices: centroid, silhouette ring, then rings at +σ, +2σ, +3σ (the
-  -- outermost forced fully transparent for a clean edge).
-  let mut vs : Array DVertex := Array.emptyWithCapacity (4 * n + 1)
+  -- ring offsets along the outward normal, innermost first; the inward depth
+  -- is capped below the inradius so inner rings cannot cross the far side.
+  let inDepth := min (3 * sigma) (min size.width size.height / 2 * 0.9)
+  let offs : Array Float32 :=
+    #[-inDepth, -inDepth * 2 / 3, -inDepth / 3, 0, sigma, 2 * sigma, 3 * sigma]
+  let rings := offs.size
+  let mut vs : Array DVertex := Array.emptyWithCapacity (rings * n + 1)
   vs := vs.push ⟨centroid, color.withAlpha (alphaAt centroid)⟩
-  for (p, _) in sil do
-    vs := vs.push ⟨p, color.withAlpha (alphaAt p)⟩
-  for k in [1:4] do
+  let mut ringIdx := 0
+  for off in offs do
     for (p, nrm) in sil do
-      let q := p + nrm * (sigma * k.toFloat32)
-      vs := vs.push ⟨q, color.withAlpha (if k == 3 then 0 else alphaAt q)⟩
-  -- indices: interior fan + three ring bands.
-  let mut is : Array Int32 := Array.emptyWithCapacity (21 * n)
+      let q := p + nrm * off
+      -- the outermost ring is forced fully transparent for a clean edge
+      vs := vs.push ⟨q, color.withAlpha (if ringIdx == rings - 1 then 0 else alphaAt q)⟩
+    ringIdx := ringIdx + 1
+  -- indices: interior fan to the innermost ring + a band per ring pair.
+  let mut is : Array Int32 := Array.emptyWithCapacity (3 * n + 6 * (rings - 1) * n)
   for i in [0:n] do
     let j := (i + 1) % n
     is := pushTri is 0 (1 + i) (1 + j)
-    for k in [0:3] do
+    for k in [0:rings - 1] do
       let a := 1 + k * n + i
       let b := 1 + k * n + j
       let c := 1 + (k + 1) * n + j
@@ -463,6 +472,48 @@ def ShapeSpec.tessellate : ShapeSpec → Mesh
         == paintMesh (roundRectFill (RoundRect.ofRect ⟨0, 0, 10, 10⟩) .white)
              (.linearGradient #[(0, .red), (1, .blue)] ⟨0, 0⟩ ⟨10, 0⟩)
 
+/-- Conservative local-coordinate bounds of everything the spec can touch on
+either backend: the geometry plus centered stroke halves, plus a 1-px AA
+margin (the feather ring outside on SDL, the quad's inflated SDF edge on the
+GPU). A shadow reaches `3σ + 1` beyond its displaced rect (the tessellator's
+outermost ring / the shadow shader's vertex inflation). -/
+def ShapeSpec.bounds : ShapeSpec → Rect
+  | .rrFill rr _ => rr.rect.inflate 1
+  | .rrStroke rr w _ => rr.rect.inflate (w / 2 + 1)
+  | .circleFill c r _ => (Rect.mk (c.x - r) (c.y - r) (c.x + r) (c.y + r)).inflate 1
+  | .circleFillClipped c r rr _ =>
+    ((Rect.mk (c.x - r) (c.y - r) (c.x + r) (c.y + r)).intersect rr.rect).inflate 1
+  | .circleStroke c r w _ =>
+    (Rect.mk (c.x - r) (c.y - r) (c.x + r) (c.y + r)).inflate (w / 2 + 1)
+  | .arcStroke c r _ _ w _ =>
+    (Rect.mk (c.x - r) (c.y - r) (c.x + r) (c.y + r)).inflate (w / 2 + 1)
+  | .line p0 p1 w _ =>
+    (Rect.mk (min p0.x p1.x) (min p0.y p1.y) (max p0.x p1.x) (max p0.y p1.y)).inflate (w / 2 + 1)
+  | .rrShadow rr off blur _ =>
+    (rr.rect.translate off).inflate (3 * max 0.5 (blur / 2) + 1)
+
+#guard (ShapeSpec.rrFill (RoundRect.ofRect ⟨10, 10, 30, 30⟩) (.solid .red)).bounds
+        == (⟨9, 9, 31, 31⟩ : Rect)
+#guard (ShapeSpec.circleStroke ⟨20, 20⟩ 10 4 (.solid .red)).bounds == (⟨7, 7, 33, 33⟩ : Rect)
+#guard (ShapeSpec.line ⟨0, 10⟩ ⟨10, 0⟩ 2 (.solid .red)).bounds == (⟨-2, -2, 12, 12⟩ : Rect)
+#guard (ShapeSpec.rrShadow (RoundRect.ofRect ⟨10, 10, 30, 30⟩) ⟨0, 2⟩ 8 .black).bounds
+        == (⟨-3, -1, 43, 45⟩ : Rect)  -- σ = 4 → 3σ + 1 = 13 beyond the offset rect
+-- The tessellated mesh never escapes the spec's bounds.
+#guard
+  let specs : List ShapeSpec := [
+    .rrFill (RoundRect.circular ⟨10, 10, 50, 40⟩ 8) (.solid .red),
+    .rrStroke (RoundRect.circular ⟨10, 10, 50, 40⟩ 8) 3 (.solid .red),
+    .circleFill ⟨30, 30⟩ 15 (.solid .red),
+    .circleFillClipped ⟨30, 30⟩ 25 (RoundRect.circular ⟨15, 15, 45, 45⟩ 6) (.solid .red),
+    .circleStroke ⟨30, 30⟩ 15 4 (.solid .red),
+    .arcStroke ⟨30, 30⟩ 15 0.5 2.5 4 (.solid .red),
+    .line ⟨5, 40⟩ ⟨50, 8⟩ 3 (.solid .red),
+    .rrShadow (RoundRect.circular ⟨10, 10, 50, 40⟩ 8) ⟨0, 2⟩ 6 .black]
+  specs.all fun spec =>
+    match spec.tessellate.bounds with
+    | none => true
+    | some b => (b.intersect spec.bounds) == b
+
 /-! ## `#guard` tests -/
 
 /-- Approximate offset equality for float tolerance in compile-time tests. -/
@@ -522,16 +573,26 @@ private def approxOff (a b : Offset) (tol : Float32 := 0.05) : Bool :=
 #guard (line ⟨0, 0⟩ ⟨10, 0⟩ 0 .red).isEmpty
 
 -- Shadow mesh: well-formed; centroid of a large rect at small σ is nearly the
--- full shadow color; the outermost ring is fully transparent; degenerate
--- inputs produce the empty mesh.
+-- full shadow color; the innermost ring (3σ inside the edge) is already
+-- saturated, so the interior fan is flat; the outermost ring is fully
+-- transparent; degenerate inputs produce the empty mesh.
 #guard (roundRectShadow (RoundRect.circular ⟨0, 0, 100, 100⟩ 8) ⟨0, 2⟩ 4 (Color.black.withAlpha 0.25)).indicesInRange
 #guard
   let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 100, 100⟩) ⟨0, 0⟩ 4 Color.black
   (m.vertices[0]!.color.a - 1).abs < 0.01
 #guard
   let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 100, 100⟩) ⟨0, 0⟩ 4 Color.black
-  let n := (m.vertices.size - 1) / 4
-  m.vertices[1 + 3 * n]!.color.a == 0
+  -- vertex 1 is a corner sample pushed diagonally inward (≈ 2.1σ per axis)
+  (m.vertices[1]!.color.a - 1).abs < 0.05
+#guard
+  let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 100, 100⟩) ⟨0, 0⟩ 4 Color.black
+  let n := (m.vertices.size - 1) / 7
+  m.vertices[1 + 6 * n]!.color.a == 0
+-- Small shapes cap the inner rings inside the shape (no crossing).
+#guard
+  let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 8, 8⟩) ⟨0, 0⟩ 12 .black
+  m.indicesInRange && m.vertices.all fun v =>
+    (⟨-19, -19, 27, 27⟩ : Rect).contains v.pos
 #guard (roundRectShadow (RoundRect.ofRect ⟨0, 0, 0, 0⟩) ⟨0, 2⟩ 4 .black).isEmpty
 #guard (roundRectShadow (RoundRect.ofRect ⟨0, 0, 10, 10⟩) ⟨0, 2⟩ 4 (Color.black.withAlpha 0)).isEmpty
 -- Zero blur degrades to the hard offset fill.

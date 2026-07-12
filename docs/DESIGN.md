@@ -295,9 +295,10 @@ Immediate mode per dirty frame, split **record → execute**: the draw walk
 runs once through `DrawScope` (a reader over transform/clip/alpha state) and
 *records* a flat, backend-neutral **display list** (`DisplayList.lean` — the
 role Skia's `Picture` plays for Compose); the window's **`RenderBackend`**
-(`Backend.lean`) then executes it. No damage regions initially (full redraw
-when dirty; each recorded prim carries its resolved state, so damage tracking
-has a natural seed — revisit only if profiling says so).
+(`Backend.lean`) then executes it. No damage regions yet (full redraw when
+dirty), but the groundwork exists: `Prim.bounds` / `DisplayList.bounds`
+report conservative device-space damage bounds per prim and per frame
+(`none` = unknown — an unclipped text run). Revisit only if profiling says so.
 
 `DrawScope` ops (signatures unchanged by the split):
 
@@ -332,8 +333,9 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   against a round-rect for bounded ripples; adaptive `⌈π/2 · r / 2px⌉`
   segments per corner, min 4). Layers flatten by folding alpha (documented
   double-blend approximation, pinned by a pixel test); elevation shadows
-  tessellate as feathered rings whose vertex alphas sample the same analytic
-  shadow function the GPU evaluates (`roundRectShadow`).
+  tessellate as rings 3σ inward and outward of the silhouette whose vertex
+  alphas sample the same analytic shadow function the GPU evaluates
+  (`roundRectShadow`).
 - **`GpuBackend.lean`** (SDL_GPU, GPUI-style SDF instancing; `Gpu/*.lean`) —
   a pure encoder (`Encode.lean`) lowers the list into per-pipeline buffers +
   a flat `DrawCmd` list: axis-aligned rounded geometry under solid/two-stop
@@ -352,11 +354,15 @@ per-node mesh-cache key (`LayoutNode.cachedMesh`).
   SDL's exact floor/ceil expansion, plus an in-shader rounded mask on every
   quad-path instance — `PrimState.rounded` clips exactly on the GPU, and the
   bounded ripple renders as a masked circle quad instead of a clipped mesh.
-  No dummy-driver support, so it is never the test backend: the IR goldens
-  cover it headless, and `lake exe gpu-probe` (runtime facts + offscreen
-  pixel asserts through the real renderer) plus `scripts/smoke-gpu.sh` gate
-  it on a real driver. `makeBackend` falls back to SDL with a warning when
-  no GPU device exists.
+  `Gpu.frameStats` mirrors `tessellationCount`: the last frame's draw-call /
+  instance counts (pure `EncodeResult.stats`). No dummy-driver support, so it
+  is never the test backend: the IR goldens cover it headless, and a real
+  driver gates it locally via `scripts/smoke-gpu.sh` — `lake exe gpu-probe`
+  (runtime facts + offscreen pixel asserts through the real renderer),
+  `lake exe gpu-parity` (renders identical display lists through both
+  backends and asserts shift-tolerant pixel-diff bounds per scene), then
+  every demo. `makeBackend` falls back to SDL with a warning when no GPU
+  device exists.
 
 **Clip stack**: rectangular clips compose by pure intersection at record
 time. `clipRoundRect` records the bounds clip AND (a) passes the rrect down

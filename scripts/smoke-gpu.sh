@@ -16,6 +16,9 @@ fi
 echo "=== gpu-smoke: gpu-probe ==="
 GPU_PROBE_FRAMES=60 lake exe gpu-probe
 
+echo "=== gpu-smoke: gpu-parity ==="
+lake exe gpu-parity
+
 echo "=== gpu-smoke: gallery ==="
 lake exe gallery
 

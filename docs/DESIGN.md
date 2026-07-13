@@ -472,7 +472,9 @@ innermost rounded clip, folded alpha — so executors need no stacks.
 per-node mesh-cache key (`LayoutNode.cachedMesh`).
 
 **Backends** (selected per window via `AppConfig.backend` /
-`COMPOSE_BACKEND=gpu|sdl`, default SDL):
+`COMPOSE_BACKEND=gpu|sdl`; default GPU, falling back to the SDL renderer
+with a warning when device creation fails — e.g. headless, where SDL_GPU
+has no dummy-video backend):
 
 - **`SdlBackend.lean`** — SDL_Renderer + CPU tessellation; works headless
   under the dummy video driver (all CI/tests run here). Anti-aliasing (SDL's

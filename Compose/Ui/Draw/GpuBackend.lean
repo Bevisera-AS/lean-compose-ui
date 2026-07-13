@@ -8,8 +8,8 @@ Packages the GPU renderer (`Compose/Ui/Draw/Gpu/`) as a `RenderBackend`:
 SDL_GPU on the process-shared device, SDL_ttf's GPU text engine, swapchain
 present-mode selection for the vsync hook. Real drivers only (SDL_GPU has no
 dummy-video backend) — `Compose.makeBackend` falls back to the SDL renderer
-with a warning when device creation throws. Select with
-`COMPOSE_BACKEND=gpu` or `AppConfig.backend := some .gpu`.
+with a warning when device creation throws. The default backend; opt out
+with `COMPOSE_BACKEND=sdl` or `AppConfig.backend := some .sdlRenderer`.
 -/
 
 namespace Compose.Draw

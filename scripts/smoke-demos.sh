@@ -4,7 +4,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-export SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy COMPOSE_MAX_FRAMES=60
+# COMPOSE_BACKEND=sdl: the GPU default can't work under the dummy driver;
+# pin the fallback rather than warn on every demo.
+export SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy COMPOSE_MAX_FRAMES=60 \
+  COMPOSE_BACKEND=sdl
 
 demos=$(lake exe gallery --list 2>/dev/null || true)
 if [ -z "$demos" ]; then

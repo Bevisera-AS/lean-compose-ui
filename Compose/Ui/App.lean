@@ -61,8 +61,9 @@ structure AppConfig where
   only. -/
   rendererName : Option String := none
   /-- Rendering backend (`none` = honor `COMPOSE_BACKEND=gpu|sdl`, defaulting
-  to `.sdlRenderer`). Tests pin `some .sdlRenderer` — the GPU backend needs a
-  real (non-dummy) video driver. -/
+  to `.gpu` with automatic SDL-renderer fallback). Tests pin
+  `some .sdlRenderer` — the GPU backend needs a real (non-dummy) video
+  driver. -/
   backend : Option RenderBackendKind := none
 
 /-- Milliseconds the idle loop sleeps per wait when nothing is scheduled (an
@@ -99,16 +100,17 @@ def windowCoordSize (dp : Dp) (displayScale pixelDensity : Float32) : Int32 :=
 
 /-- Resolve and build the window's rendering backend: an explicit
 `config.backend` wins, else the `COMPOSE_BACKEND` env var (`gpu`/`sdl`), else
-`.sdlRenderer`. The GPU backend needs a real driver (SDL_GPU has no
-dummy-video backend); when its device creation throws we warn and fall back
-to the SDL renderer, so `COMPOSE_BACKEND=gpu` is safe everywhere. -/
+`.gpu`. The GPU backend needs a real driver (SDL_GPU has no dummy-video
+backend); when its device creation throws we warn and fall back to the SDL
+renderer, so the GPU default is safe everywhere — headless runs pin
+`COMPOSE_BACKEND=sdl` to skip the doomed attempt. -/
 def makeBackend (window : Sdl.Window) (config : AppConfig) : IO Draw.RenderBackend := do
   let kind ← match config.backend with
     | some k => pure k
     | none =>
       match ← IO.getEnv "COMPOSE_BACKEND" with
-      | some "gpu" => pure RenderBackendKind.gpu
-      | _ => pure RenderBackendKind.sdlRenderer
+      | some "sdl" => pure RenderBackendKind.sdlRenderer
+      | _ => pure RenderBackendKind.gpu
   match kind with
   | .sdlRenderer =>
     Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)

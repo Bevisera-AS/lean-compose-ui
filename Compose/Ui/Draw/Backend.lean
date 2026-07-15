@@ -46,6 +46,11 @@ structure RenderBackend where
   /-- The raw SDL renderer when `kind = .sdlRenderer` (the test/screenshot
   escape hatch: `readPixels`, `getVSync`, `coordinatesToWindow`). -/
   sdlRenderer? : Option Sdl.Renderer := none
+  /-- Drop device-owned caches (uploaded image textures, pooled layer
+  targets): after a `renderDeviceReset` (e.g. Android resume with a failed
+  EGL restore) their contents are garbage, and on `lowMemory` they're the
+  release valve. Everything re-uploads lazily on the next frame. -/
+  invalidateCaches : IO Unit := pure ()
   /-- Release backend resources (GPU: the swapchain claim). Call on window
   teardown, after the composition is disposed. -/
   dispose : IO Unit := pure ()

@@ -166,6 +166,20 @@ structure WindowContext where
   needsFrame : IO.Ref Bool
   /-- The loop exits at the next iteration once set. -/
   quitRequested : IO.Ref Bool
+  /-- Backgrounded (between `didEnterBackground` and `didEnterForeground`):
+  the loop keeps running timers but skips the frame clock and rendering —
+  the OS may have torn down the surface. On Android the pump usually also
+  blocks while paused (`SDL_ANDROID_BLOCK_ON_PAUSE`); this flag keeps the
+  semantics right when it doesn't. -/
+  paused : IO.Ref Bool
+  /-- Extra repaint passes still owed after a surface disturbance. On
+  Android the OS recreates the surface on resume and rotation, and the
+  first present(s) can race that swap and be silently dropped by the
+  compositor — a dirty-driven loop would then park on a black screen.
+  Foreground transitions and resize events arm this budget and `step`
+  keeps re-requesting frames (vsync-paced) until it drains, so a present
+  lands on the settled surface. -/
+  presentGrace : IO.Ref Nat
   /-- Frames presented so far (observability; the smoke cap counts loop
   passes — see `Compose.runLoop`). -/
   framesRendered : IO.Ref Nat

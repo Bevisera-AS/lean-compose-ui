@@ -95,6 +95,13 @@ structure Caches where private mk ::
 def Caches.new : IO Caches :=
   return ⟨← IO.mkRef #[], ← IO.mkRef #[]⟩
 
+/-- Drop everything (`RenderBackend.invalidateCaches`): image textures
+re-upload on next use, pooled targets are recreated on demand; the dropped
+`Texture`s are destroyed by their finalizers. -/
+def Caches.clear (c : Caches) : IO Unit := do
+  c.images.set #[]
+  c.targets.set #[]
+
 /-- The cached texture for `img`, uploading via `createTextureFromSurface` on
 first use (blend mode set once — the straight-alpha surface becomes a
 blendable texture). -/
@@ -299,6 +306,7 @@ def create (renderer : Renderer) : IO RenderBackend := do
     coordinatesFromWindow := fun x y => renderer.coordinatesFromWindow x y
     setVSync := fun target => renderer.setVSync target
     sdlRenderer? := some renderer
+    invalidateCaches := images.clear
     dispose := pure () }
 
 end SdlBackend

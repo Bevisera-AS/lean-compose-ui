@@ -198,7 +198,8 @@ def bootstrapApplication (content : Composable Unit) : IO ApplicationScope := do
   return app
 
 /-- Route one SDL event: `quit` exits the application, the shared wake user
-event just ends a wait, and everything else goes to the window
+event just ends a wait, app-lifecycle events (which carry no window id)
+broadcast to every window, and everything else goes to the window
 `Sdl.Event.windowId` names — `windowCloseRequested` to that window's
 `onCloseRequest` (returning `true` closes it), the rest through the
 single-window `dispatchEvent`. Events for no/unknown windows are dropped. -/
@@ -207,6 +208,13 @@ def dispatchApplicationEvent (app : ApplicationScope) (event : Sdl.Event) : IO U
   | .quit _ => app.exit
   | .user t _ =>
     if t == app.wakeEvent.val then pure () -- wake events exist only to end a wait
+  | .terminating _ | .lowMemory _
+  | .willEnterBackground _ | .didEnterBackground _
+  | .willEnterForeground _ | .didEnterForeground _ =>
+    -- App-lifecycle: every window pauses/resumes/drops caches through its
+    -- own dispatch (and each window's `onLifecycle` hook fires).
+    for e in ← app.windows.get do
+      dispatchEvent e.ctx e.config event
   | _ =>
     let some wid := event.windowId | pure ()
     let some entry := (← app.windows.get).find? (·.id == wid) | pure ()
@@ -222,9 +230,14 @@ single-window `wakeTimeoutMs` contract over all windows. -/
 def applicationWakeTimeoutMs (app : ApplicationScope)
     (idleCapMs : UInt32 := idleWaitMs) : IO Int32 := do
   if ← app.dirty.get then return 0
+  -- Paused (backgrounded) windows don't render, so their dirtiness and the
+  -- frame clock only force an immediate pass for a window that will draw.
+  let mut anyLive := false
   for e in ← app.windows.get do
-    if ← e.ctx.needsFrame.get then return 0
-  if ← app.scheduler.hasFrameWork then return 0
+    unless ← e.ctx.paused.get do
+      anyLive := true
+      if ← e.ctx.needsFrame.get then return 0
+  if anyLive && (← app.scheduler.hasFrameWork) then return 0
   let cap := idleCapMs.toUInt64
   match ← app.scheduler.nextDeadline with
   | none => return Int32.ofNat cap.toNat
@@ -259,7 +272,12 @@ def stepApplication (app : ApplicationScope)
   if ← app.exitRequested.get then return false
   let now ← Sdl.getTicksNS
   app.scheduler.runDue now
-  if ← app.scheduler.hasFrameWork then
+  -- The shared frame clock drives visible windows; when every window is
+  -- paused (the whole app is backgrounded) it stops with them.
+  let mut anyLive := false
+  for e in ← app.windows.get do
+    unless ← e.ctx.paused.get do anyLive := true
+  if anyLive && (← app.scheduler.hasFrameWork) then
     app.scheduler.tickFrame now
   if ← app.dirty.get then
     app.dirty.set false
@@ -269,8 +287,11 @@ def stepApplication (app : ApplicationScope)
   let mut rendered := false
   for e in ← app.windows.get do
     if (← app.windows.get).any (·.id == e.id) then
-      if ← e.ctx.needsFrame.get then
+      if (← e.ctx.needsFrame.get) && !(← e.ctx.paused.get) then
         renderFrame e.ctx e.config
+        if (← e.ctx.presentGrace.get) > 0 then
+          e.ctx.presentGrace.modify (· - 1)
+          e.ctx.requestFrame
         rendered := true
   return rendered
 
@@ -300,8 +321,11 @@ def application (content : Composable Unit) : IO UInt32 := do
   let app ← bootstrapApplication content
   let watch ← installLiveResizeWatch fun wid => do
     return (← app.windows.get).find? (·.id == wid) |>.map fun e => (e.ctx, e.config)
+  let lifecycleWatch ← installLifecycleWatch do
+    return (← app.windows.get).map fun e => (e.ctx, e.config)
   let maxPasses := (← IO.getEnv "COMPOSE_MAX_FRAMES").bind (·.toNat?)
   runApplicationLoop app maxPasses (watch := some watch)
+  let _ ← Sdl.removeEventWatch lifecycleWatch
   watch.remove
   (← app.composition).dispose -- disposes any remaining windows via their effects
   return 0

@@ -41,6 +41,31 @@ the loop so tests can drive it manually.
 
 open Draw
 
+/-- Repaint passes owed after a surface disturbance — a foreground
+transition or a resize/rotation (vsync-paced ≈ one second): long enough to
+outlive Android's surface recreation, cheap enough to not matter anywhere
+else. See `WindowContext.presentGrace`. -/
+def presentGracePasses : Nat := 60
+
+/-- An app-lifecycle transition, forwarded to `AppConfig.onLifecycle`.
+Delivered by the OS through SDL (Android activity pause/resume, iOS-style
+`terminating`/`lowMemory`); desktop apps rarely see any of these. Mirrors
+the `Lifecycle.Event` subset a Compose activity observes. -/
+inductive LifecycleEvent where
+  /-- About to lose the foreground (Android `onPause` about to run). -/
+  | willEnterBackground
+  /-- Backgrounded: rendering and the frame clock stop until foregrounded. -/
+  | didEnterBackground
+  /-- About to return to the foreground. -/
+  | willEnterForeground
+  /-- Foregrounded: a full remeasure/redraw is already scheduled. -/
+  | didEnterForeground
+  /-- The OS is memory-pressured; device caches were just dropped. -/
+  | lowMemory
+  /-- The OS is killing the app (~1 s budget); quit is already requested. -/
+  | terminating
+  deriving Repr, BEq
+
 /-- `runApp` configuration. Mirrors the window/dialog parameters of
 Compose-for-Desktop's `application { Window(...) }` shell. -/
 structure AppConfig where
@@ -70,6 +95,16 @@ structure AppConfig where
   launchers that unpack fonts at runtime — e.g. LeAndroid extracting APK
   assets — point this at the extracted directory. -/
   fontDir : Option System.FilePath := none
+  /-- Observe app-lifecycle transitions (see `LifecycleEvent`); runs on the
+  loop thread after the shell's own handling (pause/resume flags, cache
+  drops, quit on `terminating`). -/
+  onLifecycle : LifecycleEvent → IO Unit := fun _ => pure ()
+  /-- The platform recreates the window surface behind resize/rotation and
+  may silently drop presents around the swap (Android). When set, resize
+  events arm the `presentGrace` repaint burst so a frame lands on the
+  settled surface; desktop compositors don't need it (and a dirty-driven
+  loop shouldn't render 60 extra frames per resize there). -/
+  surfaceSwapGrace : Bool := false
 
 /-- Milliseconds the idle loop sleeps per wait when nothing is scheduled (an
 "∞-ish" cap: rewaiting is cheap and a finite bound is robust against missed
@@ -172,6 +207,8 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       compositionCell := ← IO.mkRef none
       needsFrame := ← IO.mkRef true
       quitRequested := ← IO.mkRef false
+      paused := ← IO.mkRef false
+      presentGrace := ← IO.mkRef 0
       framesRendered := ← IO.mkRef 0
       inputSink := ← IO.mkRef fun _ => pure false
       overlays := ← MutableState.createPolicy (fun _ _ => false) #[]
@@ -226,6 +263,50 @@ def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
     (clock := Sdl.getTicksNS)
   bootstrapWindow scheduler wakeEvent title width height content config
 
+/-- Handle one app-lifecycle transition for a window: maintain the `paused`
+flag, drop device caches under memory pressure, schedule the foreground
+repaint, request quit on `terminating`, and finally run the app's
+`AppConfig.onLifecycle` hook.
+
+SDL **never queues** the six app-lifecycle events — `SDL_SendAppEvent`
+hands them only to event watchers, synchronously on the thread pumping
+events (on Android that pump call is also where SDL blocks while paused,
+so the watch is the only delivery that can precede the block). Production
+delivery is therefore `installLifecycleWatch`; `dispatchEvent` routes the
+same constructors here so tests can inject them synthetically. -/
+def handleLifecycleEvent (ctx : WindowContext) (config : AppConfig) :
+    LifecycleEvent → IO Unit
+  | .willEnterBackground =>
+    config.onLifecycle .willEnterBackground
+  | .didEnterBackground => do
+    -- Stop rendering/ticking until foregrounded — the OS may tear the
+    -- surface down (on Android SDL usually also blocks the pump; the flag
+    -- covers the configurations where it doesn't).
+    ctx.paused.set true
+    config.onLifecycle .didEnterBackground
+  | .willEnterForeground =>
+    config.onLifecycle .willEnterForeground
+  | .didEnterForeground => do
+    -- Surface may have changed (or been recreated) while away: full
+    -- remeasure + redraw. Frame-clock animations see the real elapsed time
+    -- and complete, like a resumed Choreographer. The repaint burst
+    -- (`presentGrace`) outlives the surface-recreation race — see the field.
+    ctx.paused.set false
+    ctx.presentGrace.set presentGracePasses
+    ctx.root.markNeedsRemeasure
+    ctx.requestFrame
+    config.onLifecycle .didEnterForeground
+  | .lowMemory => do
+    -- Release valve: device caches re-fill lazily; the presented frame is
+    -- untouched, so no redraw is needed.
+    ctx.backend.invalidateCaches
+    config.onLifecycle .lowMemory
+  | .terminating => do
+    -- ~1 s budget on Android: let the app observe it, then exit the loop
+    -- (runApp's normal teardown runs).
+    config.onLifecycle .terminating
+    ctx.requestQuit
+
 /-- Dispatch one SDL event against the window (step 2 of the loop; exposed
 for tests to inject synthetic events). -/
 def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event) : IO Unit := do
@@ -237,7 +318,11 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     -- New pixel constraints next frame; invalidate the root's measurement.
     -- The safe area moves with the window (rotation reshuffles the system
     -- bars), and its own event may be coalesced into the resize burst.
+    -- Resizes that come from a surface swap (Android rotation) can swallow
+    -- the first present(s) — arm the grace burst so one lands.
     ctx.refreshSafeArea
+    if config.surfaceSwapGrace then
+      ctx.presentGrace.set presentGracePasses
     ctx.root.markNeedsRemeasure
     ctx.requestFrame
   | .windowSafeAreaChanged _ =>
@@ -254,6 +339,23 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     ctx.root.markNeedsRemeasure
     ctx.requestFrame
   | .windowExposed _ =>
+    ctx.requestFrame
+  | .windowRestored _ | .windowShown _ =>
+    -- Coming back from minimized/hidden: the compositor may hold stale or
+    -- no content for us — repaint. (On Android pause/resume surfaces as
+    -- minimize/restore alongside the watch-only lifecycle events.)
+    ctx.requestFrame
+  | .willEnterBackground _ => handleLifecycleEvent ctx config .willEnterBackground
+  | .didEnterBackground _ => handleLifecycleEvent ctx config .didEnterBackground
+  | .willEnterForeground _ => handleLifecycleEvent ctx config .willEnterForeground
+  | .didEnterForeground _ => handleLifecycleEvent ctx config .didEnterForeground
+  | .lowMemory _ => handleLifecycleEvent ctx config .lowMemory
+  | .terminating _ => handleLifecycleEvent ctx config .terminating
+  | .renderTargetsReset _ | .renderDeviceReset _ | .renderDeviceLost _ =>
+    -- The device came back but texture contents didn't: drop device-owned
+    -- caches and repaint everything.
+    ctx.backend.invalidateCaches
+    ctx.root.markNeedsRemeasure
     ctx.requestFrame
   | .user t _ =>
     if t == ctx.wakeEvent.val then
@@ -362,6 +464,7 @@ where
     unless ← Sdl.isMainThread do return
     if ← busy.get then return
     let some (ctx, config) ← lookup wid | return
+    if ← ctx.paused.get then return
     busy.set true
     try
       let (pw, ph) ← ctx.window.getSizeInPixels
@@ -399,12 +502,46 @@ def installLiveResizeWatch
 def LiveResizeWatch.remove (w : LiveResizeWatch) : IO Unit := do
   let _ ← Sdl.removeEventWatch w.id
 
+/-- The `LifecycleEvent` of a watched SDL event — the six app events SDL
+delivers **only** through event watches (`SDL_SendAppEvent` never queues
+them); `none` for everything else. -/
+def lifecycleOf : Sdl.Event → Option LifecycleEvent
+  | .willEnterBackground _ => some .willEnterBackground
+  | .didEnterBackground _ => some .didEnterBackground
+  | .willEnterForeground _ => some .willEnterForeground
+  | .didEnterForeground _ => some .didEnterForeground
+  | .lowMemory _ => some .lowMemory
+  | .terminating _ => some .terminating
+  | _ => none
+
+#guard lifecycleOf (.didEnterForeground ⟨0⟩) == some .didEnterForeground
+#guard lifecycleOf (.terminating ⟨0⟩) == some .terminating
+#guard (lifecycleOf (.quit ⟨0⟩)).isNone
+
+/-- Install the event watch that delivers app-lifecycle transitions (see
+`handleLifecycleEvent` — watches are SDL's *only* delivery for them).
+`windows` enumerates the live windows: the events carry no window id, and
+every window transitions together. The callback runs synchronously inside
+the event pump on the loop's own thread — on Android the background pair
+arrives right before SDL blocks the pump for the pause, so the flags are
+set before the freeze. Remove via `Sdl.removeEventWatch` before disposing
+the contexts. -/
+def installLifecycleWatch (windows : IO (Array (WindowContext × AppConfig))) :
+    IO Sdl.EventWatchId :=
+  Sdl.addEventWatch fun event => do
+    if let some le := lifecycleOf event then
+      for (ctx, config) in ← windows do
+        handleLifecycleEvent ctx config le
+
 /-- Wait timeout for the next loop pass, in ms: `0` when a frame is pending
 (dirty window or live frame clock), else time to the scheduler's next
-deadline (rounded up), else `idleCapMs`. -/
+deadline (rounded up), else `idleCapMs`. A paused (backgrounded) window
+never forces `0` for frame work — it isn't rendering — but timers still
+wake the loop on time. -/
 def wakeTimeoutMs (ctx : WindowContext) (idleCapMs : UInt32 := idleWaitMs) : IO Int32 := do
-  if (← ctx.needsFrame.get) || (← ctx.scheduler.hasFrameWork) then
-    return 0
+  unless ← ctx.paused.get do
+    if (← ctx.needsFrame.get) || (← ctx.scheduler.hasFrameWork) then
+      return 0
   let cap := idleCapMs.toUInt64
   match ← ctx.scheduler.nextDeadline with
   | none => return Int32.ofNat cap.toNat
@@ -436,14 +573,23 @@ def step (ctx : WindowContext) (config : AppConfig := {})
   finally
     if let some w := watch then w.armed.set false
   if ← ctx.quitRequested.get then return false
-  -- 3: coroutines due now; frame clock while subscribed.
+  -- 3: coroutines due now; frame clock while subscribed. Paused: timers
+  -- still run (background work), the frame clock does not (animations
+  -- resume — and complete — on foreground).
   let now ← Sdl.getTicksNS
   ctx.scheduler.runDue now
-  if ← ctx.scheduler.hasFrameWork then
+  let paused ← ctx.paused.get
+  if !paused && (← ctx.scheduler.hasFrameWork) then
     ctx.scheduler.tickFrame now
-  -- 4: render when dirty.
-  if ← ctx.needsFrame.get then
+  -- 4: render when dirty and visible (`needsFrame` stays set while paused,
+  -- so the foreground transition repaints immediately). While the resume
+  -- grace budget lasts, immediately re-arm the next frame (see
+  -- `WindowContext.presentGrace`).
+  if !paused && (← ctx.needsFrame.get) then
     renderFrame ctx config
+    if (← ctx.presentGrace.get) > 0 then
+      ctx.presentGrace.modify (· - 1)
+      ctx.requestFrame
     return true
   return false
 
@@ -513,8 +659,10 @@ def runApp (title : String) (width height : Dp) (content : Composable Unit)
   let wid ← ctx.window.id
   let watch ← installLiveResizeWatch fun w =>
     return if w == wid then some (ctx, config) else none
+  let lifecycleWatch ← installLifecycleWatch (pure #[(ctx, config)])
   let maxPasses := (← IO.getEnv "COMPOSE_MAX_FRAMES").bind (·.toNat?)
   runLoop ctx config maxPasses (watch := some watch)
+  let _ ← Sdl.removeEventWatch lifecycleWatch
   watch.remove
   (← ctx.composition).dispose
   ctx.backend.dispose

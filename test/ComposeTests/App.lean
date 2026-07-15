@@ -255,6 +255,39 @@ private def timerWakesAndRenders : IO Unit := do
   check "timer: deadline woke the loop and repainted" (colorNear (← pixel ctx 10 10) 0 0 255)
   check "timer: took a few bounded steps, not a spin" (spins ≤ 5)
 
+/-- Lifecycle events: backgrounding pauses rendering (dirtiness is kept, not
+lost), foregrounding repaints, `lowMemory` is safe mid-run, `terminating`
+quits, and the `onLifecycle` hook observes each transition in order. -/
+private def lifecyclePausesAndResumes : IO Unit := do
+  let seen ← IO.mkRef (#[] : Array LifecycleEvent)
+  let hookCfg := { cfg with onLifecycle := fun e => seen.modify (·.push e) }
+  let color ← MutableState.create Color.red
+  let ctx ← bootstrap "compose-app-test" 200 150
+    (Tests.restartable 1 do
+      let c ← color.get
+      Box (modifier := Modifier.size 50 50 |>.background c))
+    hookCfg
+  let _ ← step ctx hookCfg
+  check "lifecycle: initial render red" (colorNear (← pixel ctx 10 10) 255 0 0)
+  dispatchEvent ctx hookCfg (.willEnterBackground ⟨0⟩)
+  dispatchEvent ctx hookCfg (.didEnterBackground ⟨0⟩)
+  check "lifecycle: backgrounded sets paused" (← ctx.paused.get)
+  color.set .blue
+  check "lifecycle: paused step renders nothing" (!(← step ctx hookCfg (idleCapMs := 10)))
+  check "lifecycle: pixels unchanged while paused" (colorNear (← pixel ctx 10 10) 255 0 0)
+  check "lifecycle: dirtiness kept for the resume" (← ctx.needsFrame.get)
+  dispatchEvent ctx hookCfg (.lowMemory ⟨0⟩)
+  dispatchEvent ctx hookCfg (.willEnterForeground ⟨0⟩)
+  dispatchEvent ctx hookCfg (.didEnterForeground ⟨0⟩)
+  check "lifecycle: foregrounded clears paused" (!(← ctx.paused.get))
+  check "lifecycle: resume step repaints" (← step ctx hookCfg)
+  check "lifecycle: deferred write now visible" (colorNear (← pixel ctx 10 10) 0 0 255)
+  dispatchEvent ctx hookCfg (.terminating ⟨0⟩)
+  check "lifecycle: terminating requests quit" (← ctx.quitRequested.get)
+  check "lifecycle: hook saw the transitions in order"
+    ((← seen.get) == #[.willEnterBackground, .didEnterBackground, .lowMemory,
+                       .willEnterForeground, .didEnterForeground, .terminating])
+
 /-- The App group. -/
 def run : IO Unit := do
   rendersComposition
@@ -266,5 +299,6 @@ def run : IO Unit := do
   frameCapHonored
   idleStepBlocks
   timerWakesAndRenders
+  lifecyclePausesAndResumes
 
 end Tests.App

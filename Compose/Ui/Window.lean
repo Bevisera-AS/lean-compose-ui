@@ -28,6 +28,53 @@ composition. Provided per window and refreshed on
 scale change. Mirrors `androidx.compose.ui.platform.LocalDensity`. -/
 initialize LocalDensity : CompositionLocal Density ← compositionLocalOf {}
 
+/-- Safe-area insets: the strip along each window edge covered by system UI
+(status bar, display cutout, navigation/gesture zones — populated on Android;
+zero on desktop, where the whole window is safe). In `Dp`, ready for
+`Modifier.padding`. Mirrors `androidx.compose.foundation.layout.WindowInsets`
+(the `safeDrawing` set). -/
+structure WindowInsets where
+  left : Dp := 0
+  top : Dp := 0
+  right : Dp := 0
+  bottom : Dp := 0
+  deriving Repr, BEq, Inhabited
+
+/-- Insets from SDL's safe-area rect: `safe` and the window size `(ww, wh)`
+are in window coordinates; each edge distance converts to layout `Dp` by
+`× pixelDensity ÷ density` (window coords → physical px → dp — see
+`windowCoordSize`'s model; identity when both scales agree, as on Android
+where window coords are pixels and density is the display scale ÷ that same
+factor… i.e. the general form keeps every platform honest). Degenerate
+metrics (`≤ 0`, e.g. dummy drivers) fall back to factor 1; negative edges
+clamp to zero. -/
+def WindowInsets.ofSafeArea (safe : Sdl.Rect) (ww wh : Int32)
+    (pixelDensity density : Float32) : WindowInsets :=
+  let edge (v : Int32) : Dp :=
+    if pixelDensity > 0 && density > 0 then
+      ⟨(max v 0).toFloat32 * pixelDensity / density⟩
+    else
+      ⟨(max v 0).toFloat32⟩
+  { left := edge safe.x
+    top := edge safe.y
+    right := edge (ww - safe.x - safe.w)
+    bottom := edge (wh - safe.y - safe.h) }
+
+-- Full-window safe area (desktop): zero insets.
+#guard WindowInsets.ofSafeArea ⟨0, 0, 400, 300⟩ 400 300 1 1 == {}
+-- Android-style: window coords are pixels (pixelDensity 1), density 3 —
+-- a 132 px status bar is 44 dp of top inset.
+#guard WindowInsets.ofSafeArea ⟨0, 132, 1344, 2728⟩ 1344 2992 1 3
+        == { top := 44, bottom := 44 }
+-- Malformed rect (larger than the window) clamps to zero rather than going
+-- negative; unreported metrics fall back to factor 1.
+#guard WindowInsets.ofSafeArea ⟨-10, 0, 500, 300⟩ 400 300 0 0 == { left := 0 }
+
+/-- The ambient safe-area insets (zero outside a window). Provided per window
+and refreshed on `windowSafeAreaChanged`/resize/scale events; dynamic, so
+only actual readers recompose when system bars move. -/
+initialize LocalWindowInsets : CompositionLocal WindowInsets ← compositionLocalOf {}
+
 /-- The window's text stack: the shared `FontStore` and the renderer text
 engine both created by `bootstrap`. Consumed by `Material.Text` (and M11's
 `TextField`) to build `TextLayout`s. -/
@@ -99,6 +146,10 @@ structure WindowContext where
   /-- Density derived from `Window.displayScale`; a `MutableState` so the
   root provider recomposes when the scale changes. -/
   densityState : MutableState Density
+  /-- Safe-area insets from `Window.getSafeArea`; a `MutableState` so
+  `LocalWindowInsets` readers recompose when system bars/cutouts move
+  (refreshed by `refreshSafeArea` on safe-area/resize/scale events). -/
+  safeAreaState : MutableState WindowInsets
   /-- Root of the layout tree (the composition's applier root). -/
   root : LayoutNode
   /-- The window's coroutine scheduler (wake = SDL user event push). -/
@@ -163,6 +214,21 @@ def composition (ctx : WindowContext) : IO Composition := do
 def density (ctx : WindowContext) : IO Density :=
   ctx.densityState.get
 
+/-- Recompute the safe-area insets from the live window and publish them
+(readers recompose only on an actual change). Called by `bootstrapWindow`
+once and by event dispatch on `windowSafeAreaChanged`/resize/scale-change.
+Best effort: a driver without safe-area support keeps the current (zero)
+insets. -/
+def refreshSafeArea (ctx : WindowContext) : IO Unit := do
+  try
+    let safe ← ctx.window.getSafeArea
+    let (ww, wh) ← ctx.window.getSize
+    let pixelDensity ← ctx.window.pixelDensity
+    let density ← ctx.densityState.get
+    ctx.safeAreaState.set
+      (WindowInsets.ofSafeArea safe ww wh pixelDensity density.density)
+  catch _ => pure ()
+
 /-- The raw SDL renderer of an `.sdlRenderer`-backed window — the test and
 screenshot escape hatch (`readPixels`, `coordinatesToWindow`). Throws for a
 GPU-backed window. -/
@@ -211,16 +277,29 @@ private partial def rootRestartable (body : Composable Unit) : Composable Unit :
   c.endRestartGroup scope ((rootRestartable body).run c)
 
 /-- Wrap app content with the window's ambient providers: `LocalDensity`
-(re-provided when the display scale changes), `LocalScheduler` (effects), and
-`LocalWindowContext`. The shell composes this, never raw content. -/
+(re-provided when the display scale changes), `LocalWindowInsets` (safe-area
+edges), `LocalScheduler` (effects), and `LocalWindowContext`. The shell
+composes this, never raw content. -/
 def wrapContent (ctx : WindowContext) (content : Composable Unit) : Composable Unit :=
   rootRestartable do
     let d ← ctx.densityState.get
+    let insets ← ctx.safeAreaState.get
     CompositionLocalProvider LocalWindowContext (some ctx) <|
       CompositionLocalProvider LocalTextContext (some ctx.textContext) <|
         CompositionLocalProvider LocalScheduler (some ctx.scheduler) <|
-          CompositionLocalProvider LocalDensity d content
+          CompositionLocalProvider LocalWindowInsets insets <|
+            CompositionLocalProvider LocalDensity d content
 
 end WindowContext
+
+/-- Pad by the window's safe-area insets, so content stays clear of status
+bars, display cutouts, and gesture zones (a no-op on desktop, where the
+insets are zero). Reads `LocalWindowInsets`, hence `Composable`:
+`Box (modifier := ← Modifier.safeAreaPadding) content`. Mirrors
+`Modifier.safeDrawingPadding()`. -/
+def Modifier.safeAreaPadding (m : Modifier := {}) : Composable Modifier := do
+  let insets ← LocalWindowInsets.current
+  return m.padding (left := some insets.left) (top := some insets.top)
+    (right := some insets.right) (bottom := some insets.bottom)
 
 end Compose

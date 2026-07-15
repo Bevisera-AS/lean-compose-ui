@@ -165,8 +165,9 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
     { fontStore := ← FontStore.create config.fontDir
       textEngine := ← backend.createTextEngine }
   let densityState ← MutableState.create ({ density := if scale > 0 then scale else 1 } : Density)
+  let safeAreaState ← MutableState.create ({} : WindowInsets)
   let ctx : WindowContext :=
-    { window, backend, densityState, scheduler, wakeEvent, textContext
+    { window, backend, densityState, safeAreaState, scheduler, wakeEvent, textContext
       root := ← LayoutNode.create
       compositionCell := ← IO.mkRef none
       needsFrame := ← IO.mkRef true
@@ -180,6 +181,8 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame
+  -- Seed the safe-area insets before the first composition reads them.
+  ctx.refreshSafeArea
   -- M10: the root wrapper composes the overlay host right after the content,
   -- so popup/dialog layers become later (topmost) children of the root.
   let comp ← Composition.create (LayoutNode.applier ctx.root)
@@ -232,13 +235,22 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     if ← config.onCloseRequest then ctx.requestQuit
   | .windowResized _ | .windowPixelSizeChanged _ =>
     -- New pixel constraints next frame; invalidate the root's measurement.
+    -- The safe area moves with the window (rotation reshuffles the system
+    -- bars), and its own event may be coalesced into the resize burst.
+    ctx.refreshSafeArea
     ctx.root.markNeedsRemeasure
+    ctx.requestFrame
+  | .windowSafeAreaChanged _ =>
+    -- System bars/cutout moved: republish the insets (readers recompose;
+    -- an unchanged value is skipped by the state's equality policy).
+    ctx.refreshSafeArea
     ctx.requestFrame
   | .windowDisplayScaleChanged _ =>
     -- Rebuild the density and fully invalidate (providers recompose via the
     -- density state; cached measurements die via the density change).
     let scale ← ctx.window.displayScale
     ctx.densityState.set { density := if scale > 0 then scale else 1 }
+    ctx.refreshSafeArea -- insets are in Dp: a density change rescales them
     ctx.root.markNeedsRemeasure
     ctx.requestFrame
   | .windowExposed _ =>

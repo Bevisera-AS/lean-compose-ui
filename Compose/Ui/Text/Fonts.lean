@@ -62,7 +62,10 @@ effort; missing files are skipped). -/
 private def systemFallbackPaths : Array System.FilePath :=
   #["/System/Library/Fonts/Helvetica.ttc",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    -- Android system fonts (present on most devices; skipped elsewhere).
+    "/system/fonts/NotoSansCJK-Regular.ttc",
+    "/system/fonts/NotoColorEmoji.ttf"]
 
 /-- Caches sized `Ttf.Font` handles for the bundled family and keeps the system
 fallback fonts alive. Mirrors `androidx.compose.ui.text.font.FontFamily.Resolver`.
@@ -83,12 +86,20 @@ supply glyphs the bundled family lacks (rare), so a single fixed size is an
 acceptable simplification. -/
 private def fallbackPtSize : Float32 := 16
 
-/-- Create a store: initialize SDL_ttf, locate the bundled family, and open the
-available system fallback fonts (best effort). Mirrors constructing a
-`FontFamily.Resolver`. -/
-def create : IO FontStore := do
+/-- Create a store: initialize SDL_ttf, locate the bundled family (in `dir`
+when given — e.g. a platform launcher pointing at fonts unpacked from APK
+assets — else by probing `fontDirCandidates`), and open the available system
+fallback fonts (best effort). Mirrors constructing a `FontFamily.Resolver`. -/
+def create (dir : Option System.FilePath := none) : IO FontStore := do
   Sdl.Ttf.init
-  let dir ← resolveFontDir
+  let dir ← match dir with
+    | some d =>
+      unless (← (d / FontWeight.normal.fileName).pathExists) do
+        throw <| IO.userError <|
+          s!"Compose.FontStore: {FontWeight.normal.fileName} not found in " ++
+          s!"the configured font directory {d}"
+      pure d
+    | none => resolveFontDir
   let mut fallbacks : Array Font := #[]
   for p in systemFallbackPaths do
     if ← p.pathExists then

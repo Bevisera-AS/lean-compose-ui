@@ -65,6 +65,11 @@ structure AppConfig where
   `some .sdlRenderer` — the GPU backend needs a real (non-dummy) video
   driver. -/
   backend : Option RenderBackendKind := none
+  /-- Directory holding the bundled `Roboto-*.ttf` family (`none` = probe
+  relative to the cwd/executable, see `Compose/Ui/Text/Fonts.lean`). Platform
+  launchers that unpack fonts at runtime — e.g. LeAndroid extracting APK
+  assets — point this at the extracted directory. -/
+  fontDir : Option System.FilePath := none
 
 /-- Milliseconds the idle loop sleeps per wait when nothing is scheduled (an
 "∞-ish" cap: rewaiting is cheap and a finite bound is robust against missed
@@ -146,14 +151,18 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
   let (ww, wh) := (windowCoordSize width scale pixelDensity,
                    windowCoordSize height scale pixelDensity)
   let (cw, ch) ← window.getSize
-  unless cw == ww && ch == wh do window.setSize ww wh
+  -- Best effort: fixed-window platforms (Android's fullscreen surface)
+  -- reject SDL_SetWindowSize with "not supported"; layout tracks the real
+  -- surface size every frame via `getSizeInPixels`, so a stuck size is fine.
+  unless cw == ww && ch == wh do
+    try window.setSize ww wh catch _ => pure ()
   let backend ← makeBackend window config
   if config.vsync then
     try backend.setVSync 1 catch _ => pure ()
   -- Text stack: bundled fonts + the backend's text engine (M7), shared per
   -- window (renderer engine on SDL, GPU text engine on the GPU backend).
   let textContext : TextContext :=
-    { fontStore := ← FontStore.create
+    { fontStore := ← FontStore.create config.fontDir
       textEngine := ← backend.createTextEngine }
   let densityState ← MutableState.create ({ density := if scale > 0 then scale else 1 } : Density)
   let ctx : WindowContext :=

@@ -179,6 +179,18 @@ def makeBackend (window : Sdl.Window) (config : AppConfig) : IO Draw.RenderBacke
         falling back to the SDL renderer"
       Draw.SdlBackend.create (← Sdl.createRenderer window config.rendererName)
 
+/-- Shell-owned system dark-mode flag: seeded from `Sdl.getSystemTheme` at
+bootstrap, updated on `systemThemeChanged` events. One per process (the OS
+theme is global). -/
+initialize systemDarkState : MutableState Bool ← MutableState.create false
+
+/-- Whether the OS is in dark mode right now — live: readers recompose when
+the system theme flips while the app runs. Apps pick their scheme with it:
+`MaterialTheme (colors := if (← isSystemInDarkTheme) then .dark else .light)`.
+Mirrors `androidx.compose.foundation.isSystemInDarkTheme`. -/
+def isSystemInDarkTheme : Composable Bool :=
+  systemDarkState.get
+
 /-- Build the per-window half of `bootstrap` on an *existing* scheduler and
 wake event (`Compose.application` shares one pair across all its windows):
 SDL window/renderer, text stack, root node, composition for `content`, and
@@ -192,6 +204,7 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
     (config : AppConfig := {}) : IO WindowContext := do
   let flags :=
     (if config.resizable then Sdl.WindowFlags.resizable else .none) ||| .highPixelDensity
+  systemDarkState.set ((← Sdl.getSystemTheme) == .dark)
   let window ← Sdl.createWindow title
     (({} : Density).dpRoundToPx width) (({} : Density).dpRoundToPx height) flags
   -- Created at the density-1 estimate above; correct to the true window-
@@ -341,6 +354,9 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     if config.surfaceSwapGrace then
       ctx.presentGrace.set presentGracePasses
     ctx.root.markNeedsRemeasure
+    ctx.requestFrame
+  | .systemThemeChanged _ =>
+    systemDarkState.set ((← Sdl.getSystemTheme) == .dark)
     ctx.requestFrame
   | .windowSafeAreaChanged _ =>
     -- System bars/cutout moved: republish the insets (readers recompose;

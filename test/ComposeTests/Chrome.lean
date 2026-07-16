@@ -119,6 +119,25 @@ private def bottomSheet : IO Unit := do
       awaitIdle
       checkEq "sheet: drag past threshold dismissed" (← open_.get) false)
 
+/-- `isSystemInDarkTheme` is live: flipping the shell state recomposes
+readers (the dummy video driver reports no theme, so the test drives the
+state the `systemThemeChanged` handler writes; the handler itself is a
+re-read of `Sdl.getSystemTheme`). -/
+private def darkThemeLive : IO Unit := do
+  runComposeTest
+    (do
+      Text (if ← isSystemInDarkTheme then "dark" else "light")
+        (modifier := Modifier.testTag "theme"))
+    (do
+      assertTextEquals (.tag "theme") "light"
+      liftM (systemDarkState.set true)
+      awaitIdle
+      assertTextEquals (.tag "theme") "dark"
+      -- the event path routes without error under the dummy driver
+      sendEvent (.systemThemeChanged ⟨0⟩)
+      awaitIdle
+      liftM (systemDarkState.set false))
+
 def run : IO Unit := do
   iconTint
   chipToggle
@@ -126,5 +145,6 @@ def run : IO Unit := do
   scaffoldStack
   lazyRowWindow
   bottomSheet
+  darkThemeLive
 
 end Tests.Chrome

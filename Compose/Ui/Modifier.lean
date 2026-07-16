@@ -291,15 +291,31 @@ instance : BEq DrawElem where
 #guard (DrawElem.clip .circle) != (DrawElem.alpha 1)
 #guard (DrawElem.drawBehind (pure ())) != (DrawElem.drawBehind (pure ()))
 
+/-- Which delivery pass a `pointerInput` handler observes — a two-pass
+simplification of `androidx.compose.ui.input.pointer.PointerEventPass`,
+collapsed into the one leaf→root dispatch sweep. -/
+inductive PointerPass where
+  /-- Normal bubbling: the handler is skipped once an inner one consumed the
+  event. Compose's `Main` pass. -/
+  | main
+  /-- Observes every event on the hit path, consumed or not (handlers check
+  `PointerEvent.isConsumed`): for gesture interceptors — a drag-scroll
+  container must see the presses/releases its clickable children consume.
+  Compose's `Final` pass, with one documented deviation: within the single
+  sweep an element *inner* to the eventual consumer saw the event before the
+  consumption happened. -/
+  | final
+  deriving Repr, BEq, Inhabited
+
 /-- A pointer-affecting modifier element: participates in hit testing at its
 wrapper's region and receives the events dispatched along the hit path.
 Mirrors the `PointerInputModifier` family. -/
 inductive PointerElem where
   /-- A suspending pointer handler: (re)launched as a coroutine when the node
   enters the composition or `key` changes, cancelled when it leaves; events
-  hitting the wrapper region are queued to it. Mirrors
-  `Modifier.pointerInput(key) { ... }`. -/
-  | input (key : UInt64) (handler : PointerInputScope → UiTask Unit)
+  hitting the wrapper region are queued to it, gated by `pass` (see
+  `PointerPass`). Mirrors `Modifier.pointerInput(key) { ... }`. -/
+  | input (key : UInt64) (pass : PointerPass) (handler : PointerInputScope → UiTask Unit)
   /-- System cursor while the pointer hovers the wrapper region (topmost
   hovered wins). Mirrors `Modifier.pointerHoverIcon`. -/
   | hoverIcon (cursor : Sdl.SystemCursor)
@@ -312,19 +328,20 @@ inductive PointerElem where
   scroll state. -/
   | onScroll (handler : Offset → IO Offset)
 
-/-- `input` compares by key (the coroutine's relaunch identity — Compose
-semantics: the handler lambda is *not* an identity); `hoverIcon` by cursor;
-`onScroll` never (capturing-lambda behavior). -/
+/-- `input` compares by key and pass (the coroutine's relaunch identity —
+Compose semantics: the handler lambda is *not* an identity); `hoverIcon` by
+cursor; `onScroll` never (capturing-lambda behavior). -/
 instance : BEq PointerElem where
   beq
-    | .input k _, .input k' _ => k == k'
+    | .input k p _, .input k' p' _ => k == k' && p == p'
     | .hoverIcon c, .hoverIcon c' => c == c'
     | _, _ => false
 
 #guard (PointerElem.hoverIcon .text) == (PointerElem.hoverIcon .text)
 #guard (PointerElem.hoverIcon .text) != (PointerElem.hoverIcon .pointer)
-#guard (PointerElem.input 1 fun _ => pure ()) == (PointerElem.input 1 fun _ => pure ())
-#guard (PointerElem.input 1 fun _ => pure ()) != (PointerElem.input 2 fun _ => pure ())
+#guard (PointerElem.input 1 .main fun _ => pure ()) == (PointerElem.input 1 .main fun _ => pure ())
+#guard (PointerElem.input 1 .main fun _ => pure ()) != (PointerElem.input 2 .main fun _ => pure ())
+#guard (PointerElem.input 1 .main fun _ => pure ()) != (PointerElem.input 1 .final fun _ => pure ())
 #guard (PointerElem.onScroll fun _ => pure .zero) != (PointerElem.onScroll fun _ => pure .zero)
 
 /-- A focus/keyboard modifier element. Mirrors the `FocusModifier` +
@@ -566,10 +583,11 @@ node enters the composition, relaunched when `key` changes (the predecessor
 is cancelled first), cancelled when the node leaves. Pointer events whose
 position hits this element's wrapper region are delivered through
 `PointerInputScope.awaitEvent`, leaf→root along the hit path with
-consumption. Mirrors `Modifier.pointerInput(key) { ... }`. -/
+consumption — `pass := .final` keeps delivery even for consumed events (see
+`PointerPass`). Mirrors `Modifier.pointerInput(key) { ... }`. -/
 def pointerInput (key : UInt64) (handler : PointerInputScope → UiTask Unit)
-    (m : Modifier := {}) : Modifier :=
-  m.append (.pointer (.input key handler))
+    (m : Modifier := {}) (pass : PointerPass := .main) : Modifier :=
+  m.append (.pointer (.input key pass handler))
 
 /-- Show `cursor` while the pointer hovers this element's region; the topmost
 (leaf-most, innermost) hovered icon wins and the default cursor is restored
@@ -684,7 +702,7 @@ def pointerInputElems (m : Modifier) :
     Array (Nat × UInt64 × (PointerInputScope → UiTask Unit)) := Id.run do
   let mut out := #[]
   for h : i in [0:m.elems.size] do
-    if let .pointer (.input k f) := m.elems[i] then
+    if let .pointer (.input k _ f) := m.elems[i] then
       out := out.push (i, k, f)
   return out
 

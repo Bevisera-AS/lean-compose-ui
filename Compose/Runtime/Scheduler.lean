@@ -251,6 +251,14 @@ def launch (s : Scheduler) (t : UiTask Unit) : IO Job := do
   s.wake
   return ⟨tok⟩
 
+/-- Launch `t` as an *independent* coroutine on the ambient scheduler — for
+work that must outlive the launching coroutine's next await (a gesture
+detector handing off to a fling). The job is not tied to the launcher's
+cancellation: stop it via the returned `Job` or an internal liveness check
+(a scroll fling stands down through the mutation generation). -/
+protected def _root_.Compose.UiTask.launch (t : UiTask Unit) : UiTask Job :=
+  ⟨fun s _ k => do k (← s.launch t)⟩
+
 /-- The earliest instant `runDue` would have work, or `none` when only a
 `wake` (frame schedule, event, task completion) can create work: `0` when
 the run queue is non-empty or a pending await already finished, otherwise

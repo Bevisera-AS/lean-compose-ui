@@ -1,6 +1,7 @@
 import Sdl.Mouse
 import Sdl.Keycode
 import Compose.Core.Geometry
+import Compose.Core.Density
 import Compose.Runtime.Scheduler
 
 namespace Compose
@@ -63,6 +64,13 @@ structure PointerEvent where
   consume : IO Unit := pure ()
   /-- Whether some handler already consumed this dispatch. -/
   isConsumed : IO Bool := pure false
+  /-- Ask the router to hand the rest of the gesture to the receiving
+  element: captured-path targets *inner* to it get a synthetic `exit` (the
+  gesture-cancel a window leave delivers — a pending press under the finger
+  cancels instead of clicking) and stop receiving the capture's events.
+  Rebound per element during captured `move` dispatch; a no-op elsewhere.
+  The router half of a drag-scroll taking over past the touch slop. -/
+  steal : IO Unit := pure ()
 
 instance : Inhabited PointerEvent := ⟨{ eventType := .press, position := .zero }⟩
 
@@ -140,6 +148,9 @@ structure PointerInputScope where
   /-- Size of the wrapper the element decorates (its hit region), in px.
   Mirrors `PointerInputScope.size`. -/
   getSize : IO IntSize
+  /-- The node's density (px-per-dp conversions — touch slop). Mirrors
+  `PointerInputScope : Density`. -/
+  getDensity : IO Density := pure {}
 
 namespace PointerInputScope
 
@@ -158,6 +169,9 @@ def awaitEvent (s : PointerInputScope) : UiTask PointerEvent :=
 
 /-- Size of the wrapper this element decorates, in px. -/
 def size (s : PointerInputScope) : IO IntSize := s.getSize
+
+/-- The node's density, for dp→px conversions in gesture math. -/
+def density (s : PointerInputScope) : IO Density := s.getDensity
 
 /-- The most recently delivered event (`none` before the first). Mirrors
 `AwaitPointerEventScope.currentEvent`. -/

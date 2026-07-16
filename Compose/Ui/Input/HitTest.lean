@@ -105,35 +105,46 @@ partial def hitTest (n : LayoutNode) (p : Offset) : IO (Array HitTarget) := do
 
 end LayoutNode
 
-/-- Deliver `ev` to the pointer elements of one hit target (no consumption
-logic — the caller decides). `rootPos` is the event position in root
-coordinates; each element receives it localized to its wrapper region.
-`pointerInput` elements get it through their queue (waking a parked
-`awaitEvent` synchronously); `onScroll` handlers run for `scroll` events
-against `scrollRemaining` (the per-dispatch leftover delta, created by
-`dispatchToPath`): each returns what it consumed per axis, and the event
-counts as consumed when the remainder reaches zero. -/
+/-- Deliver `ev` to the pointer elements of one hit target. `rootPos` is the
+event position in root coordinates; each element receives it localized to
+its wrapper region. Consumption gates per element: main-pass elements are
+skipped once the event is consumed, `PointerPass.final` observers receive
+every event (and check `isConsumed` themselves). `pointerInput` elements get
+the event through their queue (waking a parked `awaitEvent` synchronously);
+`onScroll` handlers run for `scroll` events against `scrollRemaining` (the
+per-dispatch leftover delta, created by `dispatchToPath`): each returns what
+it consumed per axis, and the event counts as consumed when the remainder
+reaches zero. Given `stealSlot`, each delivered event's `steal` records the
+receiving node (the router turns it into a capture takeover — see
+`PointerEvent.steal`). -/
 def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset)
-    (scrollRemaining : Option (IO.Ref Offset) := none) : IO Unit := do
+    (scrollRemaining : Option (IO.Ref Offset) := none)
+    (stealSlot : Option (IO.Ref (Option Nat)) := none) : IO Unit := do
   let d ← t.node.data
   let origin ← t.node.originInRoot
   -- Innermost element first (bubbling starts at the leaf-most handler).
   for i in [0:t.elems.size] do
-    if ← ev.isConsumed then return
+    let consumed ← ev.isConsumed
     let idx := t.elems[t.elems.size - 1 - i]!
     let offset := (d.resolvedDraws.find? (·.elemIdx == idx)).map (·.offset.toOffset) |>.getD .zero
     let localPos := rootPos - origin - offset
     match d.modifier.elems[idx]? with
-    | some (.pointer (.input _ _)) =>
-      -- Coroutines observing a partially consumed scroll see the remainder.
-      let delta ← match scrollRemaining with
-        | some rem => rem.get
-        | none => pure ev.scrollDelta
-      for st in d.pointerInputs do
-        if (← st.elemIdx.get) == idx then
-          st.offer { ev with position := localPos, scrollDelta := delta }
+    | some (.pointer (.input _ pass _)) =>
+      if pass == .final || !consumed then
+        -- Coroutines observing a partially consumed scroll see the remainder.
+        let delta ← match scrollRemaining with
+          | some rem => rem.get
+          | none => pure ev.scrollDelta
+        let steal ← match stealSlot with
+          | some slot => do
+            let nid ← t.node.nodeId
+            pure (slot.set (some nid))
+          | none => pure ev.steal
+        for st in d.pointerInputs do
+          if (← st.elemIdx.get) == idx then
+            st.offer { ev with position := localPos, scrollDelta := delta, steal }
     | some (.pointer (.onScroll f)) =>
-      if ev.eventType == .scroll then
+      if !consumed && ev.eventType == .scroll then
         match scrollRemaining with
         | some rem =>
           let delta ← rem.get
@@ -147,20 +158,23 @@ def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset)
           if (← f ev.scrollDelta) != .zero then ev.consume
     | _ => pure ()
 
-/-- Dispatch `ev` (position in root coordinates) along `path` **leaf→root**,
-stopping at consumption; returns whether some handler consumed. Scroll
-events get a per-dispatch remaining-delta cell so `onScroll` handlers along
-the path each consume their own axis (see `HitTarget.deliver`). The entry
-point the input router (and tests) drive with translated events. -/
-def dispatchToPath (path : Array HitTarget) (ev : PointerEvent) : IO Bool := do
+/-- Dispatch `ev` (position in root coordinates) along `path` **leaf→root**;
+returns whether some handler consumed. Consumption gates main-pass elements
+(but the sweep continues so `PointerPass.final` observers outer to the
+consumer still see the event). Scroll events get a per-dispatch
+remaining-delta cell so `onScroll` handlers along the path each consume
+their own axis; `stealSlot` (captured moves) collects a capture-takeover
+request (see `HitTarget.deliver`). The entry point the input router (and
+tests) drive with translated events. -/
+def dispatchToPath (path : Array HitTarget) (ev : PointerEvent)
+    (stealSlot : Option (IO.Ref (Option Nat)) := none) : IO Bool := do
   let consumed ← IO.mkRef false
   let ev := { ev with consume := consumed.set true, isConsumed := consumed.get }
   let scrollRemaining ←
     if ev.eventType == .scroll then some <$> IO.mkRef ev.scrollDelta
     else pure none
   for i in [0:path.size] do
-    if ← consumed.get then break
-    (path[path.size - 1 - i]!).deliver ev ev.position scrollRemaining
+    (path[path.size - 1 - i]!).deliver ev ev.position scrollRemaining stealSlot
   consumed.get
 
 namespace LayoutNode
@@ -205,6 +219,7 @@ where
     let st ← PointerInputState.create key idx
     let scope : PointerInputScope :=
       { state := st
+        getDensity := do return (← n.data).density
         getSize := do
           let dd ← n.data
           let i ← st.elemIdx.get

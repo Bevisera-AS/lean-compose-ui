@@ -136,6 +136,25 @@ def create (root : LayoutNode) (cursor : CursorSetter)
       im.scheduleHoverSync
   return im
 
+/-- Hand the in-flight gesture to the captured-path node `nid` (a
+`PointerEvent.steal` request from one of its handlers): targets *inner* to
+it are cut from the capture and receive a synthetic `exit` — the same
+gesture-cancel a window leave delivers — so a pending press (a clickable
+under the finger when a drag-scroll takes over) cancels instead of clicking.
+Outer targets stay captured (`PointerPass.final` observers there keep
+watching the gesture). -/
+def stealCapture (im : InputManager) (nid : Nat) (pos : Offset) : IO Unit := do
+  let path ← im.capture.get
+  let mut cut : Option Nat := none
+  for i in [0:path.size] do
+    if cut.isNone then
+      if (← path[i]!.node.nodeId) == nid then cut := some i
+  let some i := cut | return
+  let inner := path.extract (i + 1) path.size
+  unless inner.isEmpty do
+    im.capture.set (path.extract 0 (i + 1))
+    let _ ← dispatchToPath inner { eventType := .exit, position := pos }
+
 /-- Mask of a possibly-absent button. -/
 private def maskOf : Option Sdl.MouseButton → Sdl.MouseButtonFlags
   | some b => .mask b
@@ -185,7 +204,14 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       let path ← im.hover.update im.root ev (some ev.position)
       dispatchToPath path ev
     else
-      dispatchToPath captured ev
+      -- Captured moves may carry a takeover request (`PointerEvent.steal`):
+      -- a drag-scroll passing its touch slop claims the gesture from the
+      -- pressed child.
+      let stealSlot ← IO.mkRef (none : Option Nat)
+      let consumed ← dispatchToPath captured ev (stealSlot := some stealSlot)
+      if let some nid ← stealSlot.get then
+        im.stealCapture nid ev.position
+      return consumed
   | .scroll =>
     dispatchToPath (← im.root.hitTest ev.position) ev
   | .exit =>

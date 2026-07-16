@@ -38,6 +38,8 @@ public import Compose.Animation.Spring
 public meta import Compose.Animation.Spring
 public import Compose.Animation.Spec
 public meta import Compose.Animation.Spec
+public import Compose.Animation.Content
+public meta import Compose.Animation.Content
 public import Compose.Animation.Decay
 public meta import Compose.Animation.Decay
 public import Compose.Animation.Animatable
@@ -136,6 +138,8 @@ public import Compose.Foundation.Scroll
 public meta import Compose.Foundation.Scroll
 public import Compose.Foundation.Lazy
 public meta import Compose.Foundation.Lazy
+public import Compose.Foundation.BackHandler
+public meta import Compose.Foundation.BackHandler
 public import Compose.Foundation.Image
 public meta import Compose.Foundation.Image
 public import Compose.Animation.Visibility

@@ -34,6 +34,7 @@ import ComposeTests.MultiWindow
 import ComposeTests.MenuBar
 import ComposeTests.Desktop
 import ComposeTests.Menu
+import ComposeTests.Navigation
 import ComposeTests.Files
 
 /-!
@@ -82,5 +83,6 @@ def main : IO UInt32 := do
   Harness.group "MenuBar" MenuBar.run
   Harness.group "Desktop" Desktop.run
   Harness.group "Menu" Menu.run
+  Harness.group "Navigation" Navigation.run
   Harness.group "Files" Files.run
   Harness.summary

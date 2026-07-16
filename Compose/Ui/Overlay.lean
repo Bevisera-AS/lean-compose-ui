@@ -217,13 +217,6 @@ def WindowContext.withOverlayHost (ctx : WindowContext) (content : Composable Un
 
 /-! ## Popup and Dialog -/
 
-/-- A remembered ref refreshed to `value` every composition — reads from
-long-lived callbacks stay current (the `rememberUpdatedState` idiom). -/
-private def updatedRef [Nonempty α] (value : α) : Composable (IO.Ref α) := do
-  let r ← remember (IO.mkRef value)
-  r.set value
-  return r
-
 /-- Read the composer's current `CompositionLocal` scope (captured for the
 overlay entry). -/
 private def captureLocals : Composable LocalMap := fun c => c.locals.get
@@ -243,11 +236,11 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
              content := ← IO.mkRef (pure () : Composable Unit)
              revision := ← MutableState.create 0
              locals := ← IO.mkRef .empty }
-    let dismissRef ← updatedRef onDismissRequest
-    let keyRef ← updatedRef onKeyEvent
+    let dismissRef ← rememberUpdatedRef onDismissRequest
+    let keyRef ← rememberUpdatedRef onKeyEvent
     -- Latest interactivity, read live by the long-lived key handler: an inert
     -- (exiting) overlay routes no keys, letting them reach normal handlers.
-    let interactiveRef ← updatedRef interactive
+    let interactiveRef ← rememberUpdatedRef interactive
     let locals ← captureLocals
     -- Refresh the entry every composition: latest locals + content capture,
     -- then bump the revision so the host layer recomposes with them.
@@ -263,7 +256,9 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
           handler := fun ke => do
             unless ← interactiveRef.get do return false
             if ← (← keyRef.get) ke then return true
-            if ke.down && !ke.isRepeat && ke.key == .escape then
+            -- Esc (desktop) and the platform back action (Android) both
+            -- request dismissal of the innermost dismissable overlay.
+            if ke.down && !ke.isRepeat && (ke.key == .escape || ke.key == .acBack) then
               match ← dismissRef.get with
               | some f => f; return true
               | none => return false

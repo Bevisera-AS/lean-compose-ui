@@ -44,7 +44,8 @@ open Compose
 def modifierAllowlist : List Name :=
   [``Compose.MaterialTheme,   -- non-emitting: a pure CompositionLocalProvider nest
    ``Compose.TooltipSurface,  -- fixed-styled tooltip content piece
-   ``Compose.MenuBar]         -- window chrome; Compose Desktop's MenuBar has none either
+   ``Compose.MenuBar,         -- window chrome; Compose Desktop's MenuBar has none either
+   ``Compose.BackHandler]     -- non-emitting: registers a back interceptor
 
 /-- Module prefixes scanned for component signature rules (1-5). -/
 def componentPrefixes : List Name :=

@@ -374,6 +374,13 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     ctx.backend.invalidateCaches
     ctx.root.markNeedsRemeasure
     ctx.requestFrame
+  | .keyDown ke =>
+    let handled ← (← ctx.inputSink.get) event
+    -- The platform back action, unconsumed by any overlay or `BackHandler`:
+    -- default behavior is leaving — quit the loop (on Android the activity
+    -- then finishes, which is the system back semantics).
+    if !handled && !ke.«repeat» && ke.key == .acBack then
+      ctx.requestQuit
   | .mouseButtonDown _ | .mouseMotion _ =>
     -- Android (the surfaceSwapGrace platforms) delivers batched pointer
     -- input at the app's own consumption pace: an idle-until-dirty loop

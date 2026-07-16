@@ -45,15 +45,6 @@ use to keep pointer-coroutine callbacks current (the coroutines relaunch on
 otherwise; see `Modifier.clickable`'s docstring).
 -/
 
-/-- A remembered cell always holding the latest composed `value`: read it
-inside long-lived pointer coroutines/effects instead of capturing composition
-values (which freeze at launch). Mirrors
-`androidx.compose.runtime.rememberUpdatedState`. -/
-def rememberUpdatedRef [Nonempty α] (value : α) : Composable (IO.Ref α) := do
-  let r ← remember (IO.mkRef value)
-  r.set value
-  return r
-
 /-- Target state-layer alpha for the raised interaction flags: the additive
 sum of the Material3 hover/focus/press tokens (see the module docstring). -/
 def stateLayerTargetAlpha (hovered focused pressed : Bool) : Float32 :=

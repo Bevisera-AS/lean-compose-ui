@@ -66,6 +66,14 @@ position, disposed on leaving. Mirrors `remember { derivedStateOf { … } }`. -/
 def rememberDerived [BEq α] [Nonempty α] (compute : IO α) : Composable (DerivedState α) :=
   rememberDerivedKeyed () compute
 
+/-- A remembered ref refreshed to `value` every composition — reads from
+long-lived callbacks (overlay key handlers, back handlers) stay current
+(the `rememberUpdatedState` idiom). -/
+def rememberUpdatedRef [Nonempty α] (value : α) : Composable (IO.Ref α) := do
+  let r ← remember (IO.mkRef value)
+  r.set value
+  return r
+
 end Compose
 
 end

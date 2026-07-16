@@ -162,7 +162,7 @@ def shrinkOut (targetFraction : Float32 := 0.0)
 
 /-- Default master-fraction spec when neither transition provides one:
 Compose's visibility spring stiffness. -/
-private def visibilityDefaultSpec : AnimationSpec Float32 :=
+def visibilityDefaultSpec : AnimationSpec Float32 :=
   .spring (stiffness := Spring.stiffnessMediumLow)
 
 /-- Value of an effect channel at master fraction `f`, where `edge` is the

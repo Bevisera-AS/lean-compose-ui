@@ -47,6 +47,12 @@ outlive Android's surface recreation, cheap enough to not matter anywhere
 else. See `WindowContext.presentGrace`. -/
 def presentGracePasses : Nat := 60
 
+/-- Repaint passes owed per pointer event on `surfaceSwapGrace` platforms
+(≈ half a second, re-armed by every press/move): Android paces batched
+input delivery by the app's consumption, so gestures need frames flowing
+to stream at full rate. -/
+def gestureGracePasses : Nat := 30
+
 /-- An app-lifecycle transition, forwarded to `AppConfig.onLifecycle`.
 Delivered by the OS through SDL (Android activity pause/resume, iOS-style
 `terminating`/`lowMemory`); desktop apps rarely see any of these. Mirrors
@@ -357,6 +363,15 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     ctx.backend.invalidateCaches
     ctx.root.markNeedsRemeasure
     ctx.requestFrame
+  | .mouseButtonDown _ | .mouseMotion _ =>
+    -- Android (the surfaceSwapGrace platforms) delivers batched pointer
+    -- input at the app's own consumption pace: an idle-until-dirty loop
+    -- turns a drag into a handful of stale events. Keep frames hot for a
+    -- short burst per pointer event so gestures stream at frame rate
+    -- (Compose/Flutter render every choreographer frame mid-gesture).
+    if config.surfaceSwapGrace then
+      ctx.presentGrace.set gestureGracePasses
+    let _ ← (← ctx.inputSink.get) event
   | .user t _ =>
     if t == ctx.wakeEvent.val then
       pure () -- wake events exist only to end a wait

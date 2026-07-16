@@ -1,5 +1,11 @@
-import Compose.Material.Menu
-import Compose.Material.Divider
+module
+
+public import Compose.Material.Menu
+public meta import Compose.Material.Menu
+public import Compose.Material.Divider
+public meta import Compose.Material.Divider
+
+public section
 
 namespace Compose
 
@@ -220,3 +226,5 @@ composable def MenuBar (menus : Array MenuBarMenu) : Composable Unit := do
     withGroup 0x6d626e (pure ())
 
 end Compose
+
+end

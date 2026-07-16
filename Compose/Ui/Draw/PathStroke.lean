@@ -1,4 +1,9 @@
-import Compose.Ui.Draw.PathFill
+module
+
+public import Compose.Ui.Draw.PathFill
+public meta import Compose.Ui.Draw.PathFill
+
+public section
 
 /-!
 # Path stroking (`Compose/Ui/Draw/PathStroke.lean`)
@@ -371,3 +376,5 @@ private def outlineMesh (pts : Array Offset) (closed : Bool) (s : Stroke) : Mesh
      | some b => (b.intersect (p.bounds.inflate s.boundsPad)) == b)
 
 end Compose.Draw
+
+end

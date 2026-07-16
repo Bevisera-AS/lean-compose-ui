@@ -1,6 +1,13 @@
-import Compose.Runtime.SlotVal
-import Compose.Runtime.State
-import Compose.Runtime.Applier
+module
+
+public import Compose.Runtime.SlotVal
+public meta import Compose.Runtime.SlotVal
+public import Compose.Runtime.State
+public meta import Compose.Runtime.State
+public import Compose.Runtime.Applier
+public meta import Compose.Runtime.Applier
+
+public section
 
 namespace Compose
 
@@ -50,6 +57,31 @@ def nodeGroupKey : UInt64 := 0x6e6f6465
 /-- Salt mixed into `keyed` data keys so they don't collide with positional
 source keys. -/
 def keyedGroupSalt : UInt64 := 0x6b657965
+
+/-- FNV-1a (64-bit) over a string's code points: the deterministic,
+process-independent hash behind `composable` group keys (declaration names
+must hash identically on every compile). -/
+def stringKey (s : String) : UInt64 :=
+  s.foldl (fun h c => (h ^^^ c.toNat.toUInt64) * 0x100000001B3) 0xCBF29CE484222325
+
+#guard stringKey "" == 0xCBF29CE484222325
+#guard stringKey "a" != stringKey "b"
+#guard stringKey "Demo.counter" != stringKey "Gallery.counter"  -- namespaces differ
+#guard stringKey "ab" != stringKey "ba"
+#guard stringKey "counter" == stringKey "counter"
+
+/-- Group key for one control-flow branch of a composable body: the
+declaration key mixed with the branch's source position and a traversal
+ordinal (the ordinal keeps keys distinct even for position-less,
+macro-generated syntax). Mirrors the source-location keys the Compose
+compiler plugin assigns to its injected groups. -/
+def branchKey (declKey : UInt64) (pos ord : Nat) : UInt64 :=
+  mixKeys declKey (mixKeys pos.toUInt64 ord.toUInt64)
+
+#guard branchKey 1 10 0 != branchKey 1 10 1
+#guard branchKey 1 10 0 != branchKey 1 20 0
+#guard branchKey 1 10 0 != branchKey 2 10 0
+#guard branchKey 5 0 0 != mixKeys keyedGroupSalt 5
 
 /-- Salt mixed into `CompositionLocalProvider` group keys. -/
 def providerGroupSalt : UInt64 := 0x70726f76
@@ -717,3 +749,5 @@ def endRestartGroup (scope : RecomposeScope) (rerun : Composable Unit) : Composa
   c.endRestartGroup scope (rerun.run c)
 
 end Compose
+
+end

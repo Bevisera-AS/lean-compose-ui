@@ -1,6 +1,13 @@
-import Compose.Core.Color
-import Compose.Core.Geometry
-import Compose.Core.Density
+module
+
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+public import Compose.Core.Density
+public meta import Compose.Core.Density
+
+public section
 
 namespace Compose
 
@@ -164,3 +171,5 @@ def color : VectorConverter Color :=
 end VectorConverter
 
 end Compose
+
+end

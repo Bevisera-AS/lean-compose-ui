@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -86,3 +90,5 @@ def approx (x y : Float32) (tol : Float32 := 0.0001) : Bool :=
 end Easing
 
 end Compose
+
+end

@@ -1,4 +1,9 @@
-import Compose.Ui.Node
+module
+
+public import Compose.Ui.Node
+public meta import Compose.Ui.Node
+
+public section
 
 namespace Compose
 
@@ -232,3 +237,5 @@ where
 end LayoutNode
 
 end Compose
+
+end

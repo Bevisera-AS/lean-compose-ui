@@ -1,6 +1,13 @@
-import Compose.Ui.Draw.Tessellate
-import Compose.Ui.Draw.Image
-import Sdl.Ttf.Text
+module
+
+public import Compose.Ui.Draw.Tessellate
+public meta import Compose.Ui.Draw.Tessellate
+public import Compose.Ui.Draw.Image
+public meta import Compose.Ui.Draw.Image
+public import Sdl.Ttf.Text
+public meta import Sdl.Ttf.Text
+
+public section
 
 /-!
 # Display list (`Compose/Ui/Draw/DisplayList.lean`)
@@ -352,3 +359,5 @@ def DisplayList.bounds (list : DisplayList) : Option Rect := Id.run do
 #guard DisplayList.bounds #[] == some .zero
 
 end Compose.Draw
+
+end

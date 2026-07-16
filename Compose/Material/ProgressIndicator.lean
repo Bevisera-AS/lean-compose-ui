@@ -1,7 +1,15 @@
-import Compose.Material.Theme
-import Compose.Material.StateLayer
-import Compose.Ui.Layout
-import Compose.Animation.Transition
+module
+
+public import Compose.Material.Theme
+public meta import Compose.Material.Theme
+public import Compose.Material.StateLayer
+public meta import Compose.Material.StateLayer
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+public import Compose.Animation.Transition
+public meta import Compose.Animation.Transition
+
+public section
 
 namespace Compose
 
@@ -146,3 +154,5 @@ composable def CircularProgressIndicator (progress : Option Float32 := none)
     Layout (m.drawBehind (arc startRad (← len.get))) .leaf
 
 end Compose
+
+end

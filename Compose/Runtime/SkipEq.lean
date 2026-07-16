@@ -1,4 +1,9 @@
-import Compose.Runtime.Composer
+module
+
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+
+public section
 
 namespace Compose
 
@@ -74,3 +79,5 @@ def changed (c : Composer) [SkipEq α] (a : α) : IO Bool := do
 end Composer
 
 end Compose
+
+end

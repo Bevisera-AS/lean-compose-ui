@@ -1,6 +1,13 @@
-import Compose.Ui.Window
-import Compose.Ui.Layout
-import Compose.Runtime.Macro
+module
+
+public import Compose.Ui.Window
+public meta import Compose.Ui.Window
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+
+public section
 
 namespace Compose
 
@@ -111,3 +118,5 @@ composable def Text (text : String) (modifier : Modifier := {})
         (mixKeys (stringKey text) (mixKeys (styleKey resolved) (densityKey density))))
 
 end Compose
+
+end

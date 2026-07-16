@@ -1,6 +1,13 @@
-import Compose.Core.Color
-import Compose.Core.Geometry
-import Sdl.Surface
+module
+
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+public import Sdl.Surface
+public meta import Sdl.Surface
+
+public section
 
 /-!
 # Image bitmaps (`Compose/Ui/Draw/Image.lean`)
@@ -97,3 +104,5 @@ def premultipliedBytes (img : ImageBitmap) : IO ByteArray := do
 end ImageBitmap
 
 end Compose.Draw
+
+end

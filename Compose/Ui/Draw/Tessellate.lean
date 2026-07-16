@@ -1,7 +1,15 @@
-import Compose.Ui.Draw.Mesh
-import Compose.Ui.Draw.Brush
-import Compose.Ui.Draw.PathStroke
-import Compose.Ui.Draw.Gpu.Sdf
+module
+
+public import Compose.Ui.Draw.Mesh
+public meta import Compose.Ui.Draw.Mesh
+public import Compose.Ui.Draw.Brush
+public meta import Compose.Ui.Draw.Brush
+public import Compose.Ui.Draw.PathStroke
+public meta import Compose.Ui.Draw.PathStroke
+public import Compose.Ui.Draw.Gpu.Sdf
+public meta import Compose.Ui.Draw.Gpu.Sdf
+
+public section
 
 /-!
 # Tessellation (`Compose/Ui/Draw/Tessellate.lean`)
@@ -633,3 +641,5 @@ private def approxOff (a b : Offset) (tol : Float32 := 0.05) : Bool :=
 #guard (circleFillClippedToRoundRect ⟨500, 500⟩ 5 (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .red).isEmpty
 
 end Compose.Draw
+
+end

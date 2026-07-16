@@ -1,5 +1,11 @@
-import Compose.Material.Theme
-import Compose.Foundation.Layouts
+module
+
+public import Compose.Material.Theme
+public meta import Compose.Material.Theme
+public import Compose.Foundation.Layouts
+public meta import Compose.Foundation.Layouts
+
+public section
 
 namespace Compose
 
@@ -53,3 +59,5 @@ def Surface (content : Composable Unit := pure ())
         { ambientStyle with color := resolvedContent } content
 
 end Compose
+
+end

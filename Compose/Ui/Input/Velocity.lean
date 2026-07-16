@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -103,3 +107,5 @@ def velocity (vt : VelocityTracker) (nowNs : UInt64) : Float32 := Id.run do
 end VelocityTracker
 
 end Compose
+
+end

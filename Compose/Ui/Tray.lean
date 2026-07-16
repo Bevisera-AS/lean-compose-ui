@@ -1,7 +1,15 @@
-import Sdl
-import Compose.Runtime.Effects
-import Compose.Runtime.Macro
-import Compose.Ui.Window
+module
+
+public import Sdl
+public meta import Sdl
+public import Compose.Runtime.Effects
+public meta import Compose.Runtime.Effects
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+public import Compose.Ui.Window
+public meta import Compose.Ui.Window
+
+public section
 
 namespace Compose
 
@@ -291,3 +299,5 @@ def Tray (menu : Array TrayItem) (icon : Option Sdl.Surface := none)
   SideEffect (reconcileTray stateRef menu icon tooltip)
 
 end Compose
+
+end

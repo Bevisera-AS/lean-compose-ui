@@ -1,4 +1,9 @@
-import Compose.Animation.AnimateAsState
+module
+
+public import Compose.Animation.AnimateAsState
+public meta import Compose.Animation.AnimateAsState
+
+public section
 
 namespace Compose
 
@@ -214,3 +219,5 @@ def animateFloat (it : InfiniteTransition) (initial target : Float32)
 end InfiniteTransition
 
 end Compose
+
+end

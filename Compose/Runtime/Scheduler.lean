@@ -1,4 +1,9 @@
-import Compose.Runtime.State
+module
+
+public import Compose.Runtime.State
+public meta import Compose.Runtime.State
+
+public section
 
 namespace Compose
 
@@ -303,3 +308,5 @@ def tickFrame (s : Scheduler) (frameNs : UInt64) : IO Unit := do
 end Scheduler
 
 end Compose
+
+end

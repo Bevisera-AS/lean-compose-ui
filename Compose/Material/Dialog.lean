@@ -1,6 +1,13 @@
-import Compose.Material.Surface
-import Compose.Material.Text
-import Compose.Ui.Overlay
+module
+
+public import Compose.Material.Surface
+public meta import Compose.Material.Surface
+public import Compose.Material.Text
+public meta import Compose.Material.Text
+public import Compose.Ui.Overlay
+public meta import Compose.Ui.Overlay
+
+public section
 
 namespace Compose
 
@@ -42,3 +49,5 @@ composable def AlertDialog (onDismissRequest : IO Unit) (title : String)
           confirmButton
 
 end Compose
+
+end

@@ -1,4 +1,9 @@
-import Compose.Ui.Input.HitTest
+module
+
+public import Compose.Ui.Input.HitTest
+public meta import Compose.Ui.Input.HitTest
+
+public section
 
 namespace Compose.Test
 
@@ -131,3 +136,5 @@ def dumpForest (forest : Array SemanticsNode) : String :=
   else "\n".intercalate (forest.foldl (fun acc n => acc ++ n.dumpLines 1) #[]).toList
 
 end Compose.Test
+
+end

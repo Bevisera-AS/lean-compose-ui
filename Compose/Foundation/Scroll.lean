@@ -1,9 +1,19 @@
-import Compose.Ui.Modifier
-import Compose.Ui.Input.Velocity
-import Compose.Runtime.Composer
-import Compose.Runtime.Macro
-import Compose.Animation.Spec
-import Compose.Animation.Decay
+module
+
+public import Compose.Ui.Modifier
+public meta import Compose.Ui.Modifier
+public import Compose.Ui.Input.Velocity
+public meta import Compose.Ui.Input.Velocity
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+public import Compose.Animation.Spec
+public meta import Compose.Animation.Spec
+public import Compose.Animation.Decay
+public meta import Compose.Animation.Decay
+
+public section
 
 namespace Compose
 
@@ -348,3 +358,5 @@ def horizontalScroll (state : ScrollState) (m : Modifier := {}) : Modifier :=
 end Modifier
 
 end Compose
+
+end

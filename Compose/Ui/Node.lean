@@ -1,6 +1,13 @@
-import Compose.Ui.Modifier
-import Compose.Runtime.State
-import Compose.Runtime.Applier
+module
+
+public import Compose.Ui.Modifier
+public meta import Compose.Ui.Modifier
+public import Compose.Runtime.State
+public meta import Compose.Runtime.State
+public import Compose.Runtime.Applier
+public meta import Compose.Runtime.Applier
+
+public section
 
 namespace Compose
 
@@ -295,14 +302,14 @@ private def anyChildDirty (n : LayoutNode) : IO Bool := do
 /-- Result of measuring a suffix of the wrapper chain: the wrapper's size,
 the accumulated offset to the content coordinate space, and the resolved
 draw elements (offsets relative to this wrapper). -/
-private structure ChainMeasured where
+structure ChainMeasured where
   size : IntSize
   contentOffset : IntOffset := .zero
   draws : Array ResolvedDraw := #[]
 
 /-- Wrap the result in an enclosing layout wrapper of the given `size` that
 places its inner content at `po`. -/
-private def ChainMeasured.reframe (r : ChainMeasured) (size : IntSize) (po : IntOffset) :
+def ChainMeasured.reframe (r : ChainMeasured) (size : IntSize) (po : IntOffset) :
     ChainMeasured :=
   { size
     contentOffset := r.contentOffset + po
@@ -509,3 +516,5 @@ def update (n : LayoutNode) (modifier : Modifier) (policy : MeasurePolicy)
 end LayoutNode
 
 end Compose
+
+end

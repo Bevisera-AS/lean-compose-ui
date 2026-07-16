@@ -1,4 +1,9 @@
-import Compose.Test.Finders
+module
+
+public import Compose.Test.Finders
+public meta import Compose.Test.Finders
+
+public section
 
 namespace Compose.Test
 
@@ -132,3 +137,5 @@ def assertNotFocused (m : Matcher) : TestM Unit := do
     pass s!"assertNotFocused {m.description}"
 
 end Compose.Test
+
+end

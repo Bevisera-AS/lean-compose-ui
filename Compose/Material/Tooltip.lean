@@ -1,7 +1,15 @@
-import Compose.Material.Surface
-import Compose.Material.Text
-import Compose.Material.StateLayer
-import Compose.Ui.Overlay
+module
+
+public import Compose.Material.Surface
+public meta import Compose.Material.Surface
+public import Compose.Material.Text
+public meta import Compose.Material.Text
+public import Compose.Material.StateLayer
+public meta import Compose.Material.StateLayer
+public import Compose.Ui.Overlay
+public meta import Compose.Ui.Overlay
+
+public section
 
 namespace Compose
 
@@ -94,3 +102,5 @@ composable def Tooltip (text : String) (content : Composable Unit)
     (modifier := modifier)
 
 end Compose
+
+end

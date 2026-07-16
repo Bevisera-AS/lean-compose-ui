@@ -1,6 +1,13 @@
-import Compose.Ui.Input.Focus
-import Compose.Ui.Input.Hover
-import Compose.Ui.Window
+module
+
+public import Compose.Ui.Input.Focus
+public meta import Compose.Ui.Input.Focus
+public import Compose.Ui.Input.Hover
+public meta import Compose.Ui.Input.Hover
+public import Compose.Ui.Window
+public meta import Compose.Ui.Window
+
+public section
 
 namespace Compose
 
@@ -359,3 +366,5 @@ def rememberFocusRequester : Composable FocusRequester := do
     return { id := (← freshId).toUInt64, manager }
 
 end Compose
+
+end

@@ -1,7 +1,15 @@
-import Compose.Material.Theme
-import Compose.Foundation.Scroll
-import Compose.Foundation.Interaction
-import Compose.Animation.AnimateAsState
+module
+
+public import Compose.Material.Theme
+public meta import Compose.Material.Theme
+public import Compose.Foundation.Scroll
+public meta import Compose.Foundation.Scroll
+public import Compose.Foundation.Interaction
+public meta import Compose.Foundation.Interaction
+public import Compose.Animation.AnimateAsState
+public meta import Compose.Animation.AnimateAsState
+
+public section
 
 namespace Compose
 
@@ -160,3 +168,5 @@ composable def HorizontalScrollbar (state : ScrollState)
   scrollbar state (vertical := false) modifier
 
 end Compose
+
+end

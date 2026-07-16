@@ -1,4 +1,9 @@
-import Compose.Runtime.SlotVal
+module
+
+public import Compose.Runtime.SlotVal
+public meta import Compose.Runtime.SlotVal
+
+public section
 
 namespace Compose
 
@@ -43,3 +48,5 @@ def Applier.erase [Nonempty N] (a : Applier N) : NodeApplier where
   onClear := a.onClear
 
 end Compose
+
+end

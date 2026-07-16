@@ -1,6 +1,13 @@
-import Compose.Animation.Spec
-import Compose.Runtime.State
-import Compose.Runtime.Scheduler
+module
+
+public import Compose.Animation.Spec
+public meta import Compose.Animation.Spec
+public import Compose.Runtime.State
+public meta import Compose.Runtime.State
+public import Compose.Runtime.Scheduler
+public meta import Compose.Runtime.Scheduler
+
+public section
 
 namespace Compose
 
@@ -193,3 +200,5 @@ def updateBounds [BEq α] (a : Animatable α)
 end Animatable
 
 end Compose
+
+end

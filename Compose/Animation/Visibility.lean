@@ -1,6 +1,13 @@
-import Compose.Animation.Transition
-import Compose.Runtime.Macro
-import Compose.Ui.Layout
+module
+
+public import Compose.Animation.Transition
+public meta import Compose.Animation.Transition
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+
+public section
 
 namespace Compose
 
@@ -250,3 +257,5 @@ def AnimatedVisibility (visible : Bool) (content : Composable Unit := pure ())
     withGroup 0x7669736f (pure ())
 
 end Compose
+
+end

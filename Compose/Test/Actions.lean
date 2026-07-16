@@ -1,4 +1,9 @@
-import Compose.Test.Finders
+module
+
+public import Compose.Test.Finders
+public meta import Compose.Test.Finders
+
+public section
 
 namespace Compose.Test
 
@@ -115,3 +120,5 @@ def requestFocus (m : Matcher) : TestM Unit := do
   awaitIdle
 
 end Compose.Test
+
+end

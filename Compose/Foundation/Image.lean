@@ -1,5 +1,11 @@
-import Compose.Ui.Layout
-import Compose.Runtime.Macro
+module
+
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+
+public section
 
 namespace Compose
 
@@ -106,3 +112,5 @@ composable def Image (bitmap : Draw.ImageBitmap) (modifier : Modifier := {})
       (mixKeys scaleK (if sampling == .nearest then 1 else 0))))
 
 end Compose
+
+end

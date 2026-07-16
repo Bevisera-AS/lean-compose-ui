@@ -1,5 +1,11 @@
-import Compose.Ui.Constraints
-import Compose.Core.Density
+module
+
+public import Compose.Ui.Constraints
+public meta import Compose.Ui.Constraints
+public import Compose.Core.Density
+public meta import Compose.Core.Density
+
+public section
 
 namespace Compose
 
@@ -90,7 +96,7 @@ instance : Inhabited Measurable :=
 /-- How a layout measures its children and places them: the heart of every
 container. Mirrors `androidx.compose.ui.layout.MeasurePolicy` (the scope is
 an explicit first argument rather than a receiver). -/
-def MeasurePolicy := MeasureScope → Array Measurable → Constraints → IO MeasureResult
+@[expose] def MeasurePolicy := MeasureScope → Array Measurable → Constraints → IO MeasureResult
 
 /-- The policy of a leaf `Layout`: children ignored, size = the smallest size
 satisfying the constraints (modifiers like `Modifier.size` drive the minima).
@@ -112,3 +118,5 @@ def MeasurePolicy.root : MeasurePolicy := fun _ ms c => do
 instance : Inhabited MeasurePolicy := ⟨.leaf⟩
 
 end Compose
+
+end

@@ -1,5 +1,11 @@
-import Compose.Ui.Draw.DisplayList
-import Compose.Ui.Draw.Gpu.Instance
+module
+
+public import Compose.Ui.Draw.DisplayList
+public meta import Compose.Ui.Draw.DisplayList
+public import Compose.Ui.Draw.Gpu.Instance
+public meta import Compose.Ui.Draw.Gpu.Instance
+
+public section
 
 /-!
 # GPU text resolution (`Compose/Ui/Draw/Gpu/TextEngine.lean`)
@@ -47,3 +53,5 @@ def resolveTexts (list : DisplayList) : IO (Array ResolvedRun × Array Sdl.Gpu.T
   return (← runs.get, ← atlases.get)
 
 end Compose.Draw.Gpu
+
+end

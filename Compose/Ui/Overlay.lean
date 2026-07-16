@@ -1,6 +1,13 @@
-import Compose.Ui.Window
-import Compose.Ui.Layout
-import Compose.Runtime.Macro
+module
+
+public import Compose.Ui.Window
+public meta import Compose.Ui.Window
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+
+public section
 
 namespace Compose
 
@@ -301,3 +308,5 @@ def Dialog (onDismissRequest : IO Unit) (content : Composable Unit := pure ()) :
     (modal := true) (interactive := true) content
 
 end Compose
+
+end

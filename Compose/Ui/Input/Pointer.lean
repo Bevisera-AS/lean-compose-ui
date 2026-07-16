@@ -1,8 +1,17 @@
-import Sdl.Mouse
-import Sdl.Keycode
-import Compose.Core.Geometry
-import Compose.Core.Density
-import Compose.Runtime.Scheduler
+module
+
+public import Sdl.Mouse
+public meta import Sdl.Mouse
+public import Sdl.Keycode
+public meta import Sdl.Keycode
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+public import Compose.Core.Density
+public meta import Compose.Core.Density
+public import Compose.Runtime.Scheduler
+public meta import Compose.Runtime.Scheduler
+
+public section
 
 namespace Compose
 
@@ -186,3 +195,5 @@ def containsLocal (s : PointerInputScope) (p : Offset) : IO Bool := do
 end PointerInputScope
 
 end Compose
+
+end

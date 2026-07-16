@@ -1,6 +1,13 @@
-import Compose.Ui.Draw.Gpu.Encode
-import Compose.Ui.Draw.Gpu.Shaders
-import Compose.Ui.Draw.Gpu.TextEngine
+module
+
+public import Compose.Ui.Draw.Gpu.Encode
+public meta import Compose.Ui.Draw.Gpu.Encode
+public import Compose.Ui.Draw.Gpu.Shaders
+public meta import Compose.Ui.Draw.Gpu.Shaders
+public import Compose.Ui.Draw.Gpu.TextEngine
+public meta import Compose.Ui.Draw.Gpu.TextEngine
+
+public section
 
 /-!
 # GPU frame renderer (`Compose/Ui/Draw/Gpu/Renderer.lean`)
@@ -620,3 +627,5 @@ def GpuRenderer.dispose (r : GpuRenderer) : IO Unit := do
   r.buffers.set {}
 
 end Compose.Draw.Gpu
+
+end

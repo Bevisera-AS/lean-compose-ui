@@ -1,5 +1,11 @@
-import Compose.Ui.Draw.DisplayList
-import Compose.Ui.Draw.Gpu.Instance
+module
+
+public import Compose.Ui.Draw.DisplayList
+public meta import Compose.Ui.Draw.DisplayList
+public import Compose.Ui.Draw.Gpu.Instance
+public meta import Compose.Ui.Draw.Gpu.Instance
+
+public section
 
 /-!
 # GPU display-list encoder (`Compose/Ui/Draw/Gpu/Encode.lean`)
@@ -765,3 +771,5 @@ def EncodeResult.stats (r : EncodeResult) : FrameStats :=
     && r.stats.meshTriangles == r.meshIdxCount / 3 && r.stats.meshTriangles > 0
 
 end Compose.Draw.Gpu
+
+end

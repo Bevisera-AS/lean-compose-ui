@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -72,3 +76,5 @@ def durationNs (d : ExponentialDecay) (v0 : Float32) : UInt64 :=
 end ExponentialDecay
 
 end Compose
+
+end

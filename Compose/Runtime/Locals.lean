@@ -1,5 +1,11 @@
-import Compose.Runtime.Composer
-import Compose.Runtime.State
+module
+
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+public import Compose.Runtime.State
+public meta import Compose.Runtime.State
+
+public section
 
 namespace Compose
 
@@ -103,3 +109,5 @@ def CompositionLocal.current (l : CompositionLocal α) : Composable α := fun c 
       (sv.get! : MutableState α).get
 
 end Compose
+
+end

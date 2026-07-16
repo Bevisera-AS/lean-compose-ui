@@ -1,4 +1,9 @@
-import Compose.Material.Menu
+module
+
+public import Compose.Material.Menu
+public meta import Compose.Material.Menu
+
+public section
 
 namespace Compose
 
@@ -91,3 +96,5 @@ composable def ContextMenuArea (items : Array ContextMenuItem)
                       else pure ())
 
 end Compose
+
+end

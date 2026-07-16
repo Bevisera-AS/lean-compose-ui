@@ -1,4 +1,9 @@
-import Compose.Ui.Input.Pointer
+module
+
+public import Compose.Ui.Input.Pointer
+public meta import Compose.Ui.Input.Pointer
+
+public section
 
 namespace Compose
 
@@ -197,3 +202,5 @@ partial def detectHover
   detectHover onEnter onExit onMove scope
 
 end Compose
+
+end

@@ -1,7 +1,15 @@
-import Compose.Material.StateLayer
-import Compose.Ui.Text.EditModel
-import Compose.Animation.Transition
-import Compose.Ui.Layout
+module
+
+public import Compose.Material.StateLayer
+public meta import Compose.Material.StateLayer
+public import Compose.Ui.Text.EditModel
+public meta import Compose.Ui.Text.EditModel
+public import Compose.Animation.Transition
+public meta import Compose.Animation.Transition
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+
+public section
 
 namespace Compose
 
@@ -556,3 +564,5 @@ composable def TextField (value : String) (onValueChange : String → IO Unit)
     (minWidth := minWidth)
 
 end Compose
+
+end

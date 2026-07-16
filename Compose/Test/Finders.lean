@@ -1,4 +1,9 @@
-import Compose.Test.Harness
+module
+
+public import Compose.Test.Harness
+public meta import Compose.Test.Harness
+
+public section
 
 namespace Compose.Test
 
@@ -117,3 +122,5 @@ def boundsOf (m : Matcher) : TestM Rect := do
   return (← find m).bounds
 
 end Compose.Test
+
+end

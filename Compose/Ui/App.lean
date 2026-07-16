@@ -1,10 +1,21 @@
-import Compose.Ui.Window
-import Compose.Ui.Layout
-import Compose.Ui.Overlay
-import Compose.Ui.Input.Router
-import Compose.Ui.Draw.Scope
-import Compose.Ui.Draw.SdlBackend
-import Compose.Ui.Draw.GpuBackend
+module
+
+public import Compose.Ui.Window
+public meta import Compose.Ui.Window
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+public import Compose.Ui.Overlay
+public meta import Compose.Ui.Overlay
+public import Compose.Ui.Input.Router
+public meta import Compose.Ui.Input.Router
+public import Compose.Ui.Draw.Scope
+public meta import Compose.Ui.Draw.Scope
+public import Compose.Ui.Draw.SdlBackend
+public meta import Compose.Ui.Draw.SdlBackend
+public import Compose.Ui.Draw.GpuBackend
+public meta import Compose.Ui.Draw.GpuBackend
+
+public section
 
 namespace Compose
 
@@ -684,3 +695,5 @@ def runApp (title : String) (width height : Dp) (content : Composable Unit)
   return 0
 
 end Compose
+
+end

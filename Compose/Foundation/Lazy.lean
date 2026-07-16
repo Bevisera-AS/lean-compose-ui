@@ -1,6 +1,13 @@
-import Compose.Foundation.Scroll
-import Compose.Ui.Layout
-import Compose.Ui.Window
+module
+
+public import Compose.Foundation.Scroll
+public meta import Compose.Foundation.Scroll
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+public import Compose.Ui.Window
+public meta import Compose.Ui.Window
+
+public section
 
 namespace Compose
 
@@ -174,3 +181,5 @@ composable def LazyGrid (columns rows : Nat) (cellWidth cellHeight : Dp)
         keyed (key c r) (itemContent c r)
 
 end Compose
+
+end

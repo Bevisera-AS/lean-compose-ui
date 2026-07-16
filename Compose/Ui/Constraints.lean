@@ -1,4 +1,9 @@
-import Compose.Core.Geometry
+module
+
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+
+public section
 
 namespace Compose
 
@@ -157,3 +162,5 @@ def isZero (c : Constraints) : Bool := c.maxWidth == 0 || c.maxHeight == 0
 end Constraints
 
 end Compose
+
+end

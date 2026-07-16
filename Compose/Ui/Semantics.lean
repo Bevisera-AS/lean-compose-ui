@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -160,3 +164,5 @@ def describe (p : SemanticsProps) : String := Id.run do
 end SemanticsProps
 
 end Compose
+
+end

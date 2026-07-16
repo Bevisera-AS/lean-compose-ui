@@ -1,4 +1,9 @@
-import Compose.Ui.Input.HitTest
+module
+
+public import Compose.Ui.Input.HitTest
+public meta import Compose.Ui.Input.HitTest
+
+public section
 
 namespace Compose
 
@@ -281,3 +286,5 @@ def focusRequester (r : FocusRequester) (m : Modifier := {}) : Modifier :=
 end Modifier
 
 end Compose
+
+end

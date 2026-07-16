@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-- An RGBA color in the sRGB color space, non-premultiplied, each channel in `[0, 1]`.
@@ -77,3 +81,5 @@ def magenta : Color := hex 0xFFFF00FF
 end Color
 
 end Compose
+
+end

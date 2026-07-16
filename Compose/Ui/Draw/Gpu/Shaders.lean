@@ -1,5 +1,11 @@
-import Compose.Ui.Draw.Gpu.Instance
-import Sdl
+module
+
+public import Compose.Ui.Draw.Gpu.Instance
+public meta import Compose.Ui.Draw.Gpu.Instance
+public import Sdl
+public meta import Sdl
+
+public section
 
 /-!
 # GPU shaders & pipelines (`Compose/Ui/Draw/Gpu/Shaders.lean`)
@@ -539,3 +545,5 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
            layer := layer, blur := blur }
 
 end Compose.Draw.Gpu
+
+end

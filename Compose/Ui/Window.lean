@@ -1,12 +1,25 @@
-import Sdl
-import Compose.Runtime.Recomposer
-import Compose.Runtime.LaunchedEffect
-import Compose.Runtime.Macro
-import Compose.Ui.Node
-import Compose.Ui.Input.Focus
-import Compose.Ui.Text.Fonts
-import Compose.Ui.Text.Paragraph
-import Compose.Ui.Draw.Backend
+module
+
+public import Sdl
+public meta import Sdl
+public import Compose.Runtime.Recomposer
+public meta import Compose.Runtime.Recomposer
+public import Compose.Runtime.LaunchedEffect
+public meta import Compose.Runtime.LaunchedEffect
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+public import Compose.Ui.Node
+public meta import Compose.Ui.Node
+public import Compose.Ui.Input.Focus
+public meta import Compose.Ui.Input.Focus
+public import Compose.Ui.Text.Fonts
+public meta import Compose.Ui.Text.Fonts
+public import Compose.Ui.Text.Paragraph
+public meta import Compose.Ui.Text.Paragraph
+public import Compose.Ui.Draw.Backend
+public meta import Compose.Ui.Draw.Backend
+
+public section
 
 namespace Compose
 
@@ -317,3 +330,5 @@ def Modifier.safeAreaPadding (m : Modifier := {}) : Composable Modifier := do
     (right := some insets.right) (bottom := some insets.bottom)
 
 end Compose
+
+end

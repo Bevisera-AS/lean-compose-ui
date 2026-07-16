@@ -1,5 +1,11 @@
-import Compose.Core.Color
-import Compose.Core.Geometry
+module
+
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+
+public section
 
 /-!
 # Draw meshes (`Compose/Ui/Draw/Mesh.lean`)
@@ -115,3 +121,5 @@ private def tri (o : Offset) (c : Color) : Mesh :=
 end Mesh
 
 end Compose.Draw
+
+end

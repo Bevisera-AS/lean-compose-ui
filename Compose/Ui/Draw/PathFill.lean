@@ -1,5 +1,11 @@
-import Compose.Ui.Draw.Path
-import Compose.Ui.Draw.Mesh
+module
+
+public import Compose.Ui.Draw.Path
+public meta import Compose.Ui.Draw.Path
+public import Compose.Ui.Draw.Mesh
+public meta import Compose.Ui.Draw.Mesh
+
+public section
 
 /-!
 # Path fill tessellation (`Compose/Ui/Draw/PathFill.lean`)
@@ -431,3 +437,5 @@ private def clipSquare : Path := Path.build do addRect ⟨0, 0, 10, 10⟩
         (Path.build do PathM.addOval ⟨2, 2, 28, 28⟩)
 
 end Compose.Draw
+
+end

@@ -1,5 +1,11 @@
-import Compose.Material.Text
-import Compose.Runtime.Locals
+module
+
+public import Compose.Material.Text
+public meta import Compose.Material.Text
+public import Compose.Runtime.Locals
+public meta import Compose.Runtime.Locals
+
+public section
 
 namespace Compose
 
@@ -228,3 +234,5 @@ def shapes : Composable Shapes := LocalShapes.current
 end MaterialTheme
 
 end Compose
+
+end

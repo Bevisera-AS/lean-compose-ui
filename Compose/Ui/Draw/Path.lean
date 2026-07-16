@@ -1,4 +1,9 @@
-import Compose.Core.Geometry
+module
+
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+
+public section
 
 /-!
 # Vector paths (`Compose/Ui/Draw/Path.lean`)
@@ -425,3 +430,5 @@ open PathM
 end
 
 end Compose.Draw
+
+end

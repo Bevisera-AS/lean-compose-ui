@@ -1,9 +1,19 @@
-import Compose.Ui.Measure
-import Compose.Core.Color
-import Compose.Ui.Draw.Scope
-import Compose.Ui.Input.Pointer
-import Compose.Ui.Input.Keyboard
-import Compose.Ui.Semantics
+module
+
+public import Compose.Ui.Measure
+public meta import Compose.Ui.Measure
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+public import Compose.Ui.Draw.Scope
+public meta import Compose.Ui.Draw.Scope
+public import Compose.Ui.Input.Pointer
+public meta import Compose.Ui.Input.Pointer
+public import Compose.Ui.Input.Keyboard
+public meta import Compose.Ui.Input.Keyboard
+public import Compose.Ui.Semantics
+public meta import Compose.Ui.Semantics
+
+public section
 
 namespace Compose
 
@@ -793,3 +803,5 @@ def semanticsProps (m : Modifier) : Option SemanticsProps :=
 end Modifier
 
 end Compose
+
+end

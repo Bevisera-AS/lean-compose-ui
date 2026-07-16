@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -522,3 +526,5 @@ private def tc (t : String) (caret : Nat) : TextFieldValue := tv t caret caret
 #guard (tc "abc" 2).selectedText == ""
 
 end Compose
+
+end

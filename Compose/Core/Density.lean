@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-- A density-independent pixel dimension. Mirrors `androidx.compose.ui.unit.Dp`.
@@ -81,3 +85,5 @@ def spToPx (d : Density) (sp : Sp) : Float32 := sp.value * d.density * d.fontSca
 end Density
 
 end Compose
+
+end

@@ -1,4 +1,9 @@
-import Compose.Runtime.Composer
+module
+
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+
+public section
 
 namespace Compose
 
@@ -62,3 +67,5 @@ def rememberDerived [BEq α] [Nonempty α] (compute : IO α) : Composable (Deriv
   rememberDerivedKeyed () compute
 
 end Compose
+
+end

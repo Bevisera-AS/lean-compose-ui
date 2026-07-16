@@ -1,5 +1,11 @@
-import Compose.Ui.Draw.Backend
-import Compose.Ui.Draw.Gpu.Renderer
+module
+
+public import Compose.Ui.Draw.Backend
+public meta import Compose.Ui.Draw.Backend
+public import Compose.Ui.Draw.Gpu.Renderer
+public meta import Compose.Ui.Draw.Gpu.Renderer
+
+public section
 
 /-!
 # GPU backend facade (`Compose/Ui/Draw/GpuBackend.lean`)
@@ -61,3 +67,5 @@ def create (window : Sdl.Window) : IO RenderBackend := do
 end GpuBackend
 
 end Compose.Draw
+
+end

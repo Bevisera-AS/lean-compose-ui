@@ -1,7 +1,15 @@
-import Std.Data.HashMap
-import Compose.Ui.Text.Style
-import Compose.Runtime.Composer
-import Sdl
+module
+
+public import Std.Data.HashMap
+public meta import Std.Data.HashMap
+public import Compose.Ui.Text.Style
+public meta import Compose.Ui.Text.Style
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+public import Sdl
+public meta import Sdl
+
+public section
 
 namespace Compose
 
@@ -133,3 +141,5 @@ def cacheSize (store : FontStore) : IO Nat := return (← store.cache.get).size
 end FontStore
 
 end Compose
+
+end

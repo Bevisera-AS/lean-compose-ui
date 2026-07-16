@@ -1,7 +1,15 @@
-import Compose.Foundation.Gestures
-import Compose.Ui.Modifier
-import Compose.Runtime.Composer
-import Compose.Runtime.Macro
+module
+
+public import Compose.Foundation.Gestures
+public meta import Compose.Foundation.Gestures
+public import Compose.Ui.Modifier
+public meta import Compose.Ui.Modifier
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+
+public section
 
 namespace Compose
 
@@ -121,3 +129,5 @@ def clickable (onClick : IO Unit) (enabled : Bool := true)
 end Modifier
 
 end Compose
+
+end

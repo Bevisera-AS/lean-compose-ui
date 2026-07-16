@@ -1,6 +1,13 @@
-import Compose.Animation.Easing
-import Compose.Animation.Vector
-import Compose.Animation.Spring
+module
+
+public import Compose.Animation.Easing
+public meta import Compose.Animation.Easing
+public import Compose.Animation.Vector
+public meta import Compose.Animation.Vector
+public import Compose.Animation.Spring
+public meta import Compose.Animation.Spring
+
+public section
 
 namespace Compose
 
@@ -362,3 +369,5 @@ private def rep3 (mode : RepeatMode) : AnimationSpec Float32 :=
 end AnimationSpec
 
 end Compose
+
+end

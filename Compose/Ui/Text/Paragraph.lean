@@ -1,5 +1,11 @@
-import Compose.Ui.Text.Fonts
-import Compose.Ui.Draw.Scope
+module
+
+public import Compose.Ui.Text.Fonts
+public meta import Compose.Ui.Text.Fonts
+public import Compose.Ui.Draw.Scope
+public meta import Compose.Ui.Draw.Scope
+
+public section
 
 namespace Compose
 
@@ -136,3 +142,5 @@ def mutationCount (tl : TextLayout) : IO Nat := tl.mutations.get
 end TextLayout
 
 end Compose
+
+end

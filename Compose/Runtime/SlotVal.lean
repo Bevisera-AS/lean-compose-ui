@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -78,3 +82,5 @@ def get! {α : Type} [Nonempty α] (n : NodeVal) : α := SlotVal.get! n
 end NodeVal
 
 end Compose
+
+end

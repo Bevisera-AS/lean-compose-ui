@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -134,3 +138,5 @@ private def velAt (ζ k t : Float32) (v0 : Float32 := 0) : Float32 :=
 end Spring
 
 end Compose
+
+end

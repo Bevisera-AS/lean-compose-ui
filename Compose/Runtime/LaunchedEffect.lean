@@ -1,6 +1,13 @@
-import Compose.Runtime.Scheduler
-import Compose.Runtime.Effects
-import Compose.Runtime.Locals
+module
+
+public import Compose.Runtime.Scheduler
+public meta import Compose.Runtime.Scheduler
+public import Compose.Runtime.Effects
+public meta import Compose.Runtime.Effects
+public import Compose.Runtime.Locals
+public meta import Compose.Runtime.Locals
+
+public section
 
 namespace Compose
 
@@ -106,3 +113,5 @@ def rememberLaunchScope : Composable LaunchScope := do
                      (← scope.jobs.get).forM (·.cancel) })
 
 end Compose
+
+end

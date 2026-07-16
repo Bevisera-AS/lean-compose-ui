@@ -1,4 +1,9 @@
-import Compose.Ui.Input.HitTest
+module
+
+public import Compose.Ui.Input.HitTest
+public meta import Compose.Ui.Input.HitTest
+
+public section
 
 namespace Compose
 
@@ -116,3 +121,5 @@ def exitDetaching (hs : HoverState) (subtree : LayoutNode) (base : PointerEvent)
 end HoverState
 
 end Compose
+
+end

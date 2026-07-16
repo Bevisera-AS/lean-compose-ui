@@ -1,5 +1,11 @@
-import Compose.Core.Density
-import Compose.Core.Color
+module
+
+public import Compose.Core.Density
+public meta import Compose.Core.Density
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+
+public section
 
 namespace Compose
 
@@ -106,3 +112,5 @@ def merge (base : TextStyle) (override : TextStyle) : TextStyle :=
 end TextStyle
 
 end Compose
+
+end

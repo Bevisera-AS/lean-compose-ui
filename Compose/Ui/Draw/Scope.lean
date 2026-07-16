@@ -1,5 +1,11 @@
-import Compose.Ui.Draw.DisplayList
-import Compose.Core.Density
+module
+
+public import Compose.Ui.Draw.DisplayList
+public meta import Compose.Ui.Draw.DisplayList
+public import Compose.Core.Density
+public meta import Compose.Core.Density
+
+public section
 
 /-!
 # Draw scope (`Compose/Ui/Draw/Scope.lean`)
@@ -389,3 +395,5 @@ def record (density : Density := {}) (body : DrawM α) : IO (DisplayList × α) 
 end DrawScope
 
 end Compose.Draw
+
+end

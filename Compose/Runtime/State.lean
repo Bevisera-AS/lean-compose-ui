@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-!
@@ -313,3 +317,5 @@ def dispose (s : DerivedState α) : IO Unit := do
 end DerivedState
 
 end Compose
+
+end

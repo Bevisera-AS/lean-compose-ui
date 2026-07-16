@@ -1,4 +1,9 @@
-import Compose.Ui.Layout
+module
+
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+
+public section
 
 namespace Compose
 
@@ -325,3 +330,5 @@ def widthIntrinsicMax (m : Modifier := {}) : Modifier :=
 end Modifier
 
 end Compose
+
+end

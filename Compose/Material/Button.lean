@@ -1,5 +1,11 @@
-import Compose.Material.Surface
-import Compose.Material.StateLayer
+module
+
+public import Compose.Material.Surface
+public meta import Compose.Material.Surface
+public import Compose.Material.StateLayer
+public meta import Compose.Material.StateLayer
+
+public section
 
 namespace Compose
 
@@ -86,3 +92,5 @@ composable def TextButton (onClick : IO Unit) (content : Composable Unit)
     (border := none) (horizontalPadding := 12) content
 
 end Compose
+
+end

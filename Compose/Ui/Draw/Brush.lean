@@ -1,5 +1,11 @@
-import Compose.Core.Color
-import Compose.Core.Geometry
+module
+
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+
+public section
 
 /-!
 # Brushes (`Compose/Ui/Draw/Brush.lean`)
@@ -161,3 +167,5 @@ def isSolid (b : Brush) : Bool :=
 end Brush
 
 end Compose.Draw
+
+end

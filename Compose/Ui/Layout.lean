@@ -1,7 +1,15 @@
-import Compose.Ui.Node
-import Compose.Ui.Input.HitTest
-import Compose.Runtime.Composer
-import Compose.Runtime.LaunchedEffect
+module
+
+public import Compose.Ui.Node
+public meta import Compose.Ui.Node
+public import Compose.Ui.Input.HitTest
+public meta import Compose.Ui.Input.HitTest
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+public import Compose.Runtime.LaunchedEffect
+public meta import Compose.Runtime.LaunchedEffect
+
+public section
 
 namespace Compose
 
@@ -181,3 +189,5 @@ end
 end LayoutNode
 
 end Compose
+
+end

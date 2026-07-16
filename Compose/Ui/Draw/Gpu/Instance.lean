@@ -1,6 +1,13 @@
-import Compose.Core.Color
-import Compose.Core.Geometry
-import Sdl.Ttf
+module
+
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+public import Sdl.Ttf
+public meta import Sdl.Ttf
+
+public section
 
 /-!
 # GPU instance & vertex layouts (`Compose/Ui/Draw/Gpu/Instance.lean`)
@@ -210,3 +217,5 @@ structure ResolvedSeq where
 abbrev ResolvedRun := Array ResolvedSeq
 
 end Compose.Draw.Gpu
+
+end

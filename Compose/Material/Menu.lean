@@ -1,8 +1,17 @@
-import Compose.Material.Surface
-import Compose.Material.Text
-import Compose.Material.StateLayer
-import Compose.Ui.Overlay
-import Compose.Animation.Visibility
+module
+
+public import Compose.Material.Surface
+public meta import Compose.Material.Surface
+public import Compose.Material.Text
+public meta import Compose.Material.Text
+public import Compose.Material.StateLayer
+public meta import Compose.Material.StateLayer
+public import Compose.Ui.Overlay
+public meta import Compose.Ui.Overlay
+public import Compose.Animation.Visibility
+public meta import Compose.Animation.Visibility
+
+public section
 
 namespace Compose
 
@@ -297,3 +306,5 @@ composable def ExposedDropdownMenuField (scope : ExposedDropdownMenuBoxScope)
     trailingTriangle colors.onSurfaceVariant expanded
 
 end Compose
+
+end

@@ -1,4 +1,9 @@
-import Compose.Core.Geometry
+module
+
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+
+public section
 
 /-!
 # GPU SDF math, pure twins (`Compose/Ui/Draw/Gpu/Sdf.lean`)
@@ -218,3 +223,5 @@ def shadow (p o : Offset) (size : Size) (corner sigma : Float32) : Float32 := Id
 #guard shadow ⟨2, 2⟩ ⟨0, 0⟩ ⟨40, 40⟩ 12 3 < shadow ⟨2, 2⟩ ⟨0, 0⟩ ⟨40, 40⟩ 0 3
 
 end Compose.Draw.Gpu
+
+end

@@ -1,8 +1,17 @@
-import Compose.Test.Semantics
-import Compose.Test.Harness
-import Compose.Test.Finders
-import Compose.Test.Actions
-import Compose.Test.Assertions
+module
+
+public import Compose.Test.Semantics
+public meta import Compose.Test.Semantics
+public import Compose.Test.Harness
+public meta import Compose.Test.Harness
+public import Compose.Test.Finders
+public meta import Compose.Test.Finders
+public import Compose.Test.Actions
+public meta import Compose.Test.Actions
+public import Compose.Test.Assertions
+public meta import Compose.Test.Assertions
+
+public section
 
 /-!
 # `Compose.Test` — the UI test framework (milestone MT)
@@ -29,3 +38,5 @@ Layering: this framework lives *above* material (it imports the theme for
 `Modifier.semantics` properties they publish. See `AGENTS.md` (Testing) for
 the how-to and `docs/DESIGN.md` for the design.
 -/
+
+end

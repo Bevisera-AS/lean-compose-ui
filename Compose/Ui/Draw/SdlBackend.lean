@@ -1,6 +1,13 @@
-import Compose.Ui.Draw.Backend
-import Compose.Ui.Draw.Scope
-import Sdl
+module
+
+public import Compose.Ui.Draw.Backend
+public meta import Compose.Ui.Draw.Backend
+public import Compose.Ui.Draw.Scope
+public meta import Compose.Ui.Draw.Scope
+public import Sdl
+public meta import Sdl
+
+public section
 
 /-!
 # SDL backend (`Compose/Ui/Draw/SdlBackend.lean`)
@@ -320,3 +327,5 @@ def DrawScope.run (renderer : Renderer) (density : Density := {}) (body : DrawM 
   return a
 
 end Compose.Draw
+
+end

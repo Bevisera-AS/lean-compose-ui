@@ -1,3 +1,7 @@
+module
+
+public section
+
 namespace Compose
 
 /-- A 2D position or vector in pixels. Mirrors `androidx.compose.ui.geometry.Offset`. -/
@@ -378,3 +382,5 @@ def normalize (rr : RoundRect) : RoundRect :=
 end RoundRect
 
 end Compose
+
+end

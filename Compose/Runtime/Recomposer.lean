@@ -1,4 +1,9 @@
-import Compose.Runtime.Composer
+module
+
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+
+public section
 
 namespace Compose
 
@@ -234,3 +239,5 @@ def dispose (comp : Composition) : IO Unit := do
 end Composition
 
 end Compose
+
+end

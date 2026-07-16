@@ -1,4 +1,9 @@
-import Sdl.Events
+module
+
+public import Sdl.Events
+public meta import Sdl.Events
+
+public section
 
 namespace Compose
 
@@ -65,3 +70,5 @@ def isActivate (e : KeyEvent) : Bool :=
 end KeyEvent
 
 end Compose
+
+end

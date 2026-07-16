@@ -1,5 +1,11 @@
-import Compose.Animation.Animatable
-import Compose.Runtime.LaunchedEffect
+module
+
+public import Compose.Animation.Animatable
+public meta import Compose.Animation.Animatable
+public import Compose.Runtime.LaunchedEffect
+public meta import Compose.Runtime.LaunchedEffect
+
+public section
 
 namespace Compose
 
@@ -63,3 +69,5 @@ def animateOffsetAsState (target : Offset)
   animateValueAsState target .offset spec
 
 end Compose
+
+end

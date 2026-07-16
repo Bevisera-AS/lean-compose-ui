@@ -1,6 +1,13 @@
-import Compose.Ui.App
-import Compose.Material.Theme
-import Compose.Test.Semantics
+module
+
+public import Compose.Ui.App
+public meta import Compose.Ui.App
+public import Compose.Material.Theme
+public meta import Compose.Material.Theme
+public import Compose.Test.Semantics
+public meta import Compose.Test.Semantics
+
+public section
 
 namespace Compose.Test
 
@@ -239,3 +246,5 @@ def runComposeTest (content : Composable Unit) (body : TestM Unit)
     (← ctx.composition).dispose
 
 end Compose.Test
+
+end

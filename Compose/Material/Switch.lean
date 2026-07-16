@@ -1,5 +1,11 @@
-import Compose.Material.StateLayer
-import Compose.Ui.Layout
+module
+
+public import Compose.Material.StateLayer
+public meta import Compose.Material.StateLayer
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+
+public section
 
 namespace Compose
 
@@ -79,3 +85,5 @@ composable def Switch (checked : Bool) (onCheckedChange : Bool → IO Unit)
   Layout m .leaf
 
 end Compose
+
+end

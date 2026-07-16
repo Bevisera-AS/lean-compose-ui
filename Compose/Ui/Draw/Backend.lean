@@ -1,6 +1,13 @@
-import Compose.Ui.Draw.DisplayList
-import Sdl.Render
-import Sdl.Ttf.Text
+module
+
+public import Compose.Ui.Draw.DisplayList
+public meta import Compose.Ui.Draw.DisplayList
+public import Sdl.Render
+public meta import Sdl.Render
+public import Sdl.Ttf.Text
+public meta import Sdl.Ttf.Text
+
+public section
 
 /-!
 # Render backend (`Compose/Ui/Draw/Backend.lean`)
@@ -56,3 +63,5 @@ structure RenderBackend where
   dispose : IO Unit := pure ()
 
 end Compose.Draw
+
+end

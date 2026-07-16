@@ -1,90 +1,184 @@
+module
+
 -- Root of the `Compose` library: a Jetpack-Compose-style declarative UI
 -- framework for Lean 4, rendered with SDL3.
-import Compose.Core.Color
-import Compose.Core.Geometry
-import Compose.Core.Density
-import Compose.Runtime.SlotVal
-import Compose.Runtime.State
-import Compose.Runtime.Applier
-import Compose.Runtime.Composer
-import Compose.Runtime.Recomposer
-import Compose.Runtime.Effects
-import Compose.Runtime.Locals
-import Compose.Runtime.SkipEq
-import Compose.Runtime.Macro
-import Compose.Runtime.Scheduler
-import Compose.Runtime.LaunchedEffect
-import Compose.Animation.Easing
-import Compose.Animation.Vector
-import Compose.Animation.Spring
-import Compose.Animation.Spec
-import Compose.Animation.Decay
-import Compose.Animation.Animatable
-import Compose.Animation.AnimateAsState
-import Compose.Animation.Transition
-import Compose.Ui.Constraints
-import Compose.Ui.Measure
-import Compose.Ui.Draw.Mesh
-import Compose.Ui.Draw.Path
-import Compose.Ui.Draw.PathFill
-import Compose.Ui.Draw.PathStroke
-import Compose.Ui.Draw.Tessellate
-import Compose.Ui.Draw.Brush
-import Compose.Ui.Draw.Image
-import Compose.Ui.Draw.DisplayList
-import Compose.Ui.Draw.Scope
-import Compose.Ui.Draw.Backend
-import Compose.Ui.Draw.SdlBackend
-import Compose.Ui.Draw.Gpu.Sdf
-import Compose.Ui.Draw.Gpu.Instance
-import Compose.Ui.Draw.Gpu.Encode
-import Compose.Ui.Draw.Gpu.Shaders
-import Compose.Ui.Draw.Gpu.TextEngine
-import Compose.Ui.Draw.Gpu.Renderer
-import Compose.Ui.Draw.GpuBackend
-import Compose.Ui.Input.Velocity
-import Compose.Ui.Input.Pointer
-import Compose.Ui.Input.Keyboard
-import Compose.Ui.Semantics
-import Compose.Ui.Modifier
-import Compose.Ui.Node
-import Compose.Ui.Input.HitTest
-import Compose.Ui.Layout
-import Compose.Ui.Text.Style
-import Compose.Ui.Text.Fonts
-import Compose.Ui.Text.Paragraph
-import Compose.Ui.Text.EditModel
-import Compose.Ui.Window
-import Compose.Ui.Input.Focus
-import Compose.Ui.Input.Hover
-import Compose.Ui.Input.Router
-import Compose.Ui.Overlay
-import Compose.Ui.Tray
-import Compose.Ui.App
-import Compose.Ui.Application
-import Compose.Foundation.Layouts
-import Compose.Foundation.Gestures
-import Compose.Foundation.Interaction
-import Compose.Foundation.Scroll
-import Compose.Foundation.Lazy
-import Compose.Foundation.Image
-import Compose.Animation.Visibility
-import Compose.Material.Text
-import Compose.Material.Theme
-import Compose.Material.StateLayer
-import Compose.Material.Surface
-import Compose.Material.Button
-import Compose.Material.Checkbox
-import Compose.Material.RadioButton
-import Compose.Material.Switch
-import Compose.Material.Slider
-import Compose.Material.ProgressIndicator
-import Compose.Material.Divider
-import Compose.Material.Scrollbar
-import Compose.Material.Menu
-import Compose.Material.Tooltip
-import Compose.Material.ContextMenu
-import Compose.Material.MenuBar
-import Compose.Material.Dialog
-import Compose.Material.TextField
-import Compose.Test
+public import Compose.Core.Color
+public meta import Compose.Core.Color
+public import Compose.Core.Geometry
+public meta import Compose.Core.Geometry
+public import Compose.Core.Density
+public meta import Compose.Core.Density
+public import Compose.Runtime.SlotVal
+public meta import Compose.Runtime.SlotVal
+public import Compose.Runtime.State
+public meta import Compose.Runtime.State
+public import Compose.Runtime.Applier
+public meta import Compose.Runtime.Applier
+public import Compose.Runtime.Composer
+public meta import Compose.Runtime.Composer
+public import Compose.Runtime.Recomposer
+public meta import Compose.Runtime.Recomposer
+public import Compose.Runtime.Effects
+public meta import Compose.Runtime.Effects
+public import Compose.Runtime.Locals
+public meta import Compose.Runtime.Locals
+public import Compose.Runtime.SkipEq
+public meta import Compose.Runtime.SkipEq
+public import Compose.Runtime.Macro
+public meta import Compose.Runtime.Macro
+public import Compose.Runtime.Scheduler
+public meta import Compose.Runtime.Scheduler
+public import Compose.Runtime.LaunchedEffect
+public meta import Compose.Runtime.LaunchedEffect
+public import Compose.Animation.Easing
+public meta import Compose.Animation.Easing
+public import Compose.Animation.Vector
+public meta import Compose.Animation.Vector
+public import Compose.Animation.Spring
+public meta import Compose.Animation.Spring
+public import Compose.Animation.Spec
+public meta import Compose.Animation.Spec
+public import Compose.Animation.Decay
+public meta import Compose.Animation.Decay
+public import Compose.Animation.Animatable
+public meta import Compose.Animation.Animatable
+public import Compose.Animation.AnimateAsState
+public meta import Compose.Animation.AnimateAsState
+public import Compose.Animation.Transition
+public meta import Compose.Animation.Transition
+public import Compose.Ui.Constraints
+public meta import Compose.Ui.Constraints
+public import Compose.Ui.Measure
+public meta import Compose.Ui.Measure
+public import Compose.Ui.Draw.Mesh
+public meta import Compose.Ui.Draw.Mesh
+public import Compose.Ui.Draw.Path
+public meta import Compose.Ui.Draw.Path
+public import Compose.Ui.Draw.PathFill
+public meta import Compose.Ui.Draw.PathFill
+public import Compose.Ui.Draw.PathStroke
+public meta import Compose.Ui.Draw.PathStroke
+public import Compose.Ui.Draw.Tessellate
+public meta import Compose.Ui.Draw.Tessellate
+public import Compose.Ui.Draw.Brush
+public meta import Compose.Ui.Draw.Brush
+public import Compose.Ui.Draw.Image
+public meta import Compose.Ui.Draw.Image
+public import Compose.Ui.Draw.DisplayList
+public meta import Compose.Ui.Draw.DisplayList
+public import Compose.Ui.Draw.Scope
+public meta import Compose.Ui.Draw.Scope
+public import Compose.Ui.Draw.Backend
+public meta import Compose.Ui.Draw.Backend
+public import Compose.Ui.Draw.SdlBackend
+public meta import Compose.Ui.Draw.SdlBackend
+public import Compose.Ui.Draw.Gpu.Sdf
+public meta import Compose.Ui.Draw.Gpu.Sdf
+public import Compose.Ui.Draw.Gpu.Instance
+public meta import Compose.Ui.Draw.Gpu.Instance
+public import Compose.Ui.Draw.Gpu.Encode
+public meta import Compose.Ui.Draw.Gpu.Encode
+public import Compose.Ui.Draw.Gpu.Shaders
+public meta import Compose.Ui.Draw.Gpu.Shaders
+public import Compose.Ui.Draw.Gpu.TextEngine
+public meta import Compose.Ui.Draw.Gpu.TextEngine
+public import Compose.Ui.Draw.Gpu.Renderer
+public meta import Compose.Ui.Draw.Gpu.Renderer
+public import Compose.Ui.Draw.GpuBackend
+public meta import Compose.Ui.Draw.GpuBackend
+public import Compose.Ui.Input.Velocity
+public meta import Compose.Ui.Input.Velocity
+public import Compose.Ui.Input.Pointer
+public meta import Compose.Ui.Input.Pointer
+public import Compose.Ui.Input.Keyboard
+public meta import Compose.Ui.Input.Keyboard
+public import Compose.Ui.Semantics
+public meta import Compose.Ui.Semantics
+public import Compose.Ui.Modifier
+public meta import Compose.Ui.Modifier
+public import Compose.Ui.Node
+public meta import Compose.Ui.Node
+public import Compose.Ui.Input.HitTest
+public meta import Compose.Ui.Input.HitTest
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+public import Compose.Ui.Text.Style
+public meta import Compose.Ui.Text.Style
+public import Compose.Ui.Text.Fonts
+public meta import Compose.Ui.Text.Fonts
+public import Compose.Ui.Text.Paragraph
+public meta import Compose.Ui.Text.Paragraph
+public import Compose.Ui.Text.EditModel
+public meta import Compose.Ui.Text.EditModel
+public import Compose.Ui.Window
+public meta import Compose.Ui.Window
+public import Compose.Ui.Input.Focus
+public meta import Compose.Ui.Input.Focus
+public import Compose.Ui.Input.Hover
+public meta import Compose.Ui.Input.Hover
+public import Compose.Ui.Input.Router
+public meta import Compose.Ui.Input.Router
+public import Compose.Ui.Overlay
+public meta import Compose.Ui.Overlay
+public import Compose.Ui.Tray
+public meta import Compose.Ui.Tray
+public import Compose.Ui.App
+public meta import Compose.Ui.App
+public import Compose.Ui.Application
+public meta import Compose.Ui.Application
+public import Compose.Foundation.Layouts
+public meta import Compose.Foundation.Layouts
+public import Compose.Foundation.Gestures
+public meta import Compose.Foundation.Gestures
+public import Compose.Foundation.Interaction
+public meta import Compose.Foundation.Interaction
+public import Compose.Foundation.Scroll
+public meta import Compose.Foundation.Scroll
+public import Compose.Foundation.Lazy
+public meta import Compose.Foundation.Lazy
+public import Compose.Foundation.Image
+public meta import Compose.Foundation.Image
+public import Compose.Animation.Visibility
+public meta import Compose.Animation.Visibility
+public import Compose.Material.Text
+public meta import Compose.Material.Text
+public import Compose.Material.Theme
+public meta import Compose.Material.Theme
+public import Compose.Material.StateLayer
+public meta import Compose.Material.StateLayer
+public import Compose.Material.Surface
+public meta import Compose.Material.Surface
+public import Compose.Material.Button
+public meta import Compose.Material.Button
+public import Compose.Material.Checkbox
+public meta import Compose.Material.Checkbox
+public import Compose.Material.RadioButton
+public meta import Compose.Material.RadioButton
+public import Compose.Material.Switch
+public meta import Compose.Material.Switch
+public import Compose.Material.Slider
+public meta import Compose.Material.Slider
+public import Compose.Material.ProgressIndicator
+public meta import Compose.Material.ProgressIndicator
+public import Compose.Material.Divider
+public meta import Compose.Material.Divider
+public import Compose.Material.Scrollbar
+public meta import Compose.Material.Scrollbar
+public import Compose.Material.Menu
+public meta import Compose.Material.Menu
+public import Compose.Material.Tooltip
+public meta import Compose.Material.Tooltip
+public import Compose.Material.ContextMenu
+public meta import Compose.Material.ContextMenu
+public import Compose.Material.MenuBar
+public meta import Compose.Material.MenuBar
+public import Compose.Material.Dialog
+public meta import Compose.Material.Dialog
+public import Compose.Material.TextField
+public meta import Compose.Material.TextField
+public import Compose.Test
+public meta import Compose.Test
+
+public section
+
+end

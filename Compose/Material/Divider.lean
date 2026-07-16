@@ -1,5 +1,11 @@
-import Compose.Material.Theme
-import Compose.Ui.Layout
+module
+
+public import Compose.Material.Theme
+public meta import Compose.Material.Theme
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
+
+public section
 
 namespace Compose
 
@@ -20,3 +26,5 @@ composable def HorizontalDivider (modifier : Modifier := {}) (thickness : Dp := 
     |>.background (color.getD colors.outlineVariant)) .leaf
 
 end Compose
+
+end

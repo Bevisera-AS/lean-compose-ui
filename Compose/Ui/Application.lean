@@ -1,4 +1,9 @@
-import Compose.Ui.App
+module
+
+public import Compose.Ui.App
+public meta import Compose.Ui.App
+
+public section
 
 namespace Compose
 
@@ -335,7 +340,7 @@ def application (content : Composable Unit) : IO UInt32 := do
 /-- Per-`Window` plumbing surviving recompositions: the latest content/locals
 capture (the overlay-entry pattern — the window root always composes the
 freshest closure), the close latch, and the created context. -/
-private structure WindowNode where
+structure WindowNode where
   /-- Latest content closure; refreshed every composition of the owner. -/
   contentRef : IO.Ref (Composable Unit)
   /-- Bumped per refresh so the window root recomposes with it. -/
@@ -484,3 +489,5 @@ def DialogWindow (title : String) (width height : Dp)
   windowImpl true title width height onCloseRequest config content
 
 end Compose
+
+end

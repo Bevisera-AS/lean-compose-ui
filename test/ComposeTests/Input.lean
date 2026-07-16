@@ -589,6 +589,9 @@ private def fingerRelease (pid : UInt64) (x y : Float32) : PointerEvent :=
 private def fingerCancel (pid : UInt64) (x y : Float32) : PointerEvent :=
   { eventType := .exit, position := ⟨x, y⟩, pointerId := pid }
 
+private def fingerMove (pid : UInt64) (x y : Float32) : PointerEvent :=
+  { eventType := .move, position := ⟨x, y⟩, pointerId := pid }
+
 /-- Two fingers on two clickables run independent gestures: the second press
 hit-tests its own target (not the first finger's captured path), both are
 pressed at once, and each release fires its own click. -/
@@ -1003,6 +1006,29 @@ private def dragScrollInnerDragWins : IO Unit := do
   check "inner drag: the inner detector dragged" ((← drags.get) ≥ 2)
   checkEq "inner drag: the scroll container stood off" (← st.value) 0
 
+/-- A second finger landing mid-gesture must not corrupt a drag-scroll
+session: the handler latches the arming pointer, so a foreign pointer's
+presses/moves/releases pass through untouched and the session's drag math
+stays anchored to its own origin. -/
+private def dragScrollIgnoresSecondFinger : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (fingerPress 1 50 80)
+  let _ ← r.im.pointerEvent (fingerPress 2 20 90)
+  let _ ← r.im.pointerEvent (fingerMove 2 20 20)  -- far past the slop
+  checkEq "second finger: a foreign move does not scroll the session"
+    (← st.value) 0
+  let _ ← r.im.pointerEvent (fingerMove 1 50 40)
+  checkEq "second finger: the session pointer drags from its own origin"
+    (← st.value) 32
+  let _ ← r.im.pointerEvent (fingerRelease 2 20 20)
+  let _ ← r.im.pointerEvent (fingerMove 1 50 20)
+  checkEq "second finger: a foreign release does not end the session"
+    (← st.value) 52
+  let _ ← r.im.pointerEvent (fingerRelease 1 50 20)
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -1022,6 +1048,7 @@ def run : IO Unit := do
   dragScrollFlingAndCatch
   dragScrollFlingEndStop
   dragScrollInnerDragWins
+  dragScrollIgnoresSecondFinger
   focusTraversal
   keyRouting
   textRouting

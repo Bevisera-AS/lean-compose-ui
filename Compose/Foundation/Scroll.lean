@@ -254,8 +254,11 @@ pressed child's pending click) and feeds further moves into
 `ScrollState.scrollBy` (consumed, so outer containers stand off); release
 hands the tracked velocity to `ScrollState.fling` on its own coroutine. A
 gesture that exceeds the slop *across* the axis first, or one an inner drag
-(a slider) consumes, is left alone. Mirrors the drag half of
-`Modifier.scrollable`'s touch handling. -/
+(a slider) consumes, is left alone. The session is bound to the pointer that
+pressed (`PointerEvent.pointerId`) — a second finger landing mid-gesture
+runs its own gesture elsewhere and must not corrupt this one's origin or
+velocity math. Mirrors the drag half of `Modifier.scrollable`'s touch
+handling. -/
 private partial def scrollDragHandler (state : ScrollState) (vertical : Bool)
     (scope : PointerInputScope) : UiTask Unit :=
   idle
@@ -264,24 +267,27 @@ where
   crossOf (p : Offset) : Float32 := if vertical then p.x else p.y
   /-- No gesture in flight: a primary press catches a running fling and arms
   tracking (even when a child consumed it — gesture boundaries stay visible
-  to a final-pass observer). -/
+  to a final-pass observer). The pressing pointer owns the session. -/
   idle : UiTask Unit := do
     let ev ← scope.awaitEvent
     if ev.eventType == .press && ev.button == some .left then
       let _ ← state.interrupt
-      track ev.position (VelocityTracker.empty.add ev.timestamp (axisOf ev.position))
+      track ev.pointerId ev.position
+        (VelocityTracker.empty.add ev.timestamp (axisOf ev.position))
     else
       idle
   /-- Pressed, still within the slop: decide between click (release first),
   our drag (axis slop first), someone else's gesture (cross slop first or a
-  consumed move), and cancel (window leave). -/
-  track (origin : Offset) (vt : VelocityTracker) : UiTask Unit := do
+  consumed move), and cancel (window leave). Other pointers' events pass
+  through untouched. -/
+  track (pid : UInt64) (origin : Offset) (vt : VelocityTracker) : UiTask Unit := do
     let ev ← scope.awaitEvent
+    if ev.pointerId != pid then track pid origin vt else
     match ev.eventType with
     | .move =>
       if ← ev.isConsumed then
         -- An inner drag (a slider) owns this gesture.
-        dead
+        dead pid
       else
         let vt := vt.add ev.timestamp (axisOf ev.position)
         let slop := (← scope.density).dpToPx dragScrollSlop
@@ -292,24 +298,25 @@ where
           let _ ← state.interrupt
           -- Start from the slop edge, not with a jump over the dead zone.
           let _ ← state.scrollBy (-(d - (if d > 0 then slop else -slop)))
-          drag (axisOf ev.position) vt
+          drag pid (axisOf ev.position) vt
         else if (crossOf ev.position - crossOf origin).abs > slop then
-          dead
+          dead pid
         else
-          track origin vt
-    | .release => if ev.button == some .left then idle else track origin vt
+          track pid origin vt
+    | .release => if ev.button == some .left then idle else track pid origin vt
     | .exit => idle
-    | _ => track origin vt
+    | _ => track pid origin vt
   /-- Past the slop, gesture stolen: moves scroll (consumed), release flings,
   window leave cancels without a fling. -/
-  drag (lastAxis : Float32) (vt : VelocityTracker) : UiTask Unit := do
+  drag (pid : UInt64) (lastAxis : Float32) (vt : VelocityTracker) : UiTask Unit := do
     let ev ← scope.awaitEvent
+    if ev.pointerId != pid then drag pid lastAxis vt else
     match ev.eventType with
     | .move =>
       ev.consume
       let a := axisOf ev.position
       let _ ← state.scrollBy (-(a - lastAxis))
-      drag a (vt.add ev.timestamp a)
+      drag pid a (vt.add ev.timestamp a)
     | .release =>
       if ev.button == some .left then
         ev.consume
@@ -318,16 +325,18 @@ where
         let _ ← UiTask.launch (state.fling v)
         idle
       else
-        drag lastAxis vt
+        drag pid lastAxis vt
     | .exit => idle
-    | _ => drag lastAxis vt
-  /-- This gesture belongs to someone else: sit it out until it ends. -/
-  dead : UiTask Unit := do
+    | _ => drag pid lastAxis vt
+  /-- This gesture belongs to someone else: sit out the session pointer's
+  gesture until it ends (other pointers' events pass through). -/
+  dead (pid : UInt64) : UiTask Unit := do
     let ev ← scope.awaitEvent
+    if ev.pointerId != pid then dead pid else
     match ev.eventType with
-    | .release => if ev.button == some .left then idle else dead
+    | .release => if ev.button == some .left then idle else dead pid
     | .exit => idle
-    | _ => dead
+    | _ => dead pid
 
 namespace Modifier
 

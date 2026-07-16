@@ -138,6 +138,24 @@ private def darkThemeLive : IO Unit := do
       awaitIdle
       liftM (systemDarkState.set false))
 
+/-- Locale resolution is live: pushing a new preferred-locale list
+recomposes readers through `resolveLocale` (the same shell-state pattern
+the `localeChanged` handler drives). -/
+private def localeLive : IO Unit := do
+  runComposeTest
+    (do
+      let tag ← resolveLocale #[⟨"en", none⟩, ⟨"vi", none⟩]
+      Text (if tag == some ⟨"vi", none⟩ then "xin chào" else "hello")
+        (modifier := Modifier.testTag "greet"))
+    (do
+      liftM (preferredLocalesState.set #[⟨"fr", none⟩])
+      awaitIdle
+      assertTextEquals (.tag "greet") "hello"     -- no match → default
+      liftM (preferredLocalesState.set #[⟨"vi", some "VN"⟩])
+      awaitIdle
+      assertTextEquals (.tag "greet") "xin chào"  -- language match, live
+      liftM (preferredLocalesState.set #[]))
+
 def run : IO Unit := do
   iconTint
   chipToggle
@@ -146,5 +164,6 @@ def run : IO Unit := do
   lazyRowWindow
   bottomSheet
   darkThemeLive
+  localeLive
 
 end Tests.Chrome

@@ -142,6 +142,8 @@ public import Compose.Foundation.Lazy
 public meta import Compose.Foundation.Lazy
 public import Compose.Foundation.BackHandler
 public meta import Compose.Foundation.BackHandler
+public import Compose.Foundation.I18n
+public meta import Compose.Foundation.I18n
 public import Compose.Foundation.Image
 public meta import Compose.Foundation.Image
 public import Compose.Animation.Visibility

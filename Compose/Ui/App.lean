@@ -14,6 +14,8 @@ public import Compose.Ui.Draw.SdlBackend
 public meta import Compose.Ui.Draw.SdlBackend
 public import Compose.Ui.Draw.GpuBackend
 public meta import Compose.Ui.Draw.GpuBackend
+public import Compose.Foundation.I18n
+public meta import Compose.Foundation.I18n
 
 public section
 
@@ -205,6 +207,7 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
   let flags :=
     (if config.resizable then Sdl.WindowFlags.resizable else .none) ||| .highPixelDensity
   systemDarkState.set ((← Sdl.getSystemTheme) == .dark)
+  refreshPreferredLocales
   let window ← Sdl.createWindow title
     (({} : Density).dpRoundToPx width) (({} : Density).dpRoundToPx height) flags
   -- Created at the density-1 estimate above; correct to the true window-
@@ -357,6 +360,9 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     ctx.requestFrame
   | .systemThemeChanged _ =>
     systemDarkState.set ((← Sdl.getSystemTheme) == .dark)
+    ctx.requestFrame
+  | .localeChanged _ =>
+    refreshPreferredLocales
     ctx.requestFrame
   | .windowSafeAreaChanged _ =>
     -- System bars/cutout moved: republish the insets (readers recompose;

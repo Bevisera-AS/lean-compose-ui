@@ -94,6 +94,21 @@ between coordinate frames (`DrawScope.clipPath`). -/
 def Path.translate (path : Path) (d : Offset) : Path :=
   { path with verbs := path.verbs.map (·.translate d) }
 
+/-- The verb with all points scaled by `f` about the origin. -/
+def PathVerb.scale (f : Float32) : PathVerb → PathVerb
+  | .moveTo p => .moveTo (p * f)
+  | .lineTo p => .lineTo (p * f)
+  | .quadTo c p => .quadTo (c * f) (p * f)
+  | .cubicTo c1 c2 p => .cubicTo (c1 * f) (c2 * f) (p * f)
+  | .close => .close
+
+/-- The path scaled uniformly by `f` about the origin — how a vector asset
+authored in viewport units stretches to its drawn pixel size. -/
+def Path.scale (path : Path) (f : Float32) : Path :=
+  { path with verbs := path.verbs.map (·.scale f) }
+
+#guard (Path.mk #[.lineTo ⟨2, 3⟩] .nonZero).scale 2 == Path.mk #[.lineTo ⟨4, 6⟩] .nonZero
+
 /-! ## Builder -/
 
 /-- Builder state: the verbs so far, the current point, the current subpath's

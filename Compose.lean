@@ -54,6 +54,8 @@ public import Compose.Ui.Measure
 public meta import Compose.Ui.Measure
 public import Compose.Ui.Draw.Mesh
 public meta import Compose.Ui.Draw.Mesh
+public import Compose.Ui.Draw.PathData
+public meta import Compose.Ui.Draw.PathData
 public import Compose.Ui.Draw.Path
 public meta import Compose.Ui.Draw.Path
 public import Compose.Ui.Draw.PathFill
@@ -154,6 +156,12 @@ public import Compose.Material.Surface
 public meta import Compose.Material.Surface
 public import Compose.Material.Button
 public meta import Compose.Material.Button
+public import Compose.Material.BottomSheet
+public meta import Compose.Material.BottomSheet
+public import Compose.Material.Card
+public meta import Compose.Material.Card
+public import Compose.Material.Chip
+public meta import Compose.Material.Chip
 public import Compose.Material.Checkbox
 public meta import Compose.Material.Checkbox
 public import Compose.Material.RadioButton
@@ -166,8 +174,16 @@ public import Compose.Material.ProgressIndicator
 public meta import Compose.Material.ProgressIndicator
 public import Compose.Material.Divider
 public meta import Compose.Material.Divider
+public import Compose.Material.Scaffold
+public meta import Compose.Material.Scaffold
 public import Compose.Material.Scrollbar
 public meta import Compose.Material.Scrollbar
+public import Compose.Material.Icon
+public meta import Compose.Material.Icon
+public import Compose.Material.Icons
+public meta import Compose.Material.Icons
+public import Compose.Material.ListItem
+public meta import Compose.Material.ListItem
 public import Compose.Material.Menu
 public meta import Compose.Material.Menu
 public import Compose.Material.Tooltip

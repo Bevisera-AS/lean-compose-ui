@@ -116,6 +116,42 @@ composable def LazyColumn (state : ScrollState) (itemHeight : Dp) (count : Nat)
     for i in [first:lastEx] do
       keyed (key i) (lazyItem i itemContent)
 
+/-! ## LazyRow -/
+
+/-- `lazyPolicy` rotated: children measured exactly `itemPx` wide, placed at
+`index × itemPx`; the reported width is the full `count × itemPx` extent. -/
+private def lazyRowPolicy (first count : Nat) (itemPx : Int32) : MeasurePolicy :=
+  fun _ ms c => do
+    let ps ← ms.mapM (·.measure
+      { maxHeight := c.maxHeight, minWidth := itemPx, maxWidth := itemPx })
+    let h := ps.foldl (fun acc p => max acc p.height) 0
+    return { size := ⟨c.constrainWidth (itemPx * Int32.ofNat count), c.constrainHeight h⟩
+             placement := do
+               let mut j := 0
+               for p in ps do
+                 p.placeAt ⟨itemPx * Int32.ofNat (first + j), 0⟩
+                 j := j + 1 }
+
+/-- `LazyColumn` rotated: a horizontally scrolling, virtualized row of
+`count` fixed-width items (same windowing, keys, and `ScrollState`
+integration — drag/fling included). Mirrors
+`androidx.compose.foundation.lazy.LazyRow` (fixed-width simplification). -/
+composable def LazyRow (state : ScrollState) (itemWidth : Dp) (count : Nat)
+    (itemContent : Nat → Composable Unit := fun _ => pure ())
+    (key : Nat → UInt64 := (·.toUInt64)) (modifier : Modifier := {}) :
+    Composable Unit := do
+  let density ← LocalDensity.current
+  let itemPx := density.dpRoundToPx itemWidth
+  let windowState ← rememberDerivedKeyed (α := Nat × Nat)
+    (mixKeys itemPx.toFloat32.toBits.toUInt64 count.toUInt64) do
+      return lazyWindow (← state.value) (← state.viewportSize) itemPx count
+  let (first, lastEx) ← windowState.get
+  Layout (modifier.horizontalScroll state) (lazyRowPolicy first count itemPx)
+    (policyInputs := some (mixKeys 0x6c617a78 <| mixKeys first.toUInt64 <|
+      mixKeys count.toUInt64 itemPx.toFloat32.toBits.toUInt64)) do
+    for i in [first:lastEx] do
+      keyed (key i) (lazyItem i itemContent)
+
 /-! ## LazyGrid -/
 
 /-- The lazy grid's measure policy: children are the composed cell window,

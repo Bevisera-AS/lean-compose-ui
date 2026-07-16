@@ -35,6 +35,7 @@ import ComposeTests.MenuBar
 import ComposeTests.Desktop
 import ComposeTests.Menu
 import ComposeTests.Navigation
+import ComposeTests.Chrome
 import ComposeTests.Files
 
 /-!
@@ -84,5 +85,6 @@ def main : IO UInt32 := do
   Harness.group "Desktop" Desktop.run
   Harness.group "Menu" Menu.run
   Harness.group "Navigation" Navigation.run
+  Harness.group "Chrome" Chrome.run
   Harness.group "Files" Files.run
   Harness.summary

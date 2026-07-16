@@ -805,6 +805,118 @@ private def hoverDetachUnlatch : IO Unit := do
       check "hover-unlatch: removal without a pointer exit un-latches"
         (!(← src.hovered.get))
 
+/-! ## Drag scroll -/
+
+private def pressT (x y : Float32) (t : UInt64) : PointerEvent :=
+  { eventType := .press, position := ⟨x, y⟩, button := some .left, clicks := 1, timestamp := t }
+
+private def moveT (x y : Float32) (t : UInt64) : PointerEvent :=
+  { eventType := .move, position := ⟨x, y⟩, timestamp := t }
+
+private def releaseT (x y : Float32) (t : UInt64) : PointerEvent :=
+  { eventType := .release, position := ⟨x, y⟩, button := some .left, clicks := 1, timestamp := t }
+
+/-- Drag-to-scroll steals the gesture from a pressed clickable past the
+8dp axis slop: the pending click cancels (pressed interaction unlatched),
+the content scrolls slop-adjusted then 1:1 — while a sub-slop wiggle and a
+cross-axis drag stay clicks that move nothing. -/
+private def dragScrollSteals : IO Unit := do
+  let clicks ← IO.mkRef (0 : Nat)
+  let srcCell ← IO.mkRef (none : Option InteractionSource)
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      let src ← rememberInteractionSource
+      SideEffect (srcCell.set (some src))
+      leaf (Modifier.size 100 300 |>.clickable (clicks.modify (· + 1)) (source := some src))
+  checkEq "drag-scroll: content overflows the viewport" (← st.maxValue) 200
+  -- Press on the clickable, drag up past the slop: steal.
+  let _ ← r.im.pointerEvent (pressAt 50 80)
+  let some src ← srcCell.get | throw (IO.userError "source not captured")
+  check "drag-scroll: pressed on the child" (← src.pressed.get)
+  let _ ← r.im.pointerEvent (moveTo 50 40)
+  checkEq "drag-scroll: past the slop the content scrolls (slop-adjusted)"
+    (← st.value) 32
+  check "drag-scroll: the stolen press unlatched" (!(← src.pressed.get))
+  let _ ← r.im.pointerEvent (moveTo 50 20)
+  checkEq "drag-scroll: further moves scroll 1:1" (← st.value) 52
+  let _ ← r.im.pointerEvent (releaseAt 50 20)
+  checkEq "drag-scroll: the stolen click never fires" (← clicks.get) 0
+  -- Sub-slop wiggle: still a click, nothing scrolls.
+  let _ ← r.im.pointerEvent (pressAt 50 80)
+  let _ ← r.im.pointerEvent (moveTo 50 76)
+  let _ ← r.im.pointerEvent (releaseAt 50 76)
+  checkEq "drag-scroll: a sub-slop press stays a click" (← clicks.get) 1
+  checkEq "drag-scroll: a sub-slop press moves nothing" (← st.value) 52
+  -- Cross-axis drag: not this container's gesture; the click survives.
+  let _ ← r.im.pointerEvent (pressAt 50 80)
+  let _ ← r.im.pointerEvent (moveTo 80 80)
+  let _ ← r.im.pointerEvent (releaseAt 80 80)
+  checkEq "drag-scroll: a cross-axis drag leaves the click alone" (← clicks.get) 2
+  checkEq "drag-scroll: a cross-axis drag moves nothing" (← st.value) 52
+
+/-- Releasing a drag with tracked velocity flings: the offset keeps advancing
+on frame ticks after the release, and a fresh press catches (freezes) it. -/
+private def dragScrollFlingAndCatch : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 5000)
+  -- Uniform 1250 px/s upward drag.
+  let _ ← r.im.pointerEvent (pressT 50 90 0)
+  let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
+  let _ ← r.im.pointerEvent (moveT 50 50 (ms 32))
+  let _ ← r.im.pointerEvent (moveT 50 30 (ms 48))
+  checkEq "fling: dragged before release" (← st.value) 52
+  let _ ← r.im.pointerEvent (releaseT 50 30 (ms 56))
+  advance r.s r.clock (ms 56)      -- starts the fling coroutine
+  r.s.tickFrame (ms 60)            -- fling's t₀
+  r.s.tickFrame (ms 76)            -- first decay step
+  let v1 ← st.value
+  check s!"fling: coasts after release ({v1})" (v1 > 52)
+  r.s.tickFrame (ms 92)
+  let v2 ← st.value
+  check s!"fling: keeps decaying forward ({v1} → {v2})" (v2 > v1)
+  -- The catch: touching down stops the fling where it is.
+  let _ ← r.im.pointerEvent (pressT 50 50 (ms 100))
+  r.s.tickFrame (ms 108)
+  r.s.tickFrame (ms 124)
+  checkEq "fling: a press catches it" (← st.value) v2
+  let _ ← r.im.pointerEvent (releaseT 50 50 (ms 130))
+
+/-- A fling that reaches the end of the range stops there (no oscillation,
+no overshoot past `maxValue`). -/
+private def dragScrollFlingEndStop : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressT 50 90 0)
+  let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
+  let _ ← r.im.pointerEvent (moveT 50 50 (ms 32))
+  let _ ← r.im.pointerEvent (moveT 50 30 (ms 48))
+  let _ ← r.im.pointerEvent (releaseT 50 30 (ms 56))
+  advance r.s r.clock (ms 56)
+  for i in [0:24] do
+    r.s.tickFrame (ms (60 + 16 * i.toUInt64))
+  checkEq "fling: stops pinned at the end of the range" (← st.value) 200
+
+/-- An inner drag gesture (a slider) that consumes its moves owns the
+gesture: the scroll container stands off for its remainder. -/
+private def dragScrollInnerDragWins : IO Unit := do
+  let drags ← IO.mkRef (0 : Nat)
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300 |>.pointerInput 1
+        (detectDragGestures (fun _ _ => drags.modify (· + 1))))
+  let _ ← r.im.pointerEvent (pressAt 50 80)
+  let _ ← r.im.pointerEvent (moveTo 50 70)  -- past the inner 4px slop first
+  let _ ← r.im.pointerEvent (moveTo 50 40)
+  let _ ← r.im.pointerEvent (releaseAt 50 40)
+  check "inner drag: the inner detector dragged" ((← drags.get) ≥ 2)
+  checkEq "inner drag: the scroll container stood off" (← st.value) 0
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -820,6 +932,10 @@ def run : IO Unit := do
   secondaryTapGesture
   longPressGesture
   dragGesture
+  dragScrollSteals
+  dragScrollFlingAndCatch
+  dragScrollFlingEndStop
+  dragScrollInnerDragWins
   focusTraversal
   keyRouting
   textRouting

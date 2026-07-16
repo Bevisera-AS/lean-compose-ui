@@ -124,6 +124,12 @@ structure AppConfig where
   settled surface; desktop compositors don't need it (and a dirty-driven
   loop shouldn't render 60 extra frames per resize there). -/
   surfaceSwapGrace : Bool := false
+  /-- Runs once, right after the window's first successfully *presented*
+  frame — the moment content is actually on the glass (skipped presents
+  don't count). Launchers dismiss a splash/starting window here (LeAndroid
+  holds the Android launch splash until this fires); a desktop shell could
+  reveal a hidden window. Runs on the loop thread. -/
+  onFirstFrame : IO Unit := pure ()
 
 /-- Milliseconds the idle loop sleeps per wait when nothing is scheduled (an
 "∞-ish" cap: rewaiting is cheap and a finite bound is robust against missed
@@ -446,7 +452,13 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := t
   let (list, _) ← DrawScope.record density ctx.root.drawTree
   let presented ← ctx.backend.render config.clearColor list mayBlock
   if presented then
+    let before ← ctx.framesRendered.get
     ctx.framesRendered.modify (· + 1)
+    -- Every render path (single-window step, application step, live-resize
+    -- watch) funnels through here, so this is the one place that knows the
+    -- window's first frame just reached the screen.
+    if before == 0 then
+      config.onFirstFrame
   else
     ctx.requestFrame
 

@@ -288,10 +288,28 @@ private def lifecyclePausesAndResumes : IO Unit := do
     ((← seen.get) == #[.willEnterBackground, .didEnterBackground, .lowMemory,
                        .willEnterForeground, .didEnterForeground, .terminating])
 
+/-- `onFirstFrame` fires exactly once, on the first *presented* frame — not
+at bootstrap, and never again on later redraws. -/
+private def firstFrameHookFires : IO Unit := do
+  let fired ← IO.mkRef (0 : Nat)
+  let color ← MutableState.create Color.red
+  let ctx ← boot <| Tests.restartable 1 do
+    let c ← color.get
+    Box (modifier := Modifier.size 50 50 |>.background c)
+  let hookCfg := { cfg with onFirstFrame := fired.modify (· + 1) }
+  check "firstFrame: not fired at bootstrap" ((← fired.get) == 0)
+  let _ ← step ctx hookCfg
+  check "firstFrame: fired on the first presented frame" ((← fired.get) == 1)
+  color.set .blue
+  let _ ← step ctx hookCfg
+  check "firstFrame: presented again" ((← ctx.framesRendered.get) == 2)
+  check "firstFrame: hook stays fired-once" ((← fired.get) == 1)
+
 /-- The App group. -/
 def run : IO Unit := do
   rendersComposition
   stateWriteRedraws
+  firstFrameHookFires
   resizeRemeasures
   windowSizeMatchesDensity
   quitHandling

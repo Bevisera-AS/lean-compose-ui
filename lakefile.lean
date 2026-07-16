@@ -74,8 +74,9 @@ opaque sdlLinkArgs : Array String
 package «compose-ui» where
   moreLinkArgs := sdlLinkArgs
 
-require sdl from git
-  "https://github.com/philnguyen/lean-sdl3" @ "v0.1.2-alpha"
+-- Local path during the cross-repo module migration; back to a git tag once
+-- the `modules` branches land (tracked in leandroid docs/ROADMAP.md).
+require sdl from ".." / "lean-sdl3"
 
 @[default_target]
 lean_lib Compose

@@ -280,6 +280,11 @@ first click, like Compose Desktop. Normal priority, so the
 def initVideo : IO Unit := do
   Sdl.init .video
   Sdl.setHint Sdl.Hint.mouseFocusClickthrough "1"
+  -- Touch is consumed as native finger events (each finger its own pointer —
+  -- see `InputManager.sdlEvent`); turn both synthesis directions off so a
+  -- tap arrives exactly once, not as finger + synthetic mouse.
+  Sdl.setHint Sdl.Hint.touchMouseEvents "0"
+  Sdl.setHint Sdl.Hint.mouseTouchEvents "0"
 
 /-- Create the SDL window/renderer, scheduler (woken by a registered SDL
 user event), root node, and composition for `content`, wiring both
@@ -403,7 +408,7 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     -- then finishes, which is the system back semantics).
     if !handled && !ke.«repeat» && ke.key == .acBack then
       ctx.requestQuit
-  | .mouseButtonDown _ | .mouseMotion _ =>
+  | .mouseButtonDown _ | .mouseMotion _ | .fingerDown _ | .fingerMotion _ =>
     -- Android (the surfaceSwapGrace platforms) delivers batched pointer
     -- input at the app's own consumption pace: an idle-until-dirty loop
     -- turns a drag into a handful of stale events. Keep frames hot for a

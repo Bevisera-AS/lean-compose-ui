@@ -49,11 +49,17 @@ receiving `pointerInput` region's local coordinates (render pixels; root
 coordinates before dispatch localizes it). `consume`/`isConsumed` close over
 the per-dispatch consumed flag — consuming stops delivery to outer handlers
 (leaf→root bubbling). Mirrors `androidx.compose.ui.input.pointer.PointerEvent`
-+ `PointerInputChange.consume()`, collapsed to the single-pointer desktop
-case. -/
++ `PointerInputChange.consume()`, collapsed to one pointer per stream: each
+pointer (the mouse, or one touch finger) runs its own press→release gesture
+against its own hit path, so a node's handler sees a single coherent
+sequence. -/
 structure PointerEvent where
   eventType : PointerEventType
   position : Offset
+  /-- Which pointer this event belongs to: `0` is the mouse, touch fingers
+  are `fingerId + 1`. The router keys capture and button state by this, so
+  two fingers on two widgets run independent gestures. -/
+  pointerId : UInt64 := 0
   /-- The button that changed on `press`/`release` (`none` otherwise). -/
   button : Option Sdl.MouseButton := none
   /-- Buttons held down *after* the event (tracked by the input manager). -/

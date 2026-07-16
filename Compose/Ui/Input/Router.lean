@@ -6,6 +6,8 @@ public import Compose.Ui.Input.Hover
 public meta import Compose.Ui.Input.Hover
 public import Compose.Ui.Window
 public meta import Compose.Ui.Window
+public import Std.Data.HashMap.Basic
+public meta import Std.Data.HashMap.Basic
 
 public section
 
@@ -23,13 +25,18 @@ translates SDL events (window→render coordinates via
 `WindowContext.inputSink` — `Compose.bootstrap` calls it, mirroring the event
 bridge of `androidx.compose.ui.platform.ComposeSceneMediator`.
 
-**Capture**: a press captures its hit path; while any button is held, moves
-and releases go to the captured path (positions still localized live), so
-drags keep receiving events outside the pressed node and a release outside
-its bounds reaches the press handler (which sees it out of bounds — click
-cancel). Hover diffing is frozen while captured and re-run on the final
-release. A window-leave `exit` cancels the capture (delivered to the captured
-path first, so drags can cancel).
+**Capture**: a press captures its hit path; while any button of that pointer
+is held, its moves and releases go to the captured path (positions still
+localized live), so drags keep receiving events outside the pressed node and
+a release outside its bounds reaches the press handler (which sees it out of
+bounds — click cancel). Capture and button state are keyed by
+`PointerEvent.pointerId` — the mouse is pointer `0`, each touch finger its
+own pointer — so two fingers pressing two widgets run independent gestures.
+Hover is a mouse-only concept: diffing is frozen while the mouse is captured
+and re-run on its final release; finger streams never touch it. A
+window-leave `exit` cancels the mouse capture; a finger's cancel (`exit`
+with its id) cancels just that finger (delivered to the captured path first,
+so drags can cancel).
 
 **Tree changes**: the manager owns the root's detach hook (focus and hover
 state referencing removed nodes is released — see `nodeDetached`) and chains
@@ -48,12 +55,14 @@ structure InputManager where
   root : LayoutNode
   focus : FocusManager
   hover : HoverState
-  /-- Hit path captured by the last press; non-empty while a button is held. -/
-  capture : IO.Ref (Array HitTarget)
-  /-- Buttons currently held (tracked from press/release events so synthetic
-  tests need no SDL mouse state). -/
-  buttonsHeld : IO.Ref Sdl.MouseButtonFlags
-  /-- Last pointer position in render px (window-leave synthesizes its `exit`
+  /-- Hit path captured by each pointer's press, keyed by
+  `PointerEvent.pointerId`; an entry lives while that pointer holds a
+  button. -/
+  captures : IO.Ref (Std.HashMap UInt64 (Array HitTarget))
+  /-- Buttons currently held per pointer (tracked from press/release events
+  so synthetic tests need no SDL mouse state). -/
+  buttonsHeld : IO.Ref (Std.HashMap UInt64 Sdl.MouseButtonFlags)
+  /-- Last *mouse* position in render px (window-leave synthesizes its `exit`
   here; scroll fallback position). -/
   lastPos : IO.Ref Offset
   /-- A cursor position is known and inside the window (set by
@@ -88,7 +97,7 @@ layout changes). Skipped while a press capture holds hover frozen (the final
 release rediffs) or when no in-window position is known. -/
 def syncHover (im : InputManager) : IO Unit := do
   unless ← im.pointerInside.get do return
-  unless (← im.capture.get).isEmpty do return
+  if (← im.captures.get).contains 0 then return
   let pos ← im.lastPos.get
   let _ ← im.hover.update im.root { eventType := .move, position := pos } (some pos)
 
@@ -127,8 +136,8 @@ def create (root : LayoutNode) (cursor : CursorSetter)
     { root, sched
       focus := ← FocusManager.create root onFocusTarget
       hover := ← HoverState.create cursor
-      capture := ← IO.mkRef #[]
-      buttonsHeld := ← IO.mkRef .none
+      captures := ← IO.mkRef {}
+      buttonsHeld := ← IO.mkRef {}
       lastPos := ← IO.mkRef .zero
       pointerInside := ← IO.mkRef false
       hoverSyncPending := ← IO.mkRef false
@@ -143,15 +152,15 @@ def create (root : LayoutNode) (cursor : CursorSetter)
       im.scheduleHoverSync
   return im
 
-/-- Hand the in-flight gesture to the captured-path node `nid` (a
-`PointerEvent.steal` request from one of its handlers): targets *inner* to
-it are cut from the capture and receive a synthetic `exit` — the same
-gesture-cancel a window leave delivers — so a pending press (a clickable
-under the finger when a drag-scroll takes over) cancels instead of clicking.
-Outer targets stay captured (`PointerPass.final` observers there keep
-watching the gesture). -/
-def stealCapture (im : InputManager) (nid : Nat) (pos : Offset) : IO Unit := do
-  let path ← im.capture.get
+/-- Hand pointer `pid`'s in-flight gesture to its captured-path node `nid`
+(a `PointerEvent.steal` request from one of its handlers): targets *inner*
+to it are cut from that pointer's capture and receive a synthetic `exit` —
+the same gesture-cancel a window leave delivers — so a pending press (a
+clickable under the finger when a drag-scroll takes over) cancels instead of
+clicking. Outer targets stay captured (`PointerPass.final` observers there
+keep watching the gesture). -/
+def stealCapture (im : InputManager) (pid : UInt64) (nid : Nat) (pos : Offset) : IO Unit := do
+  let path := (← im.captures.get).getD pid #[]
   let mut cut : Option Nat := none
   for i in [0:path.size] do
     if cut.isNone then
@@ -159,8 +168,8 @@ def stealCapture (im : InputManager) (nid : Nat) (pos : Offset) : IO Unit := do
   let some i := cut | return
   let inner := path.extract (i + 1) path.size
   unless inner.isEmpty do
-    im.capture.set (path.extract 0 (i + 1))
-    let _ ← dispatchToPath inner { eventType := .exit, position := pos }
+    im.captures.modify (·.insert pid (path.extract 0 (i + 1)))
+    let _ ← dispatchToPath inner { eventType := .exit, position := pos, pointerId := pid }
 
 /-- Mask of a possibly-absent button. -/
 private def maskOf : Option Sdl.MouseButton → Sdl.MouseButtonFlags
@@ -168,48 +177,61 @@ private def maskOf : Option Sdl.MouseButton → Sdl.MouseButtonFlags
   | none => .none
 
 /-- Route one already-translated pointer event (position in render-px root
-coordinates; `buttons` is filled in from the tracked state). Returns whether
-some handler consumed it. The dispatch entry point tests drive directly. -/
+coordinates; `buttons` is filled in from the tracked state, both keyed by
+`ev.pointerId`). Returns whether some handler consumed it. The dispatch
+entry point tests drive directly. Hover and the last-known cursor position
+are mouse concepts (pointer `0` only). -/
 def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
+  let pid := ev.pointerId
+  let isMouse := pid == 0
   match ev.eventType with
   | .press =>
-    im.lastPos.set ev.position
-    im.pointerInside.set true
-    let heldBefore ← im.buttonsHeld.get
-    let held ← im.buttonsHeld.modifyGet fun h =>
-      let h' := h ||| maskOf ev.button
-      (h', h')
+    if isMouse then
+      im.lastPos.set ev.position
+      im.pointerInside.set true
+    let heldBefore := (← im.buttonsHeld.get).getD pid .none
+    let held := heldBefore ||| maskOf ev.button
+    im.buttonsHeld.modify (·.insert pid held)
     if heldBefore == .none then
       let path ← im.root.hitTest ev.position
-      im.capture.set path
+      im.captures.modify (·.insert pid path)
       -- Click-to-focus before delivery: handlers observe the updated focus.
       im.focus.focusOnPress path
       dispatchToPath path { ev with buttons := held }
     else
       -- A second button mid-gesture stays with the captured path.
-      dispatchToPath (← im.capture.get) { ev with buttons := held }
+      dispatchToPath ((← im.captures.get).getD pid #[]) { ev with buttons := held }
   | .release =>
-    im.lastPos.set ev.position
-    im.pointerInside.set true
-    let held ← im.buttonsHeld.modifyGet fun h =>
-      let h' := h &&& ~~~(maskOf ev.button)
-      (h', h')
-    let path ← im.capture.get
+    if isMouse then
+      im.lastPos.set ev.position
+      im.pointerInside.set true
+    let held := ((← im.buttonsHeld.get).getD pid .none) &&& ~~~(maskOf ev.button)
+    im.buttonsHeld.modify fun h =>
+      if held == .none then h.erase pid else h.insert pid held
+    let path := (← im.captures.get).getD pid #[]
     let path ← if path.isEmpty then im.root.hitTest ev.position else pure path
     let consumed ← dispatchToPath path { ev with buttons := held }
     if held == .none then
-      im.capture.set #[]
-      -- Hover was frozen during the capture; rediff at the release position.
-      let _ ← im.hover.update im.root ev (some ev.position)
+      im.captures.modify (·.erase pid)
+      -- Mouse hover was frozen during the capture; rediff at the release
+      -- position. Fingers have no hover to restore.
+      if isMouse then
+        let _ ← im.hover.update im.root ev (some ev.position)
     return consumed
   | .move =>
-    im.lastPos.set ev.position
-    im.pointerInside.set true
-    let ev := { ev with buttons := ← im.buttonsHeld.get }
-    let captured ← im.capture.get
+    if isMouse then
+      im.lastPos.set ev.position
+      im.pointerInside.set true
+    let ev := { ev with buttons := (← im.buttonsHeld.get).getD pid .none }
+    let captured := (← im.captures.get).getD pid #[]
     if captured.isEmpty then
-      let path ← im.hover.update im.root ev (some ev.position)
-      dispatchToPath path ev
+      if isMouse then
+        let path ← im.hover.update im.root ev (some ev.position)
+        dispatchToPath path ev
+      else
+        -- A finger only exists while touching: an uncaptured finger move
+        -- (its press path vanished mid-gesture) has nowhere to go.
+        return false
     else
       -- Captured moves may carry a takeover request (`PointerEvent.steal`):
       -- a drag-scroll passing its touch slop claims the gesture from the
@@ -217,20 +239,24 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       let stealSlot ← IO.mkRef (none : Option Nat)
       let consumed ← dispatchToPath captured ev (stealSlot := some stealSlot)
       if let some nid ← stealSlot.get then
-        im.stealCapture nid ev.position
+        im.stealCapture pid nid ev.position
       return consumed
   | .scroll =>
     dispatchToPath (← im.root.hitTest ev.position) ev
   | .exit =>
-    -- Pointer left the window: cancel any capture (delivered as `exit` so
-    -- gestures like drag can cancel), then clear the hover path.
-    im.pointerInside.set false
-    let captured ← im.capture.get
+    -- Pointer gone: the mouse left the window, or a finger's gesture was
+    -- cancelled (the system stole it — e.g. Android's back-gesture monitor).
+    -- Cancel that pointer's capture (delivered as `exit` so gestures like
+    -- drag can cancel); only a mouse leave also clears the hover path.
+    if isMouse then
+      im.pointerInside.set false
+    let captured := (← im.captures.get).getD pid #[]
     unless captured.isEmpty do
       let _ ← dispatchToPath captured ev
-      im.capture.set #[]
-      im.buttonsHeld.set .none
-    let _ ← im.hover.update im.root ev none
+      im.captures.modify (·.erase pid)
+      im.buttonsHeld.modify (·.erase pid)
+    if isMouse then
+      let _ ← im.hover.update im.root ev none
     return true
   | .enter =>
     return false
@@ -276,9 +302,20 @@ def textEditing (im : InputManager) (text : String) (start length : Int32) : IO 
 end InputManager
 
 /-- Translate one SDL event and route it through the manager (`conv` maps
-window coordinates to render px). `true` = the event was input and handled. -/
+window coordinates to render px; `winSize` is the window size in the same
+coordinates finger events are normalized against — touch positions are
+`0..1` fractions of it). `true` = the event was input and handled.
+
+Touch fingers arrive as their own pointer streams (`fingerId + 1`; the mouse
+is pointer `0`) — `initVideo` turns SDL's touch→mouse synthesis off, so a
+tap is delivered exactly once. A finger has no button; its contact is
+modeled as a left press so the existing gesture detectors run unchanged. -/
 def InputManager.sdlEvent (im : InputManager)
-    (conv : Float32 → Float32 → IO Offset) (e : Sdl.Event) : IO Bool := do
+    (conv : Float32 → Float32 → IO Offset) (e : Sdl.Event)
+    (winSize : IO (Float32 × Float32) := pure (1, 1)) : IO Bool := do
+  let fingerPos (fe : Sdl.TouchFingerEvent) : IO Offset := do
+    let (w, h) ← winSize
+    conv (fe.x * w) (fe.y * h)
   match e with
   | .mouseMotion me =>
     im.pointerEvent
@@ -309,6 +346,27 @@ def InputManager.sdlEvent (im : InputManager)
     im.textInput te.text
   | .textEditing te =>
     im.textEditing te.text te.start te.length
+  | .fingerDown fe =>
+    im.pointerEvent
+      { eventType := .press, position := ← fingerPos fe
+        pointerId := fe.fingerId.val + 1, button := some .left, clicks := 1
+        mods := ← Sdl.getModState, timestamp := fe.timestamp }
+  | .fingerMotion fe =>
+    im.pointerEvent
+      { eventType := .move, position := ← fingerPos fe
+        pointerId := fe.fingerId.val + 1
+        mods := ← Sdl.getModState, timestamp := fe.timestamp }
+  | .fingerUp fe =>
+    im.pointerEvent
+      { eventType := .release, position := ← fingerPos fe
+        pointerId := fe.fingerId.val + 1, button := some .left, clicks := 1
+        mods := ← Sdl.getModState, timestamp := fe.timestamp }
+  | .fingerCanceled fe =>
+    -- The system stole the gesture (Android's back-gesture / notification
+    -- monitors): cancel, don't click.
+    im.pointerEvent
+      { eventType := .exit, position := ← fingerPos fe
+        pointerId := fe.fingerId.val + 1, timestamp := fe.timestamp }
   | .windowMouseLeave _ =>
     im.pointerEvent { eventType := .exit, position := ← im.lastPos.get }
   | _ => return false
@@ -342,11 +400,14 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
   let conv := fun x y => do
     let (rx, ry) ← ctx.backend.coordinatesFromWindow x y
     pure (⟨rx, ry⟩ : Offset)
+  let winSize := do
+    let (ww, wh) ← ctx.window.getSize
+    pure (ww.toFloat32, wh.toFloat32)
   -- Modal overlays (Dialog) scope Tab traversal to their subtree and restore
   -- prior focus on close, through the focus manager.
   ctx.modalFocusHook.set fun id opening =>
     if opening then im.focus.pushModalScope id else im.focus.popModalScope id
-  ctx.inputSink.set (im.sdlEvent conv)
+  ctx.inputSink.set (im.sdlEvent conv (winSize := winSize))
   -- M14b: publish the focus manager so composition-side FocusRequesters
   -- (rememberFocusRequester) can reach it.
   ctx.focusManager.set (some im.focus)

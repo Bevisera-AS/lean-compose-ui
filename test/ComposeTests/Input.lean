@@ -576,6 +576,83 @@ private def clickableCancelMt : IO Unit := do
       check "press-cancel MT: enabled flip mid-press resets pressed"
         (!(← src.pressed.get))
 
+/-! ## Multi-pointer (touch) -/
+
+private def fingerPress (pid : UInt64) (x y : Float32) : PointerEvent :=
+  { eventType := .press, position := ⟨x, y⟩, pointerId := pid
+    button := some .left, clicks := 1 }
+
+private def fingerRelease (pid : UInt64) (x y : Float32) : PointerEvent :=
+  { eventType := .release, position := ⟨x, y⟩, pointerId := pid
+    button := some .left, clicks := 1 }
+
+private def fingerCancel (pid : UInt64) (x y : Float32) : PointerEvent :=
+  { eventType := .exit, position := ⟨x, y⟩, pointerId := pid }
+
+/-- Two fingers on two clickables run independent gestures: the second press
+hit-tests its own target (not the first finger's captured path), both are
+pressed at once, and each release fires its own click. -/
+private def multiTouchIndependentPresses : IO Unit := do
+  let aClicks ← IO.mkRef (0 : Nat)
+  let bClicks ← IO.mkRef (0 : Nat)
+  let srcs ← IO.mkRef (#[] : Array InteractionSource)
+  let r ← rig <| Row do
+    let srcA ← rememberInteractionSource
+    let srcB ← rememberInteractionSource
+    SideEffect (srcs.set #[srcA, srcB])
+    leaf (Modifier.size 40 40 |>.clickable (aClicks.modify (· + 1)) (source := some srcA))
+    leaf (Modifier.size 40 40 |>.clickable (bClicks.modify (· + 1)) (source := some srcB))
+  let #[srcA, srcB] ← srcs.get | throw (IO.userError "interaction sources not captured")
+  let _ ← r.im.pointerEvent (fingerPress 1 10 10)   -- finger 1 on A
+  let _ ← r.im.pointerEvent (fingerPress 2 50 10)   -- finger 2 on B, mid-gesture
+  check "two fingers: A pressed" (← srcA.pressed.get)
+  check "two fingers: B pressed at the same time" (← srcB.pressed.get)
+  let _ ← r.im.pointerEvent (fingerRelease 1 10 10)
+  check "two fingers: releasing A leaves B held" (← srcB.pressed.get)
+  check "two fingers: A released" (!(← srcA.pressed.get))
+  let _ ← r.im.pointerEvent (fingerRelease 2 50 10)
+  checkEq "two fingers: A clicked once" (← aClicks.get) 1
+  checkEq "two fingers: B clicked once" (← bClicks.get) 1
+
+/-- A finger's system-cancel (`exit` carrying its id — Android's gesture
+monitor stealing the touch) cancels only that finger's press, without a
+click; the other finger's gesture keeps running. -/
+private def multiTouchCancel : IO Unit := do
+  let aClicks ← IO.mkRef (0 : Nat)
+  let bClicks ← IO.mkRef (0 : Nat)
+  let srcs ← IO.mkRef (#[] : Array InteractionSource)
+  let r ← rig <| Row do
+    let srcA ← rememberInteractionSource
+    let srcB ← rememberInteractionSource
+    SideEffect (srcs.set #[srcA, srcB])
+    leaf (Modifier.size 40 40 |>.clickable (aClicks.modify (· + 1)) (source := some srcA))
+    leaf (Modifier.size 40 40 |>.clickable (bClicks.modify (· + 1)) (source := some srcB))
+  let #[srcA, srcB] ← srcs.get | throw (IO.userError "interaction sources not captured")
+  let _ ← r.im.pointerEvent (fingerPress 1 10 10)
+  let _ ← r.im.pointerEvent (fingerPress 2 50 10)
+  let _ ← r.im.pointerEvent (fingerCancel 1 10 10)
+  check "finger cancel: A press cancelled" (!(← srcA.pressed.get))
+  check "finger cancel: B still held" (← srcB.pressed.get)
+  let _ ← r.im.pointerEvent (fingerRelease 2 50 10)
+  checkEq "finger cancel: A never clicked" (← aClicks.get) 0
+  checkEq "finger cancel: B clicked" (← bClicks.get) 1
+
+/-- The mouse (pointer 0) and a finger are independent: a finger press on B
+while the mouse holds A neither joins the mouse's capture nor disturbs its
+click. -/
+private def mouseAndFingerCoexist : IO Unit := do
+  let aClicks ← IO.mkRef (0 : Nat)
+  let bClicks ← IO.mkRef (0 : Nat)
+  let r ← rig <| Row do
+    leaf (Modifier.size 40 40 |>.clickable (aClicks.modify (· + 1)))
+    leaf (Modifier.size 40 40 |>.clickable (bClicks.modify (· + 1)))
+  let _ ← r.im.pointerEvent (pressAt 10 10)          -- mouse on A
+  let _ ← r.im.pointerEvent (fingerPress 1 50 10)    -- finger on B
+  let _ ← r.im.pointerEvent (releaseAt 10 10)
+  let _ ← r.im.pointerEvent (fingerRelease 1 50 10)
+  checkEq "mouse+finger: mouse clicked A" (← aClicks.get) 1
+  checkEq "mouse+finger: finger clicked B" (← bClicks.get) 1
+
 /-! ## pointerInput lifecycle -/
 
 /-- The handler coroutine relaunches when the key changes (predecessor
@@ -696,6 +773,15 @@ private def sdlTranslation : IO Unit := do
   send (.windowMouseLeave ⟨0, ⟨0⟩, 0, 0⟩)
   checkEq "sdl: window leave restores the cursor" ((← cursors.get).map (·.val))
     #[Sdl.SystemCursor.pointer.val, Sdl.SystemCursor.default.val]
+  -- A touch tap through SDL finger events: normalized coordinates scale by
+  -- the window size (200×150 here), and down+up land as one click.
+  send (.fingerDown ⟨0, ⟨1⟩, ⟨0⟩, 0.05, 10.0 / 150.0, 0, 0, 1, ⟨0⟩⟩)
+  send (.fingerUp ⟨0, ⟨1⟩, ⟨0⟩, 0.05, 10.0 / 150.0, 0, 0, 1, ⟨0⟩⟩)
+  checkEq "sdl: finger tap clicks" (← clicks.get) 3
+  -- A cancelled finger (gesture stolen by the system) does not click.
+  send (.fingerDown ⟨0, ⟨1⟩, ⟨0⟩, 0.05, 10.0 / 150.0, 0, 0, 1, ⟨0⟩⟩)
+  send (.fingerCanceled ⟨0, ⟨1⟩, ⟨0⟩, 0.05, 10.0 / 150.0, 0, 0, 1, ⟨0⟩⟩)
+  checkEq "sdl: cancelled finger does not click" (← clicks.get) 3
   let _ ← im.pointerEvent (moveTo 0 0)   -- keep `im` alive for the whole test
   (← ctx.composition).dispose
 
@@ -943,6 +1029,9 @@ def run : IO Unit := do
   clickableDisabled
   clickableCancelResetsPressed
   clickableCancelMt
+  multiTouchIndependentPresses
+  multiTouchCancel
+  mouseAndFingerCoexist
   pointerInputLifecycle
   missingScheduler
   raceSemantics

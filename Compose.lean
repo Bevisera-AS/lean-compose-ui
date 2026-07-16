@@ -18,6 +18,7 @@ import Compose.Animation.Easing
 import Compose.Animation.Vector
 import Compose.Animation.Spring
 import Compose.Animation.Spec
+import Compose.Animation.Decay
 import Compose.Animation.Animatable
 import Compose.Animation.AnimateAsState
 import Compose.Animation.Transition
@@ -41,6 +42,7 @@ import Compose.Ui.Draw.Gpu.Shaders
 import Compose.Ui.Draw.Gpu.TextEngine
 import Compose.Ui.Draw.Gpu.Renderer
 import Compose.Ui.Draw.GpuBackend
+import Compose.Ui.Input.Velocity
 import Compose.Ui.Input.Pointer
 import Compose.Ui.Input.Keyboard
 import Compose.Ui.Semantics

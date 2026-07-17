@@ -440,6 +440,42 @@ private def imeComposition : IO Unit := do
   r.pump
   checkEq "ime: empty setComposition cancels" (← value.get) (⟨"ABC", .caret 3, none⟩)
 
+/-- The Android IME stream contract: SDL's `InputConnection` greedily
+commits provisional text and repairs recompositions as backspace *keys*
+plus fresh commits (Vietnamese Telex "Mo" → "Mộ" arrives as ⌫ + "ộ") —
+composition events never reach the app on Android. The field must apply
+the interleaved key/text stream in order, and a word typed after
+backspacing to empty must never resurrect old text. -/
+private def imeGreedyCommitRepair : IO Unit := do
+  let (r, value, _) ← fieldRig
+  r.click 100 20
+  r.pump
+  -- "Một" via Telex repair: M, o, ⌫+ộ, t.
+  r.text "M"
+  r.text "o"
+  r.key .backspace
+  r.text "ộ"
+  r.pump
+  checkEq "ime repair: backspace+commit recomposes in place" (← value.get)
+    (⟨"Mộ", .caret 4, none⟩)
+  r.text "t"
+  r.pump
+  checkEq "ime repair: the word completes" (← value.get)
+    (⟨"Một", .caret 5, none⟩)
+  -- Backspace to empty (three codepoints), then a fresh word: nothing of
+  -- the old one may leak back.
+  r.key .backspace
+  r.key .backspace
+  r.key .backspace
+  r.pump
+  checkEq "ime repair: backspaced to empty" (← value.get) (⟨"", .caret 0, none⟩)
+  r.text "H"
+  r.text "a"
+  r.text "i"
+  r.pump
+  checkEq "ime repair: a fresh word starts clean" (← value.get)
+    (⟨"Hai", .caret 3, none⟩)
+
 /-- IME session lifecycle: `startTextInput` on focusing a field,
 `stopTextInput` on leaving; the caret area follows the caret. -/
 private def imeSession : IO Unit := do
@@ -626,6 +662,7 @@ def run : IO Unit := do
   mouseSelection
   clipboardOps
   imeComposition
+  imeGreedyCommitRepair
   imeSession
   caretBlink
   autoScroll

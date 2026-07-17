@@ -94,6 +94,7 @@ private def kindName : PointerEventType → String
   | .scroll => "scroll"
   | .enter => "enter"
   | .exit => "exit"
+  | .pinch => "pinch"
 
 /-- Event-logging `pointerInput` handler: logs events of the given types
 (empty = all), optionally with the local position, consuming the types in
@@ -1139,6 +1140,35 @@ private def transformCancelDrops : IO Unit := do
   let _ ← r.im.pointerEvent (fingerRelease 1 40 50)
   let _ ← r.im.pointerEvent (fingerRelease 2 62 50)
 
+/-- SDL trackpad pinch events route to the transformable under the cursor —
+scale-only, no slop — but never while a finger gesture is live (Android
+sends both streams for one pinch; consuming both would double-apply). -/
+private def transformPinchEventRouting : IO Unit := do
+  let calls ← IO.mkRef (#[] : Array TransformCall)
+  let r ← rig <| Box do
+    let st ← rememberTransformableState fun c pan zoom rot =>
+      calls.modify (·.push ⟨c, pan, zoom, rot⟩)
+    leaf (Modifier.size 100 100 |>.transformable st)
+  let conv (x y : Float32) : IO Offset := pure ⟨x, y⟩
+  -- Cursor over the element: a pinch step fires directly.
+  let _ ← r.im.pointerEvent (moveTo 50 50)
+  let _ ← r.im.sdlEvent conv (.pinchUpdate ⟨0, 1.5, ⟨0⟩⟩)
+  let cs ← calls.get
+  checkEq "pinch event: routed at the cursor" cs.size 1
+  check s!"pinch event: scale carries ({cs[0]!.zoom})" (approxF cs[0]!.zoom 1.5)
+  checkEq "pinch event: at the last mouse position" cs[0]!.centroid ⟨50, 50⟩
+  -- Begin/end are swallowed without effect.
+  let _ ← r.im.sdlEvent conv (.pinchBegin ⟨0, 1, ⟨0⟩⟩)
+  let _ ← r.im.sdlEvent conv (.pinchEnd ⟨0, 1, ⟨0⟩⟩)
+  checkEq "pinch event: begin/end carry nothing" (← calls.get).size 1
+  -- A live finger gesture gates the duplicate stream off.
+  let _ ← r.im.pointerEvent (fingerPress 1 30 50)
+  let _ ← r.im.sdlEvent conv (.pinchUpdate ⟨0, 2.0, ⟨0⟩⟩)
+  checkEq "pinch event: gated while a finger is captured" (← calls.get).size 1
+  let _ ← r.im.pointerEvent (fingerRelease 1 30 50)
+  let _ ← r.im.sdlEvent conv (.pinchUpdate ⟨0, 1.25, ⟨0⟩⟩)
+  checkEq "pinch event: flows again after the finger lifts" (← calls.get).size 2
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -1162,6 +1192,7 @@ def run : IO Unit := do
   transformZoomFires
   transformStealsFromScrollable
   transformCancelDrops
+  transformPinchEventRouting
   focusTraversal
   keyRouting
   textRouting

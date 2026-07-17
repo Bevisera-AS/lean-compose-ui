@@ -42,6 +42,11 @@ inductive PointerEventType where
   | scroll
   | enter
   | exit
+  /-- A trackpad pinch step (`zoomDelta` carries the scale change), dispatched
+  by hit test at the cursor — SDL's own gesture recognizer, routed only when
+  no finger gesture is live (fingers carry pinches themselves; see
+  `detectTransformGestures`). -/
+  | pinch
   deriving Repr, BEq, Inhabited
 
 /-- One pointer event as delivered to handlers. `position` is in the
@@ -71,6 +76,9 @@ structure PointerEvent where
   opposite ways: positive `y` scrolls toward the content start (up), positive
   `x` toward the content end (right). -/
   scrollDelta : Offset := .zero
+  /-- Multiplicative scale change since the previous pinch step (`pinch`
+  only; `1` elsewhere). -/
+  zoomDelta : Float32 := 1
   /-- Keyboard modifiers held at event time. -/
   mods : Sdl.Keymod := .none
   /-- SDL timestamp, nanoseconds. -/

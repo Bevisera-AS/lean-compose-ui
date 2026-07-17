@@ -243,6 +243,8 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       return consumed
   | .scroll =>
     dispatchToPath (← im.root.hitTest ev.position) ev
+  | .pinch =>
+    dispatchToPath (← im.root.hitTest ev.position) ev
   | .exit =>
     -- Pointer gone: the mouse left the window, or a finger's gesture was
     -- cancelled (the system stole it — e.g. Android's back-gesture monitor).
@@ -369,6 +371,18 @@ def InputManager.sdlEvent (im : InputManager)
         pointerId := fe.fingerId.val + 1, timestamp := fe.timestamp }
   | .windowMouseLeave _ =>
     im.pointerEvent { eventType := .exit, position := ← im.lastPos.get }
+  | .pinchUpdate pe =>
+    -- Android delivers finger streams *and* pinch events for one gesture
+    -- (SDLSurface feeds both) — fingers own it whenever any is captured, so
+    -- the routed event is effectively the desktop-trackpad path (where no
+    -- finger events exist and the cursor marks the target).
+    if (← im.captures.get).keys.any (· != 0) then return true
+    im.pointerEvent
+      { eventType := .pinch, position := ← im.lastPos.get
+        zoomDelta := pe.scale, timestamp := pe.timestamp }
+  | .pinchBegin _ | .pinchEnd _ =>
+    -- Only the scale steps carry information; the bracketing is implicit.
+    return true
   | _ => return false
 
 /-- Build the window's input pipeline and set it as the

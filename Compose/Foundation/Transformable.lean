@@ -177,12 +177,20 @@ where
     | .release | .exit => ptrs.erase ev.pointerId
     | _ => ptrs
   /-- Fewer than two pointers down: keep the roster current; a second press
-  arms the slop race. -/
+  arms the slop race. A routed trackpad `pinch` step (see the router — only
+  delivered while no finger gesture is live) fires directly, scale-only at
+  the cursor: SDL's recognizer already applied its own threshold, so there is
+  no slop to race. -/
   idle (ptrs : Std.HashMap UInt64 Offset) : UiTask Unit := do
     let ev ← scope.awaitEvent
     match ev.eventType with
     | .move =>
       idle (if ptrs.contains ev.pointerId then ptrs.insert ev.pointerId ev.position else ptrs)
+    | .pinch =>
+      if ptrs.size < 2 then
+        ev.consume
+        onGesture ev.position .zero ev.zoomDelta 0
+      idle ptrs
     | _ =>
       let ptrs := fold ptrs ev
       if ptrs.size ≥ 2 then pending ptrs 1 0 .zero else idle ptrs

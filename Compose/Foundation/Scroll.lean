@@ -119,11 +119,15 @@ structure ScrollState where
   scroll), so a running scroll animation stands down when a newer mutation
   starts — the single-threaded analog of Compose's `MutatorMutex`. -/
   mutationGen : IO.Ref Nat
-  /-- The *visible* overscroll displacement in px along the axis, added to
-  the content placement on top of `-value` (observable): `> 0` = content
-  displaced toward larger coordinates (pulled past the start), `< 0` past
-  the end. Written by the drag rubber-band and the bounce spring (see
-  `settleOverscroll`); `0` whenever the content is inside its range. -/
+  /-- The overscroll displacement in px along the axis (observable): `> 0` =
+  pulled past the start, `< 0` past the end, `0` inside the range. Its
+  meaning depends on the container's `OverscrollMode`: in **bounce** mode it
+  is the *visible* rubber-banded displacement, added to the content
+  placement on top of `-value` (written by the drag rubber-band and
+  `settleOverscroll`); in **stretch** mode it is the *raw* pull distance
+  (EdgeEffect's `mDistance · viewport`, clamped to ± a viewport) — the
+  placement ignores it and the draw-time warp derives its damped intensity
+  via `stretchIntensity` (written by the drag and `settleStretch`). -/
   overscrollState : MutableState Float32
 
 instance : Nonempty ScrollState :=
@@ -251,21 +255,65 @@ any newer mutation stands it down at its next frame. -/
 def settleOverscroll (s : ScrollState) (v0 : Float32 := 0) : UiTask Unit := do
   s.settleOverscrollFrom (← s.interrupt) v0
 
+/-- The stretch-mode release/absorb settle under an already-claimed mutation
+generation (`fling`'s edge absorb continues into it without re-interrupting
+itself): per frame, one `stretchSettleStep` on the band's magnitude (the
+sign factors out; `v0` is the overscroll-space velocity, px/s — an absorb
+from rest grows the band before the spring pulls it home). Sub-ms frames
+merge into the next step (EdgeEffect's `deltaT` guard) and ΔT clamps to
+≤ 0.1 s — a backgrounded app's resume gap must not feed the near-critical
+closed form a huge step (AOSP is frame-locked and needs no clamp). A press
+interrupts via the generation, freezing the band mid-flight (the catch);
+the next pull continues from the frozen value. -/
+partial def settleStretchFrom (s : ScrollState) (myGen : Nat)
+    (v0 : Float32 := 0) : UiTask Unit := do
+  let o0 ← s.overscrollState.cell.get
+  if o0 == 0 && v0 == 0 then return
+  let sign : Float32 :=
+    if o0 != 0 then (if o0 < 0 then -1 else 1)
+    else (if v0 < 0 then -1 else 1)
+  let t0 ← UiTask.awaitFrame
+  loop sign o0.abs (v0 * sign) t0
+where
+  loop (sign x v : Float32) (prev : UInt64) : UiTask Unit := do
+    let ns ← UiTask.awaitFrame
+    if (← s.mutationGen.get) != myGen then return
+    let dtNs := if ns ≤ prev then 0 else ns - prev
+    if dtNs < 1000000 then
+      loop sign x v prev
+    else
+      let dt := min ((dtNs.toFloat / 1e9).toFloat32) 0.1
+      let (x', v', settled) := stretchSettleStep x v dt
+        (← s.viewportSizeState.cell.get)
+      if settled then
+        s.overscrollState.set 0
+      else
+        s.overscrollState.set (sign * x')
+        loop sign x' v' ns
+
+/-- Settle the stretch band back to rest with the EdgeEffect spring
+(ω₀ = 24.657, ζ = 0.98, linear-glide endgame), carrying an initial
+overscroll-space velocity `v0` (px/s — a fling absorb passes the
+`stretchAbsorbFactor`-boosted residual). Interruptible like `fling`. -/
+def settleStretch (s : ScrollState) (v0 : Float32 := 0) : UiTask Unit := do
+  s.settleStretchFrom (← s.interrupt) v0
+
 /-- Decay-animate the offset from its current position with initial
 `velocity` (px/s, positive = toward the end), driven by the frame clock —
 the fling a drag-scroll hands off to on release. Interruptible like
 `animateScrollTo` (any newer mutation stands it down at its next frame);
-stops early on reaching either end of the range — with `bounce`, the
-residual velocity at the edge carries into the overscroll spring instead
-(overshoot-then-settle; a *nested* fling that edges out mid-flight bounces
-locally rather than handing the residual to a parent, the documented cut
-alongside mid-flight handoff). The default curve is Android's spline decay
-at mdpi (the drag handler passes the real display density); pass
-`ExponentialDecay.spec` for the exponential curve. Mirrors the fling half
-of `ScrollableState` + `DefaultFlingBehavior`. -/
+stops early on reaching either end of the range — the residual velocity at
+the edge carries into the `overscroll` mode's settle instead: the Cupertino
+bounce spring (`.bounce`) or the EdgeEffect stretch absorb (`.stretch`,
+velocity ×13 per `ON_ABSORB_VELOCITY_ADJUSTMENT`). (A *nested* fling that
+edges out mid-flight bounces locally rather than handing the residual to a
+parent, the documented cut alongside mid-flight handoff.) The default curve
+is Android's spline decay at mdpi (the drag handler passes the real display
+density); pass `ExponentialDecay.spec` for the exponential curve. Mirrors
+the fling half of `ScrollableState` + `DefaultFlingBehavior`. -/
 partial def fling (s : ScrollState) (velocity : Float32)
-    (decay : DecaySpec := SplineDecay.spec {}) (bounce : Bool := false) :
-    UiTask Unit := do
+    (decay : DecaySpec := SplineDecay.spec {})
+    (overscroll : OverscrollMode := .none) : UiTask Unit := do
   if velocity.abs ≤ decay.absVelocityThreshold then return
   let myGen ← s.interrupt
   let x0 ← s.valueState.cell.get
@@ -282,11 +330,14 @@ where
     s.scrollTo target
     -- Done, or ran into an end of the range (`scrollTo` clamped the rest).
     if target < 0 || target > (← s.maxValueState.cell.get) then
-      -- Edge hit: with bounce, the remaining momentum stretches the band
-      -- (same claimed generation — the spring is this fling's tail; the
-      -- value pins, so visual continuity puts −v into overscroll space).
-      if bounce then
-        s.settleOverscrollFrom myGen (-(decay.velocityAt velocity t))
+      -- Edge hit: the remaining momentum feeds the mode's band (same claimed
+      -- generation — the settle is this fling's tail; the value pins, so
+      -- visual continuity puts −v into overscroll space).
+      match overscroll with
+      | .bounce => s.settleOverscrollFrom myGen (-(decay.velocityAt velocity t))
+      | .stretch =>
+        s.settleStretchFrom myGen (stretchAbsorbFactor * (-(decay.velocityAt velocity t)))
+      | .none => pure ()
     else
       unless t ≥ dur do loop myGen x0 t0 dur
 
@@ -301,7 +352,8 @@ def rememberScrollState (initial : Float32 := 0) : Composable ScrollState :=
 scroll axis unbounded, viewport = the content size clamped into the incoming
 constraints, metrics published, value re-clamped, content placed at
 `-value` on the axis. -/
-private def scrollLayoutBlock (state : ScrollState) (vertical : Bool) : CustomLayout :=
+private def scrollLayoutBlock (state : ScrollState) (vertical : Bool)
+    (mode : OverscrollMode) : CustomLayout :=
   ⟨fun _ c measureInner => do
     let innerC :=
       if vertical then { c with minHeight := 0, maxHeight := Constraints.infinity }
@@ -320,9 +372,13 @@ private def scrollLayoutBlock (state : ScrollState) (vertical : Bool) : CustomLa
     if v' != v then
       -- Content/viewport change re-clamps (settles next pass, values equal).
       state.valueState.set v'
-    -- Observed like `value`: a bounce write re-measures exactly this node.
+    -- Observed like `value`: a band write re-measures exactly this node.
+    -- Only bounce mode translates the placement; the stretch is a draw-time
+    -- warp, but the observed read must stay in every mode — it is what turns
+    -- each band write into a re-measure (and so a re-recorded frame).
     let over ← state.overscrollState.get
-    let off := -(roundHalfUp v') + roundHalfUp over
+    let off := -(roundHalfUp v')
+      + (if mode == .bounce then roundHalfUp over else 0)
     return (size, if vertical then ⟨0, off⟩ else ⟨off, 0⟩)⟩
 
 /-- The scroll container's reveal responder: scroll the minimal amount
@@ -391,25 +447,30 @@ leftover (a slider's) still deadens it. Mirrors the drag half of
 `Modifier.scrollable`'s touch handling plus the spirit of its nested-scroll
 dispatch.
 
-Overscroll (`bounce`, default on): dragging past a range end grows the
-rubber band with whatever motion *no* ancestor consumed either
+Overscroll (`mode`, default `.stretch`): dragging past a range end grows the
+band with whatever motion *no* ancestor consumed either
 (`PointerEvent.onDispatchEnd` — the edge effect belongs to the gesture
 owner after its ancestors decline, Android's innermost rule; `follow`
-never bounces); while the band is stretched further moves feed it directly
+never bands); while the band is live further moves feed it directly
 (content pinned at the edge, nothing bubbles out) and a reversal unwinds
-it before normal scrolling resumes. Release springs the band back —
-absorbing the gesture velocity when stretched, or bouncing off the stop
-with the velocity no ancestor flung. A press catches a mid-flight spring
-like it catches a fling; a caught band that ends up not owning the gesture
-(click, cross-axis, an inner drag) settles on its own. -/
+it before normal scrolling resumes. In `.bounce` the band is the visible
+rubber-banded translation and release springs it back Cupertino-style,
+absorbing the gesture velocity; in `.stretch` it is the raw pull distance
+(clamped to a viewport, EdgeEffect's `mPullDistance ≤ 1`), release runs the
+EdgeEffect spring from rest (AOSP `onRelease`), and an end-stop velocity
+absorbs ×13 (`onAbsorb`). A press catches a mid-flight settle like it
+catches a fling; a caught band that ends up not owning the gesture (click,
+cross-axis, an inner drag) settles on its own. -/
 private partial def scrollDragHandler (state : ScrollState) (vertical : Bool)
-    (bounce : Bool) (scope : PointerInputScope) : UiTask Unit :=
+    (mode : OverscrollMode) (scope : PointerInputScope) : UiTask Unit :=
   idle
 where
   axisOf (p : Offset) : Float32 := if vertical then p.y else p.x
   crossOf (p : Offset) : Float32 := if vertical then p.x else p.y
   mkLeftover (axis cross : Float32) : Offset :=
     if vertical then ⟨cross, axis⟩ else ⟨axis, cross⟩
+  /-- EdgeEffect's `mPullDistance ≤ 1` in px space. -/
+  clampMag (x d : Float32) : Float32 := min (max x (-d)) d
   /-- Scroll this container by the leftover's axis component and republish
   the remainder (the cross axis passes through untouched). -/
   consumeLeftover (ev : PointerEvent) (l : Offset) : IO Unit := do
@@ -421,9 +482,10 @@ where
   catch interrupt), so a gesture that ends without owning the band —
   click, window leave, someone else's drag — must release it. -/
   settleCaught : UiTask Unit := do
-    if bounce then
+    unless mode == .none do
       if (← state.overscrollState.cell.get) != 0 then
-        let _ ← UiTask.launch (state.settleOverscroll 0)
+        let _ ← UiTask.launch (if mode == .stretch then state.settleStretch 0
+                               else state.settleOverscroll 0)
   /-- One owned move: while the band is stretched the motion feeds it in raw
   (pre-band) space — same direction stretches further with nothing
   published (the finger is on the band), a reversal unwinds it and scrolls
@@ -431,13 +493,17 @@ where
   dispatch-end hook then grows the band with whatever motion no ancestor
   consumed either. -/
   dragMove (ev : PointerEvent) (motion cross : Float32) : IO Unit := do
-    let o ← if bounce then state.overscrollState.cell.get else pure 0
+    let o ← if mode == .none then pure 0 else state.overscrollState.cell.get
     let motion ← do
       if o != 0 then
         let d ← state.viewportSizeState.cell.get
-        let raw := rubberBandInverse o d + motion
+        -- Stretch tracks the raw pull 1:1 (the damping is visual, applied at
+        -- draw time by `stretchIntensity`); bounce tracks the rubber-banded
+        -- displacement through raw space so drags accumulate correctly.
+        let raw := (if mode == .stretch then o else rubberBandInverse o d) + motion
         if raw * o > 0 then
-          state.overscrollState.set (rubberBand raw d)
+          state.overscrollState.set
+            (if mode == .stretch then clampMag raw d else rubberBand raw d)
           pure 0
         else
           state.overscrollState.set 0
@@ -445,14 +511,16 @@ where
       else pure motion
     let moved ← state.scrollBy (-motion)
     ev.setLeftover (mkLeftover (unconsumedMotion motion moved) cross)
-    if bounce then
+    unless mode == .none do
       ev.onDispatchEnd fun l? => do
         if let some l := l? then
           let m := axisOf l
           if m != 0 && (← state.maxValueState.cell.get) > 0 then
             let d ← state.viewportSizeState.cell.get
             let o ← state.overscrollState.cell.get
-            state.overscrollState.set (rubberBand (rubberBandInverse o d + m) d)
+            state.overscrollState.set
+              (if mode == .stretch then clampMag (o + m) d
+               else rubberBand (rubberBandInverse o d + m) d)
   /-- No gesture in flight: a primary press catches a running fling and arms
   tracking (even when a child consumed it — gesture boundaries stay visible
   to a final-pass observer). The pressing pointer owns the session. -/
@@ -523,12 +591,14 @@ where
         ev.consume
         -- Content moves opposite the pointer; carry that into the fling.
         let pv := vt.velocity ev.timestamp
-        let o ← if bounce then state.overscrollState.cell.get else pure 0
+        let o ← if mode == .none then pure 0 else state.overscrollState.cell.get
         if o != 0 then
-          -- The gesture ends on the stretched band: it absorbs the
-          -- velocity (no fling, nothing for the ancestors).
+          -- The gesture ends on the live band: nothing for the ancestors.
+          -- Bounce absorbs the gesture velocity into its spring; stretch
+          -- releases from rest (AOSP `EdgeEffect.onRelease` zeroes it).
           ev.setLeftover (mkLeftover 0 0)
-          let _ ← UiTask.launch (state.settleOverscroll pv)
+          let _ ← UiTask.launch (if mode == .stretch then state.settleStretch 0
+                                 else state.settleOverscroll pv)
         else
           let v := -pv
           let can ← if v > 0 then state.canScrollForward
@@ -538,18 +608,22 @@ where
             ev.setLeftover (mkLeftover 0 0)
             let den ← scope.density
             let _ ← UiTask.launch
-              (state.fling v (SplineDecay.spec (.ofDensity den)) (bounce := bounce))
+              (state.fling v (SplineDecay.spec (.ofDensity den)) (overscroll := mode))
           else
-            -- End-stopped (or still): the fling velocity bubbles out —
-            -- and whatever no ancestor flings bounces off this stop.
+            -- End-stopped (or still): the fling velocity bubbles out — and
+            -- whatever no ancestor flings feeds this stop's band (stretch
+            -- absorbs ×13, `EdgeEffect.onAbsorb`).
             ev.setLeftover (mkLeftover pv 0)
-            if bounce then
+            unless mode == .none do
               if (← state.maxValueState.cell.get) > 0 then
                 let sched ← UiTask.scheduler
                 ev.onDispatchEnd fun l? => do
                   let pv' := (l?.map axisOf).getD 0
                   if pv' != 0 then
-                    let _ ← sched.launch (state.settleOverscroll pv')
+                    let _ ← sched.launch
+                      (if mode == .stretch then
+                        state.settleStretch (stretchAbsorbFactor * pv')
+                       else state.settleOverscroll pv')
         idle
       else
         drag pid last vt
@@ -579,7 +653,7 @@ where
             ev.setLeftover (mkLeftover 0 (crossOf l))
             let den ← scope.density
             let _ ← UiTask.launch
-              (state.fling v (SplineDecay.spec (.ofDensity den)) (bounce := bounce))
+              (state.fling v (SplineDecay.spec (.ofDensity den)) (overscroll := mode))
         idle
       else follow pid
     | .exit => idle
@@ -596,39 +670,62 @@ where
 
 namespace Modifier
 
+/-- The stretch-mode draw element: reads the raw band + viewport (plain,
+non-observed — the layout block's observed read already re-records the frame
+on every band write) and derives the damped warp intensity on the container's
+axis. -/
+private def stretchRead (state : ScrollState) (vertical : Bool) :
+    IO (Float32 × Float32) := do
+  let s := stretchIntensity (← state.overscrollState.cell.get)
+    (← state.viewportSizeState.cell.get)
+  return if vertical then (0, s) else (s, 0)
+
 /-- Make the content scrollable vertically: content measures with unbounded
 height, the container reports `min(content, incoming max)`, clips to its
 bounds, offsets the content by `-state.value`, consumes wheel events when
 it can scroll in their direction, and drag-scrolls with a fling on release
-(see `scrollDragHandler`). `bounce` (default on, Android behavior)
-rubber-bands touch drags past the range ends and springs back — wheel
-scrolling never bounces. Mirrors
+(see `scrollDragHandler`). `overscroll` picks the edge visual (wheel
+scrolling never overscrolls): `.stretch` (default) is Android 12+'s
+`EdgeEffect` content warp, `.bounce` the Cupertino translation rubber band,
+`.none` a hard stop. Mirrors
 `androidx.compose.foundation.verticalScroll(state)`. -/
 def verticalScroll (state : ScrollState) (m : Modifier := {})
-    (bounce : Bool := true) : Modifier :=
-  m.onScroll (scrollWheelHandler state true)
+    (overscroll : OverscrollMode := .stretch) : Modifier :=
+  let m := m.onScroll (scrollWheelHandler state true)
   |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.v")
-        (mixKeys state.id (if bounce then 1 else 0)))
-      (scrollDragHandler state true bounce) (pass := .final)
+        (mixKeys state.id overscroll.key))
+      (scrollDragHandler state true overscroll) (pass := .final)
   |>.bringIntoView (mixKeys (stringKey "Compose.Modifier.bringIntoView.v") state.id)
       (scrollBringIntoViewResponder state true)
   |>.clip .rectangle
-  |>.customLayout (mixKeys (stringKey "Compose.Modifier.verticalScroll") state.id)
-      (scrollLayoutBlock state true)
+  -- The stretch layer sits between the scroll clip (which crops the warp)
+  -- and the content the customLayout places.
+  let m := if overscroll == .stretch then
+    m.stretchLayer (mixKeys (stringKey "Compose.Modifier.stretchOverscroll") state.id)
+      (stretchRead state true)
+  else m
+  m.customLayout (mixKeys (stringKey "Compose.Modifier.verticalScroll")
+      (mixKeys state.id overscroll.key))
+    (scrollLayoutBlock state true overscroll)
 
 /-- Horizontal counterpart of `verticalScroll`. Mirrors
 `androidx.compose.foundation.horizontalScroll(state)`. -/
 def horizontalScroll (state : ScrollState) (m : Modifier := {})
-    (bounce : Bool := true) : Modifier :=
-  m.onScroll (scrollWheelHandler state false)
+    (overscroll : OverscrollMode := .stretch) : Modifier :=
+  let m := m.onScroll (scrollWheelHandler state false)
   |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.h")
-        (mixKeys state.id (if bounce then 1 else 0)))
-      (scrollDragHandler state false bounce) (pass := .final)
+        (mixKeys state.id overscroll.key))
+      (scrollDragHandler state false overscroll) (pass := .final)
   |>.bringIntoView (mixKeys (stringKey "Compose.Modifier.bringIntoView.h") state.id)
       (scrollBringIntoViewResponder state false)
   |>.clip .rectangle
-  |>.customLayout (mixKeys (stringKey "Compose.Modifier.horizontalScroll") state.id)
-      (scrollLayoutBlock state false)
+  let m := if overscroll == .stretch then
+    m.stretchLayer (mixKeys (stringKey "Compose.Modifier.stretchOverscroll") state.id)
+      (stretchRead state false)
+  else m
+  m.customLayout (mixKeys (stringKey "Compose.Modifier.horizontalScroll")
+      (mixKeys state.id overscroll.key))
+    (scrollLayoutBlock state false overscroll)
 
 end Modifier
 

@@ -1334,7 +1334,7 @@ scrolls again; a resting release springs the band monotonically back. -/
 private def dragRubberBand : IO Unit := do
   let st ← ScrollState.create
   let r ← rig <| Box do
-    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st (overscroll := .bounce)) do
       leaf (Modifier.size 100 300)
   -- Pull down at the top: 32 post-slop px band to rubberBand 32 ≈ 14.97.
   let _ ← r.im.pointerEvent (pressAt 50 20)
@@ -1375,7 +1375,7 @@ private def dragRubberBand : IO Unit := do
 private def bounceOvershootThenSettle : IO Unit := do
   let st ← ScrollState.create
   let r ← rig <| Box do
-    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st (overscroll := .bounce)) do
       leaf (Modifier.size 100 300)
   let _ ← r.im.pointerEvent (pressT 50 90 0)
   let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
@@ -1392,12 +1392,12 @@ private def bounceOvershootThenSettle : IO Unit := do
   checkEq "bounce: settles back to the end" (← st.overscroll) 0
   checkEq "bounce: pinned at the end of the range" (← st.value) 200
 
-/-- `bounce := false` keeps today's hard stop: drags pin without a band and
+/-- `overscroll := .none` keeps the hard stop: drags pin without a band and
 an end-stopped fling never overshoots. -/
-private def bounceOptOut : IO Unit := do
+private def overscrollOptOut : IO Unit := do
   let st ← ScrollState.create
   let r ← rig <| Box do
-    Box (modifier := Modifier.size 100 100 |>.verticalScroll st (bounce := false)) do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st (overscroll := .none)) do
       leaf (Modifier.size 100 300)
   let _ ← r.im.pointerEvent (pressAt 50 20)
   let _ ← r.im.pointerEvent (moveTo 50 80)
@@ -1420,7 +1420,7 @@ fling; releasing without a drag lets the caught band settle. -/
 private def catchDuringBounce : IO Unit := do
   let st ← ScrollState.create
   let r ← rig <| Box do
-    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st (overscroll := .bounce)) do
       leaf (Modifier.size 100 300)
   let _ ← r.im.pointerEvent (pressT 50 30 0)
   let _ ← r.im.pointerEvent (moveT 50 90 (ms 16))
@@ -1447,9 +1447,9 @@ private def nestedBounceLandsOnOwner : IO Unit := do
   let outer ← ScrollState.create
   let inner ← ScrollState.create
   let r ← rig <| Box do
-    Box (modifier := Modifier.size 100 100 |>.verticalScroll outer) do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll outer (overscroll := .bounce)) do
       Column do
-        Box (modifier := Modifier.size 100 100 |>.verticalScroll inner) do
+        Box (modifier := Modifier.size 100 100 |>.verticalScroll inner (overscroll := .bounce)) do
           leaf (Modifier.size 100 150)
         leaf (Modifier.size 100 30)
   checkEq "nested bounce: inner range" (← inner.maxValue) 50
@@ -1490,6 +1490,148 @@ private def wheelNoBounce : IO Unit := do
   let _ ← r.im.pointerEvent (scrollAt 50 50 ⟨0, 1⟩)
   checkEq "wheel: snaps a standing band" (← st.overscroll) 0
   checkEq "wheel: and scrolls normally" (← st.value) 150
+
+/-! ## Overscroll stretch (the default mode) -/
+
+/-- Dragging past the start in stretch mode accumulates the *raw* pull 1:1
+(the damping is visual, applied at draw time by `stretchIntensity`), pins
+the value, and a reversal unwinds the band before the content scrolls. -/
+private def stretchDragAccumulates : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressAt 50 20)
+  let _ ← r.im.pointerEvent (moveTo 50 60)   -- 40 px pull, 32 post-slop
+  checkEq "stretch drag: value pinned at the start" (← st.value) 0
+  checkEq "stretch drag: the raw pull accumulates 1:1" (← st.overscroll) 32
+  let _ ← r.im.pointerEvent (moveTo 50 80)
+  checkEq "stretch drag: keeps accumulating" (← st.overscroll) 52
+  let _ ← r.im.pointerEvent (moveTo 50 20)
+  checkEq "stretch drag: reversal unwinds before scrolling" (← st.overscroll) 0
+  check s!"stretch drag: the crossing remainder scrolls ({← st.value})"
+    (approxF (← st.value) 8 0.001)
+  let _ ← r.im.pointerEvent (releaseAt 50 20)
+
+/-- A release from rest runs the EdgeEffect spring home: the band never
+grows, settles at exactly 0, and the value is untouched. -/
+private def stretchReleaseSpringsBack : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressT 50 30 0)
+  let _ ← r.im.pointerEvent (moveT 50 90 (ms 16))   -- 52 post-slop band
+  checkEq "stretch spring: banded raw" (← st.overscroll) 52
+  let _ ← r.im.pointerEvent (releaseT 50 90 (ms 66))   -- rest gap: v = 0
+  advance r.s r.clock (ms 66)
+  r.s.tickFrame (ms 70)
+  let mut prev ← st.overscroll
+  for i in [0:40] do
+    r.s.tickFrame (ms (86 + 16 * i.toUInt64))
+    let o ← st.overscroll
+    check s!"stretch spring: never grows on a rest release ({prev} → {o})"
+      (o ≤ prev + 0.01)
+    prev := o
+  checkEq "stretch spring: settles at rest" (← st.overscroll) 0
+  checkEq "stretch spring: the value is untouched" (← st.value) 0
+
+/-- A fling that reaches the end absorbs its residual velocity ×13
+(`EdgeEffect.onAbsorb`) into the band, then settles back to exactly the
+end — the value never leaves the range. -/
+private def stretchFlingAbsorb : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressT 50 90 0)
+  let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
+  let _ ← r.im.pointerEvent (moveT 50 50 (ms 32))
+  let _ ← r.im.pointerEvent (moveT 50 30 (ms 48))
+  let _ ← r.im.pointerEvent (releaseT 50 30 (ms 56))
+  advance r.s r.clock (ms 56)
+  let mut oMin : Float32 := 0
+  for i in [0:80] do
+    r.s.tickFrame (ms (60 + 16 * i.toUInt64))
+    oMin := min oMin (← st.overscroll)
+    check "stretch absorb: the value never leaves the range" ((← st.value) ≤ 200)
+  check s!"stretch absorb: the ×13 absorb dips well past the end ({oMin})" (oMin < -4)
+  checkEq "stretch absorb: settles back" (← st.overscroll) 0
+  checkEq "stretch absorb: pinned at the end" (← st.value) 200
+
+/-- A press mid-settle catches (freezes) the band like it catches a fling;
+releasing without a drag lets the caught band settle. -/
+private def stretchCatchFreezes : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressT 50 30 0)
+  let _ ← r.im.pointerEvent (moveT 50 90 (ms 16))
+  let _ ← r.im.pointerEvent (releaseT 50 90 (ms 66))
+  advance r.s r.clock (ms 66)
+  r.s.tickFrame (ms 70)
+  r.s.tickFrame (ms 86)
+  let mid ← st.overscroll
+  check s!"stretch catch: mid-settle ({mid})" (mid > 0 && mid < 52)
+  let _ ← r.im.pointerEvent (pressT 50 50 (ms 90))
+  r.s.tickFrame (ms 102)
+  r.s.tickFrame (ms 118)
+  checkEq "stretch catch: the press freezes the band" (← st.overscroll) mid
+  let _ ← r.im.pointerEvent (releaseT 50 50 (ms 120))
+  advance r.s r.clock (ms 120)
+  for i in [0:40] do
+    r.s.tickFrame (ms (124 + 16 * i.toUInt64))
+  checkEq "stretch catch: a click lets the caught band settle" (← st.overscroll) 0
+
+/-- With inner and outer both end-stopped, the band lands on the gesture
+owner (the inner) with the *raw* surviving motion, never the following
+outer — Android's innermost edge effect, stretch flavor. -/
+private def nestedStretchLandsOnOwner : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll outer) do
+      Column do
+        Box (modifier := Modifier.size 100 100 |>.verticalScroll inner) do
+          leaf (Modifier.size 100 150)
+        leaf (Modifier.size 100 30)
+  let _ ← r.im.pointerEvent (pressAt 50 95)
+  let _ ← r.im.pointerEvent (moveTo 50 30)   -- inner fills (50), outer takes 7
+  let _ ← r.im.pointerEvent (moveTo 50 5)    -- outer fills (30), 2 px survive
+  checkEq "nested stretch: inner pinned" (← inner.value) 50
+  checkEq "nested stretch: outer pinned" (← outer.value) 30
+  checkEq "nested stretch: the owner bands the raw survivors" (← inner.overscroll) (-2)
+  checkEq "nested stretch: the following outer never bands" (← outer.overscroll) 0
+  let _ ← r.im.pointerEvent (releaseAt 50 5)
+  advance r.s r.clock (ms 1)
+  for i in [0:40] do
+    r.s.tickFrame (ms (16 + 16 * i.toUInt64))
+  checkEq "nested stretch: the owner's band settles" (← inner.overscroll) 0
+
+/-- The frame a stretch-banded container draws contains exactly one warp
+layer under the scroll clip, carrying the `stretchIntensity`-damped
+intensity; at rest there is none. -/
+private def stretchModeRecordsWarpLayer : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let hasStretch (list : Compose.Draw.DisplayList) : Bool :=
+    list.any (fun p => (p.brief.splitOn "stretch=").length > 1)
+  let (rest, _) ← Compose.Draw.DrawScope.record {} r.root.drawTree
+  check "stretch layer: none at rest" (!hasStretch rest)
+  let _ ← r.im.pointerEvent (pressAt 50 20)
+  let _ ← r.im.pointerEvent (moveTo 50 60)   -- band 32 on a 100 px viewport
+  let _ ← r.root.remeasure { maxWidth := 200, maxHeight := 200 }
+  let (banded, _) ← Compose.Draw.DrawScope.record {} r.root.drawTree
+  let tag := s!"stretch=(0,{Compose.Draw.fmtF (stretchIntensity 32 100)})"
+  let briefs := String.intercalate "\n" (banded.map (·.brief)).toList
+  check s!"stretch layer: one warp layer with the damped intensity ({tag})"
+    ((briefs.splitOn tag).length == 2)
+  check "stretch layer: recorded under the scroll clip"
+    ((briefs.splitOn s!"clip=(0,0,100,100) bounds=").length == 2)
+  let _ ← r.im.pointerEvent (releaseAt 50 60)
 
 /-! ## Bring into view -/
 
@@ -1596,10 +1738,16 @@ def run : IO Unit := do
   dispatchEndFinalizer
   dragRubberBand
   bounceOvershootThenSettle
-  bounceOptOut
+  overscrollOptOut
   catchDuringBounce
   nestedBounceLandsOnOwner
   wheelNoBounce
+  stretchDragAccumulates
+  stretchReleaseSpringsBack
+  stretchFlingAbsorb
+  stretchCatchFreezes
+  nestedStretchLandsOnOwner
+  stretchModeRecordsWarpLayer
   bringIntoViewReveal
   bringIntoViewNested
   transformZoomFires

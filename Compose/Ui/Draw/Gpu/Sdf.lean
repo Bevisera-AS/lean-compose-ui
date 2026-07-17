@@ -158,6 +158,44 @@ def blurTapOffset (i sigma : Float32) : Float32 :=
     (fun acc i => acc + blurWeight (Float32.ofNat (i + 1)) 4) 0
   (wsum - 4 * 2.50662827).abs < 0.03
 
+/-! ## Overscroll stretch warp (the Android-12 layer-effect pipeline) -/
+
+/-- The AOSP/Flutter stretch warp, positive branch (Flutter
+`stretch_effect.frag` `compute_overscroll_start`, which is AOSP
+`StretchEffect.cpp` with the stretch-affected distance normalized to the
+whole viewport — what hwui always passes): for normalized content position
+`p ∈ [0,1]` and stretch intensity `s > 0` (pinning `p = 0`), the sampled
+source position is `1/(1+s) − (1−p)/(1 + s·(1 − 0.7·p))` — the `0.7` is
+`Foundation.stretchInterpolationStrength`: the stretch is strongest at the
+pinned edge and eases off toward the far one (what makes it read as taffy,
+not a zoom). -/
+def stretchPosUp (p s : Float32) : Float32 :=
+  1 / (1 + s) - (1 - p) / (1 + s * (1 - 0.7 * p))
+
+/-- The full signed warp: `s > 0` pins `p = 0`; `s < 0` mirrors, pinning
+`p = 1` (algebraically the frag's `compute_overscroll_end` at normalized
+viewport); `s = 0` is the identity. Output ≤ `p` for `s > 0` — content only
+compresses toward the pin, so the effect spreads nothing. -/
+def stretchPos (p s : Float32) : Float32 :=
+  if s > 0 then stretchPosUp p s
+  else if s < 0 then 1 - stretchPosUp (1 - p) (-s)
+  else p
+
+-- Identity at rest; the pinned edge is exactly fixed on both signs.
+#guard stretchPos 0.3 0 == 0.3
+#guard stretchPos 0 0.032 == 0
+#guard stretchPos 1 (-0.032) == 1
+-- Compression toward the pin: the far edge lands at 1/(1+s), the interior
+-- moves monotonically and never past its unstretched position.
+#guard (stretchPos 1 0.032 - 0.968992).abs < 1e-4
+#guard stretchPos 0.25 0.032 < stretchPos 0.5 0.032
+        && stretchPos 0.5 0.032 < stretchPos 0.75 0.032
+#guard stretchPos 0.5 0.032 < 0.5
+-- Pinned outputs catch shader constant typos (like the ign pins):
+-- hand: 1/1.032 − 0.5/1.0208 ≈ 0.479180; mirror 1 − that ≈ 0.520820.
+#guard (stretchPos 0.5 0.032 - 0.479180).abs < 1e-4
+#guard (stretchPos 0.5 (-0.032) - 0.520820).abs < 1e-4
+
 /-! ## Analytic Gaussian shadow (Evan Wallace) -/
 
 /-- The Gaussian PDF with standard deviation `sigma`. -/

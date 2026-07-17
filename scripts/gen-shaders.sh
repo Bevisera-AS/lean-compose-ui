@@ -33,6 +33,7 @@ STAGES=(
   "layerFrag  layer.frag"
   "blurVert   blur.vert"
   "blurFrag   blur.frag"
+  "stretchFrag stretch.frag"
 )
 
 tmp=$(mktemp -d)

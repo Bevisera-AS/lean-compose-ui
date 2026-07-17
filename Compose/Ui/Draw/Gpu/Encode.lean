@@ -84,6 +84,10 @@ structure LayerEnc where
   two extra separable render passes; `bounds` already includes the `3σ + 1`
   spread margin. -/
   sigma : Float32 := 0
+  /-- Signed per-axis overscroll-stretch intensity (`LayerEffect.stretch`,
+  normalized): the composite draws through the stretch pipeline, which warps
+  the UV before sampling — no extra pass, no spread. -/
+  stretch : Option (Float32 × Float32) := none
   /-- The layer's own render-pass commands. -/
   cmds : Array DrawCmd
   deriving Repr, BEq, Inhabited
@@ -546,6 +550,7 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
         layers := st.layers.push
           { bounds := ⟨l, t, rt, bt⟩, alpha := props.alpha * extraAlpha
             transform, sigma := match effect with | .blur sg => sg | _ => 0
+            stretch := match effect with | .stretch sx sy => some (sx, sy) | _ => none
             cmds := st.cmds } }
 
 /-- Encode a display list against its resolved text runs and image texture
@@ -662,6 +667,14 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   let big := encode #[.layer {} ⟨0, 0, 4, 4⟩ { effect := .blur 99 } #[inner]] #[]
   r.layers.isEmpty && r.cmds == #[.quads 0 1 none]
     && big.layers[0]!.sigma == 16
+-- A stretch forces an offscreen composite even at alpha 1, carries its
+-- intensity, spreads nothing (margin stays the 1 px AA), and never blurs.
+#guard
+  let inner : Prim := .rect {} .red ⟨10, 10⟩ ⟨4, 4⟩
+  let r := encode #[.layer {} ⟨8, 8, 24, 24⟩ { effect := .stretch 0 0.03 } #[inner]] #[]
+  r.layers.size == 1 && r.cmds == #[.layer 0 false none]
+    && r.layers[0]!.bounds == (⟨7, 7, 25, 25⟩ : Rect)
+    && r.layers[0]!.stretch == some (0, 0.03) && r.layers[0]!.sigma == 0
 -- A near-integer pure translation snaps to the grid and composites nearest.
 #guard
   let r := encode #[.layer {} ⟨8, 8, 24, 24⟩

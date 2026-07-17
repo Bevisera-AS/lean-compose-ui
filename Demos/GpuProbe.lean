@@ -776,6 +776,105 @@ private def probeBlur (r : Compose.Draw.Gpu.GpuRenderer)
   note s!"frame stats: {stats.brief}"
   check "frame stats: three layers" (stats.layers == 3)
 
+/-- ⑰ the overscroll stretch warp (M-i2): stripes recorded in `.stretch`
+layers must land where the `Gpu.Sdf.stretchPos` twin predicts — the pinned
+edge stays put, interior content magnifies away from the pin, content past
+the visible `1/(1+s)` source window vanishes, the mirror sign pins the far
+edge, the horizontal axis warps independently, and the composite still
+scales by group alpha. Exercises the stretch pipeline's mid-pass
+`pushFragmentUniformData` on every driver. -/
+private def probeStretch (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  say "⑰ layer stretch → warped composite → offscreen pixels"
+  let (list, _) ← DrawScope.record {} do
+    -- A: vertical s = 0.5, pin at the top of a 100×100 layer; stripes at
+    -- source rows 10, 55, 100 (the last is past the 1/1.5 source window).
+    DrawScope.withGraphicsLayer ⟨20, 10, 120, 110⟩ {}
+      (do
+        DrawScope.drawRect (.solid .white) ⟨20, 10⟩ ⟨100, 4⟩
+        DrawScope.drawRect (.solid .white) ⟨20, 55⟩ ⟨100, 4⟩
+        DrawScope.drawRect (.solid .white) ⟨20, 100⟩ ⟨100, 4⟩)
+      (effect := .stretch 0 0.5)
+    -- B: the mirror (s = −0.5) pins the bottom; the top stripe vanishes.
+    DrawScope.withGraphicsLayer ⟨20, 130, 120, 230⟩ {}
+      (do
+        DrawScope.drawRect (.solid .white) ⟨20, 130⟩ ⟨100, 4⟩
+        DrawScope.drawRect (.solid .white) ⟨20, 226⟩ ⟨100, 4⟩)
+      (effect := .stretch 0 (-0.5))
+    -- C: the horizontal axis, pin at the left of a 60×60 layer.
+    DrawScope.withGraphicsLayer ⟨130, 10, 190, 70⟩ {}
+      (do
+        DrawScope.drawRect (.solid .white) ⟨130, 10⟩ ⟨4, 60⟩
+        DrawScope.drawRect (.solid .white) ⟨160, 10⟩ ⟨4, 60⟩)
+      (effect := .stretch 0.5 0)
+    -- D: stretch composes with group alpha (a solid white fill at 50%).
+    DrawScope.withLayer ⟨130, 130, 170, 170⟩ 0.5
+      (DrawScope.drawRect (.solid .white) ⟨130, 130⟩ ⟨40, 40⟩)
+      (effect := .stretch 0 0.3)
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 210 240
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (x y : Nat) =>
+    let o := (y * 210 + x) * 4
+    if bgra then (bytes.get! (o+2), bytes.get! (o+1), bytes.get! o, bytes.get! (o+3))
+    else (bytes.get! o, bytes.get! (o+1), bytes.get! (o+2), bytes.get! (o+3))
+  -- Predicted output coordinate (target px) where content recorded at source
+  -- coordinate `src` appears: the layer's margin-inflated bounds start at
+  -- `origin` with `extent` px on the stretched axis; invert the
+  -- `Gpu.Sdf.stretchPos` twin by scanning at 0.1 px resolution.
+  let predict := fun (origin extent src s : Float32) => Id.run do
+    let mut best := origin
+    let mut bestD : Float32 := 1e9
+    for i in [0:(extent * 10).toUInt32.toNat + 1] do
+      let y := origin + Float32.ofNat i / 10
+      let sy := origin + extent * Compose.Draw.Gpu.stretchPos ((y - origin) / extent) s
+      if (sy - src).abs < bestD then
+        bestD := (sy - src).abs
+        best := y
+    return best
+  -- Maximal runs of lit indices in [n0, n1).
+  let bands := fun (n0 n1 : Nat) (lit : Nat → Bool) => Id.run do
+    let mut out : Array (Nat × Nat) := #[]
+    let mut cur : Option Nat := none
+    for i in [n0:n1] do
+      if lit i then
+        if cur.isNone then cur := some i
+      else if let some s0 := cur then
+        out := out.push (s0, i - 1)
+        cur := none
+    if let some s0 := cur then out := out.push (s0, n1 - 1)
+    return out
+  let near := fun (mid : Float32) (band : Nat × Nat) =>
+    decide (((Float32.ofNat (band.1 + band.2) / 2) - mid).abs < 2.5)
+  -- A (LayerEnc bounds start 9, extent 102 after the 1 px margin):
+  let a := bands 9 118 (fun y => (px 70 y).1.toNat > 100)
+  check s!"stretch: two of three stripes visible ({a})" (a.size == 2)
+  if a.size == 2 then
+    check s!"stretch: pinned-edge stripe stays at the pin ({(a[0]!).1})"
+      (9 ≤ (a[0]!).1 && (a[0]!).1 ≤ 13)
+    check s!"stretch: interior stripe lands where the twin predicts ({a[1]!} vs {predict 9 102 57 0.5})"
+      (near (predict 9 102 57 0.5) a[1]!)
+  -- B mirror (bounds start 129, extent 102, pin at the bottom):
+  let b := bands 129 235 (fun y => (px 70 y).1.toNat > 100)
+  check s!"stretch mirror: only the pinned-edge stripe survives ({b})" (b.size == 1)
+  if b.size == 1 then
+    check s!"stretch mirror: it lands where the twin predicts, hugging the pin ({b[0]!} vs {predict 129 102 228 (-0.5)})"
+      (near (predict 129 102 228 (-0.5)) b[0]! && 226 ≤ (b[0]!).2 && (b[0]!).2 ≤ 231)
+  -- C horizontal (bounds start 129, extent 62):
+  let c := bands 129 194 (fun x => (px x 40).1.toNat > 100)
+  check s!"stretch x-axis: both stripes visible ({c})" (c.size == 2)
+  if c.size == 2 then
+    check s!"stretch x-axis: pinned-edge stripe stays ({(c[0]!).1})"
+      (129 ≤ (c[0]!).1 && (c[0]!).1 ≤ 133)
+    check s!"stretch x-axis: interior stripe lands where the twin predicts ({c[1]!} vs {predict 129 62 162 0.5})"
+      (near (predict 129 62 162 0.5) c[1]!)
+  -- D: group alpha still scales the warped composite.
+  let d := (px 150 150).1.toNat
+  check s!"stretch × alpha 0.5: center ≈ 127 (got {d})" (110 ≤ d && d ≤ 142)
+  check "background untouched" (px 5 5 == (0, 0, 0, 255))
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: four layers" (stats.layers == 4)
+
 /-- ⑮ fractional-origin text (M-j): both backends snap run origins through
 the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
 byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
@@ -877,6 +976,7 @@ def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
   else
     note "⑬ raw-MSL fragment-uniform micro-probe skipped (the blur pipeline covers pushFragmentUniformData on SPIR-V)"
   probeBlur gpuRenderer swapchainFmt
+  probeStretch gpuRenderer swapchainFmt
   probeFractionalText gpuRenderer engine font
   probeInvalidate gpuRenderer
   match raw with

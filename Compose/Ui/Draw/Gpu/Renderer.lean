@@ -349,12 +349,17 @@ private def clampScissor (s : Sdl.Rect) (w h : Int32) : Sdl.Rect :=
 
 /-- Replay one command list into an open render pass: bind pipelines and
 buffers lazily on kind switches, apply scissors on change, one draw per
-command. `layerTexs` backs `.layer` composite commands. -/
-private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
+command. `layerTexs` backs `.layer` composite commands; `layers` routes a
+stretched layer's composite through the stretch pipeline (`cb` pushes its
+per-draw fragment uniform — push uniforms bind to subsequent draws, legal
+mid-pass, probe-verified). -/
+private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
+    (cmds : Array DrawCmd) (layers : Array LayerEnc)
     (atlases : Array Texture) (layerTexs : Array LayerTex)
     (imageTexs : Array Texture) (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
   let full : Sdl.Rect := ⟨0, 0, w, h⟩
-  -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 5 image / 9 none
+  -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 5 image / 6 stretch /
+  -- 9 none
   let mut kind : Nat := 9
   let mut scissor : Option Sdl.Rect := none
   let mut atlas : Option Nat := none
@@ -406,20 +411,45 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cmds : Array DrawCmd)
         kind := 3
       rp.drawPrimitives 4 (UInt32.ofNat count) 0 (UInt32.ofNat first)
     | .layer idx linear _ =>
-      if kind != 4 then
-        rp.bindPipeline r.pipelines.layer
-        if let some s := bufs.layerV then
-          rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
-        if let some s := bufs.layerI then
-          rp.bindIndexBuffer { buffer := s.buffer } .u32
-        kind := 4
-        boundLayer := none
-      if boundLayer != some (idx, linear) then
+      match layers[idx]?.bind (·.stretch) with
+      | some (sx, sy) =>
+        -- Stretched composite: the layer buffers through the warping
+        -- pipeline, always linear (the warp samples between texels); the
+        -- per-draw fragment uniform carries the intensity plus the content's
+        -- UV extent (the frag clamps to it, not the pooled texture edge).
+        if kind != 6 then
+          rp.bindPipeline r.pipelines.stretch
+          if let some s := bufs.layerV then
+            rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+          if let some s := bufs.layerI then
+            rp.bindIndexBuffer { buffer := s.buffer } .u32
+          kind := 6
+          boundLayer := none
         if let some lt := layerTexs[idx]? then
-          rp.bindFragmentSamplers 0
-            #[{ texture := lt.tex, sampler := if linear then r.samplerLinear else r.sampler }]
-          boundLayer := some (idx, linear)
-      rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
+          if boundLayer != some (idx, true) then
+            rp.bindFragmentSamplers 0
+              #[{ texture := lt.tex, sampler := r.samplerLinear }]
+            boundLayer := some (idx, true)
+          if let some l := layers[idx]? then
+            cb.pushFragmentUniformData 0 (packStretchParams sx sy
+              (l.bounds.width / Float32.ofNat lt.w.toNat)
+              (l.bounds.height / Float32.ofNat lt.h.toNat))
+        rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
+      | none =>
+        if kind != 4 then
+          rp.bindPipeline r.pipelines.layer
+          if let some s := bufs.layerV then
+            rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+          if let some s := bufs.layerI then
+            rp.bindIndexBuffer { buffer := s.buffer } .u32
+          kind := 4
+          boundLayer := none
+        if boundLayer != some (idx, linear) then
+          if let some lt := layerTexs[idx]? then
+            rp.bindFragmentSamplers 0
+              #[{ texture := lt.tex, sampler := if linear then r.samplerLinear else r.sampler }]
+            boundLayer := some (idx, linear)
+        rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
     | .image first count tex linear _ =>
       -- Rides the layer pipeline (premultiplied sample × alpha) with its own
       -- vertex/index buffers and a per-command sampler choice.
@@ -518,7 +548,9 @@ inside outer ones), plus two separable Gaussian passes per *blurred* layer
 (content → ping → content, so the composite samples the content texture
 unchanged), then the clear-and-replay pass into `target`. Each pass pushes
 its own `Globals` viewport so NDC maps to its texture's extent (blur passes
-push their `BlurVert`/`BlurParams` pair instead). -/
+push their `BlurVert`/`BlurParams` pair instead; a *stretched* layer needs
+no extra pass — its composite draw runs the stretch pipeline, pushing
+`StretchParams` mid-pass). -/
 private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     (target : Texture) (w h : UInt32) (clear : Color) (enc : EncodeResult)
     (atlases : Array Texture) (layerTexs : Array LayerTex)
@@ -535,7 +567,7 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
       let rp ← cb.beginRenderPass
         #[{ texture := lt.tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
             cycle := true }]
-      replay r rp l.cmds atlases layerTexs imageTexs bufs
+      replay r rp cb l.cmds enc.layers atlases layerTexs imageTexs bufs
         (Int32.ofNat lt.w.toNat) (Int32.ofNat lt.h.toNat)
       rp.finish
       if l.sigma > 0 then
@@ -577,7 +609,7 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
   let rp ← cb.beginRenderPass
     #[{ texture := target, loadOp := .clear
         clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩ }]
-  replay r rp enc.cmds atlases layerTexs imageTexs bufs
+  replay r rp cb enc.cmds enc.layers atlases layerTexs imageTexs bufs
     (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
   rp.finish
 

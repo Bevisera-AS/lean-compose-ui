@@ -18,7 +18,7 @@ dialect twin in `shaders/` compiled to SPIR-V and embedded via
 `Gpu/SpirvBlobs.lean` (`scripts/gen-shaders.sh`) — `Pipelines.create` picks
 the dialect the device accepts (Metal → MSL, Vulkan → SPIR-V). Keep the two
 dialects in lockstep; both cite the `#guard`-tested formula twins in
-`Gpu/Sdf.lean`. The six pipelines:
+`Gpu/Sdf.lean`. The seven pipelines:
 
 - **quad**: instanced unit triangle strips (corners from `vertex_id`, all
   attributes instance-rate at `quadStride`), SDF fill/stroke coverage plus a
@@ -33,7 +33,11 @@ dialects in lockstep; both cite the `#guard`-tested formula twins in
   alpha carried in the vertex color.
 - **blur**: one direction of a separable Gaussian over a layer texture
   (`LayerEffect.blur`) — vertex-buffer-free, geometry from a vertex uniform,
-  kernel parameters from the codebase's one fragment uniform.
+  kernel parameters from a fragment uniform.
+- **stretch**: the layer composite with the Android-12 overscroll warp
+  (`LayerEffect.stretch`, twin of `Gpu.Sdf.stretchPos`) applied to the UV
+  before sampling — intensity and content UV extent from a fragment uniform
+  pushed per composite draw.
 
 All pipelines blend premultiplied (`one / oneMinusSrcAlpha`) except `blur`,
 which overwrites its cleared target; colors travel non-premultiplied in
@@ -337,6 +341,66 @@ fragment float4 layer_fragment(TexOut in [[stage_in]],
 }
 "
 
+/-- The stretch-composite pipeline's MSL: the layer pipeline's vertex layout
+and premultiplied-composite fragment, with the AOSP/Flutter overscroll warp
+(twins `Gpu.Sdf.stretchPosUp`/`stretchPos`; the `0.7` is
+`Foundation.stretchInterpolationStrength`) applied to the UV before sampling.
+The fragment normalizes UV by the content's extent in the pooled texture
+(`uvScale`), warps, clamps to the **content** rect — never the pooled
+texture's edge, whose slack holds transparent or stale texels — and maps
+back. `StretchParams` arrives via `pushFragmentUniformData` before each
+composite draw. -/
+private def stretchMsl : String := mslPrelude ++ "
+struct TexIn {
+  float2 pos   [[attribute(0)]];
+  float2 uv    [[attribute(1)]];
+  float4 color [[attribute(2)]];
+};
+
+struct TexOut {
+  float4 pos [[position]];
+  float2 uv;
+  float4 color;
+};
+
+vertex TexOut stretch_vertex(TexIn in [[stage_in]],
+                             constant Globals& g [[buffer(0)]]) {
+  TexOut out;
+  out.pos = to_ndc(in.pos, g.viewport);
+  out.uv = in.uv;
+  out.color = in.color;
+  return out;
+}
+
+struct StretchParams {
+  float2 stretch;
+  float2 uvScale;
+};
+
+// Gpu.Sdf.stretchPosUp — 0.7 = Foundation.stretchInterpolationStrength
+static inline float stretch_pos_up(float p, float s) {
+  return 1.0 / (1.0 + s) - (1.0 - p) / (1.0 + s * (1.0 - 0.7 * p));
+}
+
+// Gpu.Sdf.stretchPos
+static inline float stretch_pos(float p, float s) {
+  if (s > 0.0) return stretch_pos_up(p, s);
+  if (s < 0.0) return 1.0 - stretch_pos_up(1.0 - p, -s);
+  return p;
+}
+
+fragment float4 stretch_fragment(TexOut in [[stage_in]],
+                                 constant StretchParams& sp [[buffer(0)]],
+                                 texture2d<float> layer [[texture(0)]],
+                                 sampler smp [[sampler(0)]]) {
+  float2 np = in.uv / sp.uvScale;
+  float2 q = float2(stretch_pos(np.x, sp.stretch.x),
+                    stretch_pos(np.y, sp.stretch.y));
+  float2 suv = clamp(q, 0.0, 1.0) * sp.uvScale;
+  return layer.sample(smp, suv) * in.color.a;
+}
+"
+
 /-- The blur pipeline's MSL: a **vertex-buffer-free** full-region quad
 (corners from `vertex_id`, geometry entirely from the `BlurVert` vertex
 uniform — the region's extent in the target plus the source texture's UV
@@ -424,8 +488,17 @@ def packBlurParams (dirU dirV sigma taps : Float32) : ByteArray := Id.run do
     b := pushF32 b v
   return b
 
+/-- The 16-byte `StretchParams` fragment uniform: the signed per-axis
+stretch intensity and the content's UV extent in the pooled texture. -/
+def packStretchParams (sx sy uMax vMax : Float32) : ByteArray := Id.run do
+  let mut b := ByteArray.emptyWithCapacity 16
+  for v in [sx, sy, uMax, vMax] do
+    b := pushF32 b v
+  return b
+
 #guard (packBlurVert 256 128 80 40 0.3125 0.3125).size == 32
 #guard (packBlurParams 0.00390625 0 4 12).size == 16
+#guard (packStretchParams 0.032 0 0.8 0.625).size == 16
 
 /-- Premultiplied-alpha blending — the one blend state every pipeline uses. -/
 private def premulBlend : ColorTargetBlendState :=
@@ -450,8 +523,10 @@ structure Pipelines where
   /-- Vertex-buffer-free separable Gaussian blur (one direction per pass,
   no blending — overwrites its cleared target). -/
   blur : GraphicsPipeline
+  /-- The layer composite with the overscroll stretch warp on its UVs. -/
+  stretch : GraphicsPipeline
 
-/-- Build the six pipelines against `target` (the swapchain's native format
+/-- Build the seven pipelines against `target` (the swapchain's native format
 for on-screen rendering; rgba8 for offscreen targets later), compiling the
 shader dialect the device accepts: MSL source where available (Metal —
 desktop path unchanged), else the embedded SPIR-V blobs from
@@ -553,6 +628,23 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
       targetInfo }
   layerVs.release
   layerFs.release
+  -- stretch: the layer vertex layout + the UV-warping composite fragment
+  -- (its `StretchParams` fragment uniform is pushed per composite draw)
+  let stretchVs ← shader stretchMsl texVertSpv "stretch_vertex" .vertex (uniforms := 1)
+  let stretchFs ← shader stretchMsl stretchFragSpv "stretch_fragment" .fragment
+    (samplers := 1) (uniforms := 1)
+  let stretch ← dev.createGraphicsPipeline
+    { vertexShader := stretchVs, fragmentShader := stretchFs
+      vertexInputState :=
+        { vertexBufferDescriptions :=
+            #[{ slot := 0, pitch := UInt32.ofNat texVertexStride }]
+          vertexAttributes :=
+            #[{ location := 0, bufferSlot := 0, format := .float2, offset := 0 },
+              { location := 1, bufferSlot := 0, format := .float2, offset := 8 },
+              { location := 2, bufferSlot := 0, format := .float4, offset := 16 }] }
+      targetInfo }
+  stretchVs.release
+  stretchFs.release
   -- blur: no vertex buffers (corners from `vertex_id`; geometry from the
   -- vertex uniform), fragment uniform + sampler, blending off (the pass
   -- overwrites its cleared target).
@@ -565,7 +657,7 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   blurVs.release
   blurFs.release
   return { quad := quad, shadow := shadow, mesh := mesh, glyph := glyph
-           layer := layer, blur := blur }
+           layer := layer, blur := blur, stretch := stretch }
 
 end Compose.Draw.Gpu
 

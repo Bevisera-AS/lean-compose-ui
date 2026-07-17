@@ -1326,6 +1326,171 @@ private def transformPinchEventRouting : IO Unit := do
   let _ ← r.im.sdlEvent conv (.pinchUpdate ⟨0, 1.25, ⟨0⟩⟩)
   checkEq "pinch event: flows again after the finger lifts" (← calls.get).size 2
 
+/-! ## Overscroll bounce -/
+
+/-- Dragging past the start rubber-bands (sub-linear, value pinned), keeps
+stretching in raw space, and a reversal unwinds the band before the content
+scrolls again; a resting release springs the band monotonically back. -/
+private def dragRubberBand : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  -- Pull down at the top: 32 post-slop px band to rubberBand 32 ≈ 14.97.
+  let _ ← r.im.pointerEvent (pressAt 50 20)
+  let _ ← r.im.pointerEvent (moveTo 50 60)
+  checkEq "rubber band: value pinned at the start" (← st.value) 0
+  let o1 ← st.overscroll
+  check s!"rubber band: the band grows sub-linearly ({o1})"
+    (approxF o1 14.966 0.01)
+  -- Further pull stretches in raw space: rubberBand (32+20) ≈ 22.24.
+  let _ ← r.im.pointerEvent (moveTo 50 80)
+  let o2 ← st.overscroll
+  check s!"rubber band: keeps stretching ({o2})" (approxF o2 22.239 0.01)
+  -- Reversal: 52 raw px unwind first, the 8 px remainder scrolls.
+  let _ ← r.im.pointerEvent (moveTo 50 20)
+  checkEq "rubber band: reversal unwinds before scrolling" (← st.overscroll) 0
+  check s!"rubber band: the crossing remainder scrolls ({← st.value})"
+    (approxF (← st.value) 8 0.001)
+  let _ ← r.im.pointerEvent (releaseAt 50 20)
+  -- A fresh stretch (the value scrolls its 8 px back to the start first,
+  -- the 44 unconsumed px band) released at rest springs back monotonically.
+  let _ ← r.im.pointerEvent (pressT 50 30 0)
+  let _ ← r.im.pointerEvent (moveT 50 90 (ms 16))
+  check "rubber band: stretched again" ((← st.overscroll) > 19)
+  let _ ← r.im.pointerEvent (releaseT 50 90 (ms 66))   -- rest gap: v = 0
+  advance r.s r.clock (ms 66)
+  r.s.tickFrame (ms 70)
+  let mut prev ← st.overscroll
+  for i in [0:32] do
+    r.s.tickFrame (ms (86 + 16 * i.toUInt64))
+    let o ← st.overscroll
+    check s!"rubber band: spring-back is monotone ({prev} → {o})" (o ≤ prev)
+    prev := o
+  checkEq "rubber band: settles at rest" (← st.overscroll) 0
+  checkEq "rubber band: the spring leaves the value alone" (← st.value) 0
+
+/-- A fling that reaches the end of the range overshoots into overscroll
+(the residual momentum), then settles back to exactly the end. -/
+private def bounceOvershootThenSettle : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressT 50 90 0)
+  let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
+  let _ ← r.im.pointerEvent (moveT 50 50 (ms 32))
+  let _ ← r.im.pointerEvent (moveT 50 30 (ms 48))
+  let _ ← r.im.pointerEvent (releaseT 50 30 (ms 56))
+  advance r.s r.clock (ms 56)
+  let mut oMin : Float32 := 0
+  for i in [0:60] do
+    r.s.tickFrame (ms (60 + 16 * i.toUInt64))
+    oMin := min oMin (← st.overscroll)
+    check "bounce: the value never leaves the range" ((← st.value) ≤ 200)
+  check s!"bounce: overshoots past the end ({oMin})" (oMin < -1)
+  checkEq "bounce: settles back to the end" (← st.overscroll) 0
+  checkEq "bounce: pinned at the end of the range" (← st.value) 200
+
+/-- `bounce := false` keeps today's hard stop: drags pin without a band and
+an end-stopped fling never overshoots. -/
+private def bounceOptOut : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st (bounce := false)) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressAt 50 20)
+  let _ ← r.im.pointerEvent (moveTo 50 80)
+  checkEq "bounce off: a drag past the start pins without a band" (← st.value) 0
+  checkEq "bounce off: no overscroll from drags" (← st.overscroll) 0
+  let _ ← r.im.pointerEvent (releaseAt 50 80)
+  let _ ← r.im.pointerEvent (pressT 50 90 0)
+  let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
+  let _ ← r.im.pointerEvent (moveT 50 50 (ms 32))
+  let _ ← r.im.pointerEvent (moveT 50 30 (ms 48))
+  let _ ← r.im.pointerEvent (releaseT 50 30 (ms 56))
+  advance r.s r.clock (ms 56)
+  for i in [0:40] do
+    r.s.tickFrame (ms (60 + 16 * i.toUInt64))
+    checkEq "bounce off: a fling never overshoots" (← st.overscroll) 0
+  checkEq "bounce off: hard stop at the end" (← st.value) 200
+
+/-- A press mid-bounce catches (freezes) the spring like it catches a
+fling; releasing without a drag lets the caught band settle. -/
+private def catchDuringBounce : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  let _ ← r.im.pointerEvent (pressT 50 30 0)
+  let _ ← r.im.pointerEvent (moveT 50 90 (ms 16))
+  let _ ← r.im.pointerEvent (releaseT 50 90 (ms 66))   -- rest gap: pure spring
+  advance r.s r.clock (ms 66)
+  r.s.tickFrame (ms 70)
+  r.s.tickFrame (ms 86)
+  let mid ← st.overscroll
+  check s!"catch bounce: mid-spring ({mid})" (mid > 0 && mid < 22.2)
+  let _ ← r.im.pointerEvent (pressT 50 50 (ms 90))
+  r.s.tickFrame (ms 102)
+  r.s.tickFrame (ms 118)
+  checkEq "catch bounce: the press freezes the band" (← st.overscroll) mid
+  let _ ← r.im.pointerEvent (releaseT 50 50 (ms 120))
+  advance r.s r.clock (ms 120)
+  for i in [0:40] do
+    r.s.tickFrame (ms (124 + 16 * i.toUInt64))
+  checkEq "catch bounce: a click lets the caught band settle" (← st.overscroll) 0
+
+/-- With inner and outer both end-stopped, the band lands on the gesture
+owner (the inner), never the following outer — Android's innermost edge
+effect. -/
+private def nestedBounceLandsOnOwner : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll outer) do
+      Column do
+        Box (modifier := Modifier.size 100 100 |>.verticalScroll inner) do
+          leaf (Modifier.size 100 150)
+        leaf (Modifier.size 100 30)
+  checkEq "nested bounce: inner range" (← inner.maxValue) 50
+  checkEq "nested bounce: outer range" (← outer.maxValue) 30
+  let _ ← r.im.pointerEvent (pressAt 50 95)
+  let _ ← r.im.pointerEvent (moveTo 50 30)   -- inner fills (50), outer takes 7
+  let _ ← r.im.pointerEvent (moveTo 50 5)    -- outer fills (30), 2 px survive
+  checkEq "nested bounce: inner pinned" (← inner.value) 50
+  checkEq "nested bounce: outer pinned" (← outer.value) 30
+  let oi ← inner.overscroll
+  check s!"nested bounce: the owner bands the survivors ({oi})"
+    (approxF oi (-1.088) 0.01)
+  checkEq "nested bounce: the following outer never bands" (← outer.overscroll) 0
+  let _ ← r.im.pointerEvent (releaseAt 50 5)
+  advance r.s r.clock (ms 1)
+  for i in [0:40] do
+    r.s.tickFrame (ms (16 + 16 * i.toUInt64))
+  checkEq "nested bounce: the owner's band settles" (← inner.overscroll) 0
+
+/-- Wheel scrolling never rubber-bands (the AOSP mouse-source rule), and a
+wheel event snaps a standing band. -/
+private def wheelNoBounce : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      leaf (Modifier.size 100 300)
+  for _ in [0:5] do
+    let _ ← r.im.pointerEvent (scrollAt 50 50 ⟨0, -1⟩)
+  checkEq "wheel: reaches the end" (← st.value) 200
+  let _ ← r.im.pointerEvent (scrollAt 50 50 ⟨0, -1⟩)
+  checkEq "wheel: pinned at the end" (← st.value) 200
+  checkEq "wheel: never bands" (← st.overscroll) 0
+  -- Drag past the end to raise a band, then wheel: the band snaps.
+  let _ ← r.im.pointerEvent (pressAt 50 80)
+  let _ ← r.im.pointerEvent (moveTo 50 10)
+  check "wheel: the drag banded past the end" ((← st.overscroll) < 0)
+  let _ ← r.im.pointerEvent (releaseAt 50 10)
+  let _ ← r.im.pointerEvent (scrollAt 50 50 ⟨0, 1⟩)
+  checkEq "wheel: snaps a standing band" (← st.overscroll) 0
+  checkEq "wheel: and scrolls normally" (← st.value) 150
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -1352,6 +1517,12 @@ def run : IO Unit := do
   nestedCrossAxis
   threeLevelCascade
   dispatchEndFinalizer
+  dragRubberBand
+  bounceOvershootThenSettle
+  bounceOptOut
+  catchDuringBounce
+  nestedBounceLandsOnOwner
+  wheelNoBounce
   transformZoomFires
   transformStealsFromScrollable
   transformCancelDrops

@@ -32,6 +32,12 @@ material). `Compose/Runtime/SlotVal.lean` is the only module allowed to use
 - tests: `SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy lake exe test`
   (`COMPOSE_TEST_GROUP=<Name>` for one group)
 - headless demo smoke: `scripts/smoke-demos.sh` (uses `COMPOSE_MAX_FRAMES`)
+- GPU smoke (real driver, local-only): `scripts/smoke-gpu.sh` — Metal/MSL
+  pass plus a SPIR-V pass over MoltenVK (`COMPOSE_GPU_DRIVER=vulkan` forces
+  the driver; skipped where no Vulkan loader exists)
+- shader regen: after editing `shaders/*` run `scripts/gen-shaders.sh`
+  (glslc + spirv-val → `Gpu/SpirvBlobs.lean`; stale blobs fail `lake build`
+  via `include_str` pins)
 - clean: `lake clean`
 
 All SDL video/render/event calls happen on the main thread only — never in

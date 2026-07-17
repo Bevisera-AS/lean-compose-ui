@@ -62,6 +62,12 @@ outlive Android's surface recreation, cheap enough to not matter anywhere
 else. See `WindowContext.presentGrace`. -/
 def presentGracePasses : Nat := 60
 
+/-- Consecutive `RenderBackend.render` exceptions tolerated before
+`renderFrame` rethrows (see `WindowContext.renderFailures`): ~one second of
+frames — long enough to ride out an Android surface swap, short enough that
+a genuinely dead device still crashes loudly. -/
+def renderFailureLimit : Nat := 60
+
 /-- Repaint passes owed per pointer event on `surfaceSwapGrace` platforms
 (≈ half a second, re-armed by every press/move): Android paces batched
 input delivery by the app's consumption, so gestures need frames flowing
@@ -262,7 +268,8 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       keyHandlers := ← IO.mkRef #[]
       focusManager := ← IO.mkRef none
       modalFocusHook := ← IO.mkRef fun _ _ => pure ()
-      bringIntoViewPending := ← IO.mkRef false }
+      bringIntoViewPending := ← IO.mkRef false
+      renderFailures := ← IO.mkRef 0 }
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame
@@ -476,7 +483,29 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := t
       if let some n ← fm.focused then
         n.bringIntoView ctx.scheduler
   let (list, _) ← DrawScope.record density ctx.root.drawTree
-  let presented ← ctx.backend.render config.clearColor list mayBlock
+  -- A backend render can throw *transiently*: the Vulkan swapchain acquire
+  -- fails (the lean-sdl3 binding throws) while Android recreates the surface
+  -- behind a resume or rotation. Log, keep the frame requested, and retry;
+  -- rethrow only once an unbroken failure streak says the device is
+  -- genuinely gone. The counter resets on every successful render.
+  let presented? ←
+    try
+      let p ← ctx.backend.render config.clearColor list mayBlock
+      ctx.renderFailures.set 0
+      pure (some p)
+    catch e =>
+      let n := (← ctx.renderFailures.get) + 1
+      ctx.renderFailures.set n
+      if n ≥ renderFailureLimit then
+        throw e
+      Sdl.logError (msg := s!"Compose: render failed ({n}/{renderFailureLimit}), retrying: {e}")
+      -- Pace the retries to frame length: an instant rethrow loop would
+      -- exhaust the streak in milliseconds, well inside a surface swap.
+      IO.sleep 16
+      pure none
+  match presented? with
+  | none => ctx.requestFrame
+  | some presented =>
   if presented then
     let before ← ctx.framesRendered.get
     ctx.framesRendered.modify (· + 1)

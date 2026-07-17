@@ -390,6 +390,35 @@ private def bringIntoViewOnFocusAndIme : IO Unit := do
   checkEq "reveal e2e: dismissing the keyboard re-clamps into range"
     (← sc.value) 120
 
+/-- `renderFrame` rides out transient backend-render exceptions (an Android
+surface swap can make the Vulkan swapchain acquire throw): logs, re-arms the
+frame, resets the streak on success — and still rethrows once the streak
+hits `renderFailureLimit` (a genuinely dead device must crash loudly). -/
+private def renderErrorResilience : IO Unit := do
+  let ctx ← boot <| Box (modifier := Modifier.size 50 50 |>.background .red)
+  let failing ← IO.mkRef true
+  let real := ctx.backend
+  let ctx := { ctx with
+    backend := { real with
+      render := fun clear list mayBlock => do
+        if ← failing.get then
+          throw (IO.userError "synthetic swapchain loss")
+        real.render clear list mayBlock } }
+  renderFrame ctx cfg
+  check "resilience: first render failure survives" ((← ctx.renderFailures.get) == 1)
+  check "resilience: a failed frame re-arms needsFrame" (← ctx.needsFrame.get)
+  renderFrame ctx cfg
+  check "resilience: the failure streak counts up" ((← ctx.renderFailures.get) == 2)
+  failing.set false
+  renderFrame ctx cfg
+  check "resilience: success resets the streak" ((← ctx.renderFailures.get) == 0)
+  check "resilience: the retried frame presented" ((← ctx.framesRendered.get) > 0)
+  -- The rethrow path: a streak one short of the limit plus one more failure.
+  failing.set true
+  ctx.renderFailures.set (renderFailureLimit - 1)
+  let threw ← try renderFrame ctx cfg; pure false catch _ => pure true
+  check "resilience: a streak at the limit rethrows" threw
+
 /-- The App group. -/
 def run : IO Unit := do
   rendersComposition
@@ -406,5 +435,6 @@ def run : IO Unit := do
   idleStepBlocks
   timerWakesAndRenders
   lifecyclePausesAndResumes
+  renderErrorResilience
 
 end Tests.App

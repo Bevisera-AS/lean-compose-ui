@@ -259,6 +259,12 @@ structure WindowContext where
   cleared. Raised by focus gains and IME inset changes — see
   `requestBringIntoView`. -/
   bringIntoViewPending : IO.Ref Bool
+  /-- Consecutive `RenderBackend.render` failures (exceptions, not skipped
+  frames). `renderFrame` retries transient throws — a Vulkan swapchain
+  acquire can fail while Android recreates the surface behind a resume —
+  and rethrows once the streak shows the device is genuinely gone. Reset
+  on every successful render. -/
+  renderFailures : IO.Ref Nat
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app

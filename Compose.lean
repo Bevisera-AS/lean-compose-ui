@@ -42,6 +42,8 @@ public import Compose.Animation.Content
 public meta import Compose.Animation.Content
 public import Compose.Animation.Decay
 public meta import Compose.Animation.Decay
+public import Compose.Animation.SplineDecay
+public meta import Compose.Animation.SplineDecay
 public import Compose.Animation.Animatable
 public meta import Compose.Animation.Animatable
 public import Compose.Animation.AnimateAsState

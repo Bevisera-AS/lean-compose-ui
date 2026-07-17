@@ -13,7 +13,12 @@ public section
 # GPU shaders & pipelines (`Compose/Ui/Draw/Gpu/Shaders.lean`)
 
 The MSL shader sources (runtime-compiled — probe-verified the Metal backend
-accepts MSL source) and the three M-b graphics pipelines:
+accepts MSL source) and the graphics pipelines. Each MSL shader has a GLSL
+dialect twin in `shaders/` compiled to SPIR-V and embedded via
+`Gpu/SpirvBlobs.lean` (`scripts/gen-shaders.sh`) — `Pipelines.create` picks
+the dialect the device accepts (Metal → MSL, Vulkan → SPIR-V). Keep the two
+dialects in lockstep; both cite the `#guard`-tested formula twins in
+`Gpu/Sdf.lean`. The six pipelines:
 
 - **quad**: instanced unit triangle strips (corners from `vertex_id`, all
   attributes instance-rate at `quadStride`), SDF fill/stroke coverage plus a
@@ -446,21 +451,35 @@ structure Pipelines where
   no blending — overwrites its cleared target). -/
   blur : GraphicsPipeline
 
-/-- Compile the MSL shaders and build the three pipelines against `target`
-(the swapchain's native format for on-screen rendering; rgba8 for offscreen
-targets later). Shaders are released after pipeline creation (probe-verified
-safe); the returned pipelines must stay reachable while bound. -/
+/-- Build the six pipelines against `target` (the swapchain's native format
+for on-screen rendering; rgba8 for offscreen targets later), compiling the
+shader dialect the device accepts: MSL source where available (Metal —
+desktop path unchanged), else the embedded SPIR-V blobs from
+`Gpu/SpirvBlobs.lean` (Vulkan: Android, or MoltenVK via
+`COMPOSE_GPU_DRIVER=vulkan`). Shaders are released after pipeline creation
+(probe-verified safe); the returned pipelines must stay reachable while
+bound. -/
 def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := do
-  let shader (src entry : String) (stage : ShaderStage) (samplers : UInt32 := 0)
-      (uniforms : UInt32 := 0) : IO Shader :=
-    dev.createShader
-      { code := src.toUTF8, entrypoint := entry, format := .msl, stage
-        numSamplers := samplers, numUniformBuffers := uniforms }
+  let formats ← dev.getShaderFormats
+  let useSpirv := !formats.has .msl && formats.has .spirv
+  if !formats.has .msl && !formats.has .spirv then
+    throw <| IO.userError
+      s!"GPU device supports neither MSL nor SPIR-V shaders (formats {formats.val})"
+  let shader (msl : String) (spv : ByteArray) (entry : String) (stage : ShaderStage)
+      (samplers : UInt32 := 0) (uniforms : UInt32 := 0) : IO Shader :=
+    if useSpirv then
+      dev.createShader
+        { code := spv, entrypoint := "main", format := .spirv, stage
+          numSamplers := samplers, numUniformBuffers := uniforms }
+    else
+      dev.createShader
+        { code := msl.toUTF8, entrypoint := entry, format := .msl, stage
+          numSamplers := samplers, numUniformBuffers := uniforms }
   let targetInfo : GraphicsPipelineTargetInfo :=
     { colorTargetDescriptions := #[{ format := target, blendState := premulBlend }] }
   -- quad: one instance-rate vertex buffer, 9 float4 attributes
-  let quadVs ← shader quadMsl "quad_vertex" .vertex (uniforms := 1)
-  let quadFs ← shader quadMsl "quad_fragment" .fragment
+  let quadVs ← shader quadMsl quadVertSpv "quad_vertex" .vertex (uniforms := 1)
+  let quadFs ← shader quadMsl quadFragSpv "quad_fragment" .fragment
   let quad ← dev.createGraphicsPipeline
     { vertexShader := quadVs, fragmentShader := quadFs
       vertexInputState :=
@@ -474,8 +493,8 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   quadVs.release
   quadFs.release
   -- shadow: one instance-rate vertex buffer, 3 float4 attributes
-  let shadowVs ← shader shadowMsl "shadow_vertex" .vertex (uniforms := 1)
-  let shadowFs ← shader shadowMsl "shadow_fragment" .fragment
+  let shadowVs ← shader shadowMsl shadowVertSpv "shadow_vertex" .vertex (uniforms := 1)
+  let shadowFs ← shader shadowMsl shadowFragSpv "shadow_fragment" .fragment
   let shadow ← dev.createGraphicsPipeline
     { vertexShader := shadowVs, fragmentShader := shadowFs
       vertexInputState :=
@@ -489,8 +508,8 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   shadowVs.release
   shadowFs.release
   -- mesh: pos float2 @0, color float4 @8
-  let meshVs ← shader meshMsl "mesh_vertex" .vertex (uniforms := 1)
-  let meshFs ← shader meshMsl "mesh_fragment" .fragment
+  let meshVs ← shader meshMsl meshVertSpv "mesh_vertex" .vertex (uniforms := 1)
+  let meshFs ← shader meshMsl meshFragSpv "mesh_fragment" .fragment
   let mesh ← dev.createGraphicsPipeline
     { vertexShader := meshVs, fragmentShader := meshFs
       vertexInputState :=
@@ -503,8 +522,10 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   meshVs.release
   meshFs.release
   -- glyph: pos float2 @0, uv float2 @8, color float4 @16
-  let glyphVs ← shader glyphMsl "tex_vertex" .vertex (uniforms := 1)
-  let glyphFs ← shader glyphMsl "tex_fragment" .fragment (samplers := 1)
+  -- texVertSpv serves both glyph and layer (the MSL vertex twins are
+  -- byte-identical bodies; SPIR-V entrypoints are all `main`)
+  let glyphVs ← shader glyphMsl texVertSpv "tex_vertex" .vertex (uniforms := 1)
+  let glyphFs ← shader glyphMsl glyphFragSpv "tex_fragment" .fragment (samplers := 1)
   let glyph ← dev.createGraphicsPipeline
     { vertexShader := glyphVs, fragmentShader := glyphFs
       vertexInputState :=
@@ -518,8 +539,8 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   glyphVs.release
   glyphFs.release
   -- layer: the glyph vertex layout with the premultiplied-composite fragment
-  let layerVs ← shader layerMsl "layer_vertex" .vertex (uniforms := 1)
-  let layerFs ← shader layerMsl "layer_fragment" .fragment (samplers := 1)
+  let layerVs ← shader layerMsl texVertSpv "layer_vertex" .vertex (uniforms := 1)
+  let layerFs ← shader layerMsl layerFragSpv "layer_fragment" .fragment (samplers := 1)
   let layer ← dev.createGraphicsPipeline
     { vertexShader := layerVs, fragmentShader := layerFs
       vertexInputState :=
@@ -535,8 +556,8 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   -- blur: no vertex buffers (corners from `vertex_id`; geometry from the
   -- vertex uniform), fragment uniform + sampler, blending off (the pass
   -- overwrites its cleared target).
-  let blurVs ← shader blurMsl "blur_vertex" .vertex (uniforms := 1)
-  let blurFs ← shader blurMsl "blur_fragment" .fragment (samplers := 1) (uniforms := 1)
+  let blurVs ← shader blurMsl blurVertSpv "blur_vertex" .vertex (uniforms := 1)
+  let blurFs ← shader blurMsl blurFragSpv "blur_fragment" .fragment (samplers := 1) (uniforms := 1)
   let blur ← dev.createGraphicsPipeline
     { vertexShader := blurVs, fragmentShader := blurFs
       primitiveType := .triangleStrip

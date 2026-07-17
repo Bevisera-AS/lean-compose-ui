@@ -9,10 +9,12 @@ public section
 # GPU SDF math, pure twins (`Compose/Ui/Draw/Gpu/Sdf.lean`)
 
 The signed-distance-field, coverage, and Gaussian-shadow math the GPU quad and
-shadow fragment shaders evaluate (`Gpu/Shaders.lean`), duplicated as pure Lean
-functions so the formulas are compile-time-tested by `#guard`s even though MSL
-source is not. Every function here must stay in lockstep with its MSL twin —
-the shader strings cite these names.
+shadow fragment shaders evaluate, duplicated as pure Lean functions so the
+formulas are compile-time-tested by `#guard`s even though shader source is
+not. Every function here must stay in lockstep with its twins in *both*
+shader dialects — the MSL strings in `Gpu/Shaders.lean` and the GLSL sources
+in `shaders/` (compiled into `Gpu/SpirvBlobs.lean`) — each of which cites
+these names, and vice versa.
 
 The shadow math is Evan Wallace's analytic rounded-rectangle Gaussian
 (closed-form `erf` integral along x, 4-sample midpoint quadrature along y over

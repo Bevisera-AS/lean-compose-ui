@@ -37,7 +37,7 @@ namespace Compose.Draw.Gpu
 open Sdl.Gpu
 
 /-- The process-wide GPU device (SDL_GPU supports one device claiming many
-windows; MSL shader format, debug mode via `COMPOSE_GPU_DEBUG`). -/
+windows; MSL or SPIR-V shader format, debug mode via `COMPOSE_GPU_DEBUG`). -/
 private initialize deviceRef : IO.Ref (Option Device) ← IO.mkRef none
 
 /-- The last prepared frame's batch statistics — the GPU analog of the debug
@@ -46,12 +46,17 @@ initialize frameStats : IO.Ref FrameStats ← IO.mkRef {}
 
 /-- The shared device, created on first use. Throws where SDL_GPU has no
 backend (always under the dummy video driver — the GPU backend is real-driver
-only). -/
+only). The format mask offers MSL and SPIR-V — Metal picks MSL, Vulkan picks
+SPIR-V (`Pipelines.create` selects the matching shader sources).
+`COMPOSE_GPU_DRIVER` forces a specific SDL_GPU driver (e.g. `vulkan` on macOS
+runs the SPIR-V pipelines over MoltenVK — the desktop validation path for the
+Android port). -/
 def getDevice : IO Device := do
   if let some d := ← deviceRef.get then
     return d
   let debug := (← IO.getEnv "COMPOSE_GPU_DEBUG").isSome
-  let d ← createDevice .msl (debugMode := debug)
+  let driver ← IO.getEnv "COMPOSE_GPU_DRIVER"
+  let d ← createDevice (ShaderFormat.msl ||| .spirv) (debugMode := debug) (name := driver)
   d.setAllowedFramesInFlight 2
   deviceRef.set (some d)
   return d

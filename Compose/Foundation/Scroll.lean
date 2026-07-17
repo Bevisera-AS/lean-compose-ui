@@ -311,6 +311,9 @@ private def scrollWheelHandler (state : ScrollState) (vertical : Bool) :
   if notches == 0 then return .zero
   -- A user wheel is a mutation too: cancel any running scroll animation.
   let _ ← state.interrupt
+  -- Wheels never rubber-band (AOSP skips edge effects for SOURCE_MOUSE);
+  -- snapping also frees a bounce the interrupt just froze.
+  if (← state.overscrollState.cell.get) != 0 then state.overscrollState.set 0
   let moved ← state.scrollBy ((if vertical then -notches else notches) * wheelScrollStep)
   if moved == 0 then return .zero
   return if vertical then ⟨0, notches⟩ else ⟨notches, 0⟩
@@ -338,9 +341,21 @@ remainder on its own axis, republishing what it leaves, and flinging a
 published end-stop velocity on release — while a consumed move with no
 leftover (a slider's) still deadens it. Mirrors the drag half of
 `Modifier.scrollable`'s touch handling plus the spirit of its nested-scroll
-dispatch. -/
+dispatch.
+
+Overscroll (`bounce`, default on): dragging past a range end grows the
+rubber band with whatever motion *no* ancestor consumed either
+(`PointerEvent.onDispatchEnd` — the edge effect belongs to the gesture
+owner after its ancestors decline, Android's innermost rule; `follow`
+never bounces); while the band is stretched further moves feed it directly
+(content pinned at the edge, nothing bubbles out) and a reversal unwinds
+it before normal scrolling resumes. Release springs the band back —
+absorbing the gesture velocity when stretched, or bouncing off the stop
+with the velocity no ancestor flung. A press catches a mid-flight spring
+like it catches a fling; a caught band that ends up not owning the gesture
+(click, cross-axis, an inner drag) settles on its own. -/
 private partial def scrollDragHandler (state : ScrollState) (vertical : Bool)
-    (scope : PointerInputScope) : UiTask Unit :=
+    (bounce : Bool) (scope : PointerInputScope) : UiTask Unit :=
   idle
 where
   axisOf (p : Offset) : Float32 := if vertical then p.y else p.x
@@ -354,6 +369,42 @@ where
     if motion != 0 then
       let moved ← state.scrollBy (-motion)
       ev.setLeftover (mkLeftover (unconsumedMotion motion moved) (crossOf l))
+  /-- Let a caught-but-unclaimed band go: a press froze the spring (the
+  catch interrupt), so a gesture that ends without owning the band —
+  click, window leave, someone else's drag — must release it. -/
+  settleCaught : UiTask Unit := do
+    if bounce then
+      if (← state.overscrollState.cell.get) != 0 then
+        let _ ← UiTask.launch (state.settleOverscroll 0)
+  /-- One owned move: while the band is stretched the motion feeds it in raw
+  (pre-band) space — same direction stretches further with nothing
+  published (the finger is on the band), a reversal unwinds it and scrolls
+  the crossing remainder — otherwise scroll and publish as always; the
+  dispatch-end hook then grows the band with whatever motion no ancestor
+  consumed either. -/
+  dragMove (ev : PointerEvent) (motion cross : Float32) : IO Unit := do
+    let o ← if bounce then state.overscrollState.cell.get else pure 0
+    let motion ← do
+      if o != 0 then
+        let d ← state.viewportSizeState.cell.get
+        let raw := rubberBandInverse o d + motion
+        if raw * o > 0 then
+          state.overscrollState.set (rubberBand raw d)
+          pure 0
+        else
+          state.overscrollState.set 0
+          pure raw
+      else pure motion
+    let moved ← state.scrollBy (-motion)
+    ev.setLeftover (mkLeftover (unconsumedMotion motion moved) cross)
+    if bounce then
+      ev.onDispatchEnd fun l? => do
+        if let some l := l? then
+          let m := axisOf l
+          if m != 0 && (← state.maxValueState.cell.get) > 0 then
+            let d ← state.viewportSizeState.cell.get
+            let o ← state.overscrollState.cell.get
+            state.overscrollState.set (rubberBand (rubberBandInverse o d + m) d)
   /-- No gesture in flight: a primary press catches a running fling and arms
   tracking (even when a child consumed it — gesture boundaries stay visible
   to a final-pass observer). The pressing pointer owns the session. -/
@@ -382,8 +433,9 @@ where
         | some l =>
           let _ ← state.interrupt
           consumeLeftover ev l
+          settleCaught
           follow pid
-        | none => dead pid
+        | none => settleCaught; dead pid
       else
         let vt := vt.add ev.timestamp (axisOf ev.position)
         let slop := (← scope.density).dpToPx dragScrollSlop
@@ -393,16 +445,17 @@ where
           ev.consume
           let _ ← state.interrupt
           -- Start from the slop edge, not with a jump over the dead zone.
-          let motion := d - (if d > 0 then slop else -slop)
-          let moved ← state.scrollBy (-motion)
-          ev.setLeftover (mkLeftover (unconsumedMotion motion moved) 0)
+          dragMove ev (d - (if d > 0 then slop else -slop)) 0
           drag pid ev.position vt
         else if (crossOf ev.position - crossOf origin).abs > slop then
+          settleCaught
           dead pid
         else
           track pid origin vt
-    | .release => if ev.button == some .left then idle else track pid origin vt
-    | .exit => idle
+    | .release =>
+      if ev.button == some .left then settleCaught; idle
+      else track pid origin vt
+    | .exit => settleCaught; idle
     | _ => track pid origin vt
   /-- Past the slop, gesture stolen: moves scroll (consumed; the unconsumed
   remainder and the untouched cross axis published for outer containers),
@@ -415,31 +468,43 @@ where
     | .move =>
       ev.consume
       let a := axisOf ev.position
-      let motion := a - axisOf last
-      let moved ← state.scrollBy (-motion)
-      ev.setLeftover (mkLeftover (unconsumedMotion motion moved)
-        (crossOf ev.position - crossOf last))
+      dragMove ev (a - axisOf last) (crossOf ev.position - crossOf last)
       drag pid ev.position (vt.add ev.timestamp a)
     | .release =>
       if ev.button == some .left then
         ev.consume
         -- Content moves opposite the pointer; carry that into the fling.
         let pv := vt.velocity ev.timestamp
-        let v := -pv
-        let can ← if v > 0 then state.canScrollForward
-                  else if v < 0 then state.canScrollBackward
-                  else pure false
-        if can then
+        let o ← if bounce then state.overscrollState.cell.get else pure 0
+        if o != 0 then
+          -- The gesture ends on the stretched band: it absorbs the
+          -- velocity (no fling, nothing for the ancestors).
           ev.setLeftover (mkLeftover 0 0)
-          let den ← scope.density
-          let _ ← UiTask.launch (state.fling v (SplineDecay.spec (.ofDensity den)))
+          let _ ← UiTask.launch (state.settleOverscroll pv)
         else
-          -- End-stopped (or still): the fling velocity bubbles out.
-          ev.setLeftover (mkLeftover pv 0)
+          let v := -pv
+          let can ← if v > 0 then state.canScrollForward
+                    else if v < 0 then state.canScrollBackward
+                    else pure false
+          if can then
+            ev.setLeftover (mkLeftover 0 0)
+            let den ← scope.density
+            let _ ← UiTask.launch (state.fling v (SplineDecay.spec (.ofDensity den)))
+          else
+            -- End-stopped (or still): the fling velocity bubbles out —
+            -- and whatever no ancestor flings bounces off this stop.
+            ev.setLeftover (mkLeftover pv 0)
+            if bounce then
+              if (← state.maxValueState.cell.get) > 0 then
+                let sched ← UiTask.scheduler
+                ev.onDispatchEnd fun l? => do
+                  let pv' := (l?.map axisOf).getD 0
+                  if pv' != 0 then
+                    let _ ← sched.launch (state.settleOverscroll pv')
         idle
       else
         drag pid last vt
-    | .exit => idle
+    | .exit => settleCaught; idle
     | _ => drag pid last vt
   /-- An inner scrollable owns the gesture but ran out of range: consume the
   leftover it publishes on this container's axis (republishing the rest, so
@@ -485,22 +550,28 @@ namespace Modifier
 height, the container reports `min(content, incoming max)`, clips to its
 bounds, offsets the content by `-state.value`, consumes wheel events when
 it can scroll in their direction, and drag-scrolls with a fling on release
-(see `scrollDragHandler`). Mirrors
+(see `scrollDragHandler`). `bounce` (default on, Android behavior)
+rubber-bands touch drags past the range ends and springs back — wheel
+scrolling never bounces. Mirrors
 `androidx.compose.foundation.verticalScroll(state)`. -/
-def verticalScroll (state : ScrollState) (m : Modifier := {}) : Modifier :=
+def verticalScroll (state : ScrollState) (m : Modifier := {})
+    (bounce : Bool := true) : Modifier :=
   m.onScroll (scrollWheelHandler state true)
-  |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.v") state.id)
-      (scrollDragHandler state true) (pass := .final)
+  |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.v")
+        (mixKeys state.id (if bounce then 1 else 0)))
+      (scrollDragHandler state true bounce) (pass := .final)
   |>.clip .rectangle
   |>.customLayout (mixKeys (stringKey "Compose.Modifier.verticalScroll") state.id)
       (scrollLayoutBlock state true)
 
 /-- Horizontal counterpart of `verticalScroll`. Mirrors
 `androidx.compose.foundation.horizontalScroll(state)`. -/
-def horizontalScroll (state : ScrollState) (m : Modifier := {}) : Modifier :=
+def horizontalScroll (state : ScrollState) (m : Modifier := {})
+    (bounce : Bool := true) : Modifier :=
   m.onScroll (scrollWheelHandler state false)
-  |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.h") state.id)
-      (scrollDragHandler state false) (pass := .final)
+  |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.h")
+        (mixKeys state.id (if bounce then 1 else 0)))
+      (scrollDragHandler state false bounce) (pass := .final)
   |>.clip .rectangle
   |>.customLayout (mixKeys (stringKey "Compose.Modifier.horizontalScroll") state.id)
       (scrollLayoutBlock state false)

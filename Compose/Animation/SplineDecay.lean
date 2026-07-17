@@ -2,6 +2,8 @@ module
 
 public import Compose.Core.Density
 public meta import Compose.Core.Density
+public import Compose.Animation.Decay
+public meta import Compose.Animation.Decay
 
 public section
 
@@ -182,6 +184,14 @@ def velocityAt (d : SplineDecay) (v0 : Float32) (tNs : UInt64) : Float32 :=
 /-- The decay for a display: real density in, AOSP friction default. -/
 def ofDensity (den : Density) (friction : Float32 := 0.015) : SplineDecay :=
   { friction, density := den.density }
+
+/-- `SplineDecay` as a `DecaySpec` — the default touch-fling decay. -/
+def spec (d : SplineDecay := {}) : DecaySpec where
+  absVelocityThreshold := d.absVelocityThreshold
+  velocityAt := d.velocityAt
+  valueAt := d.valueAt
+  targetValue := d.targetValue
+  durationNs := d.durationNs
 
 -- The fixture: v₀ = 1000 px/s at density 1 (hand-derived from the exact
 -- formulas: l = ln(350/778.35) ≈ −0.7992, duration = e^(l/1.3582) ≈ 0.5552 s,

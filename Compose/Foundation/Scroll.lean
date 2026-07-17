@@ -10,6 +10,8 @@ public import Compose.Runtime.Macro
 public meta import Compose.Runtime.Macro
 public import Compose.Animation.Spec
 public meta import Compose.Animation.Spec
+public import Compose.Animation.SplineDecay
+public meta import Compose.Animation.SplineDecay
 public import Compose.Animation.Decay
 public meta import Compose.Animation.Decay
 
@@ -189,10 +191,12 @@ where
 `velocity` (px/s, positive = toward the end), driven by the frame clock —
 the fling a drag-scroll hands off to on release. Interruptible like
 `animateScrollTo` (any newer mutation stands it down at its next frame);
-stops early on reaching either end of the range. Mirrors the fling half of
-`ScrollableState` + `DefaultFlingBehavior`. -/
+stops early on reaching either end of the range. The default curve is
+Android's spline decay at mdpi (the drag handler passes the real display
+density); pass `ExponentialDecay.spec` for the exponential curve. Mirrors
+the fling half of `ScrollableState` + `DefaultFlingBehavior`. -/
 partial def fling (s : ScrollState) (velocity : Float32)
-    (decay : ExponentialDecay := {}) : UiTask Unit := do
+    (decay : DecaySpec := SplineDecay.spec {}) : UiTask Unit := do
   if velocity.abs ≤ decay.absVelocityThreshold then return
   let myGen ← s.interrupt
   let x0 ← s.valueState.cell.get
@@ -379,7 +383,8 @@ where
                   else pure false
         if can then
           ev.setLeftover (mkLeftover 0 0)
-          let _ ← UiTask.launch (state.fling v)
+          let den ← scope.density
+          let _ ← UiTask.launch (state.fling v (SplineDecay.spec (.ofDensity den)))
         else
           -- End-stopped (or still): the fling velocity bubbles out.
           ev.setLeftover (mkLeftover pv 0)
@@ -410,7 +415,8 @@ where
                     else pure false
           if can then
             ev.setLeftover (mkLeftover 0 (crossOf l))
-            let _ ← UiTask.launch (state.fling v)
+            let den ← scope.density
+            let _ ← UiTask.launch (state.fling v (SplineDecay.spec (.ofDensity den)))
         idle
       else follow pid
     | .exit => idle

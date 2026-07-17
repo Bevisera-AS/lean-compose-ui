@@ -75,6 +75,31 @@ def durationNs (d : ExponentialDecay) (v0 : Float32) : UInt64 :=
 
 end ExponentialDecay
 
+/-- A decay curve as first-class closures — the target-less analog of an
+`AnimationSpec`, mirroring `FloatDecayAnimationSpec`. Concrete curves
+(`ExponentialDecay` here, `SplineDecay` in
+`Compose/Animation/SplineDecay.lean`) stay plain `#guard`-tested
+structures; consumers (`ScrollState.fling`) take this. -/
+structure DecaySpec where
+  /-- The fling ends when the speed falls under this (px/s). -/
+  absVelocityThreshold : Float32
+  /-- Velocity at `tNs` after starting at `v0` px/s. -/
+  velocityAt : (v0 : Float32) → (tNs : UInt64) → Float32
+  /-- Position at `tNs`, starting from `x0` at `v0` px/s. -/
+  valueAt : (x0 v0 : Float32) → (tNs : UInt64) → Float32
+  /-- Where the fling converges from `x0` at `v0` px/s. -/
+  targetValue : (x0 v0 : Float32) → Float32
+  /-- Time until the speed decays under `absVelocityThreshold`. -/
+  durationNs : (v0 : Float32) → UInt64
+
+/-- `ExponentialDecay` as a `DecaySpec`. -/
+def ExponentialDecay.spec (d : ExponentialDecay := {}) : DecaySpec where
+  absVelocityThreshold := d.absVelocityThreshold
+  velocityAt := d.velocityAt
+  valueAt := d.valueAt
+  targetValue := d.targetValue
+  durationNs := d.durationNs
+
 end Compose
 
 end

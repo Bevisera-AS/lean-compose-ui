@@ -305,11 +305,56 @@ private def firstFrameHookFires : IO Unit := do
   check "firstFrame: presented again" ((← ctx.framesRendered.get) == 2)
   check "firstFrame: hook stays fired-once" ((← fired.get) == 1)
 
+/-- The IME-inset bridge end to end: a user event of the window's `imeEvent`
+type publishes the keyboard inset (code = window px), `Modifier.imePadding`
+shrinks content clear of it, and `screenKeyboardHidden` restores. -/
+private def imeInsetPadding : IO Unit := do
+  let ctx ← boot <| Tests.restartable 1 do
+    Box (modifier := ← Modifier.imePadding) do
+      Box (modifier := Modifier.fillMaxSize |>.background .green)
+  let _ ← step ctx cfg
+  check "ime: full bleed before the keyboard" (colorNear (← pixel ctx 10 148) 0 255 0)
+  -- Keyboard opens 30 px tall.
+  dispatchEvent ctx cfg (.user ctx.imeEvent.val ⟨0, ⟨0⟩, 30⟩)
+  check "ime: the inset marks the frame dirty" (← ctx.needsFrame.get)
+  let _ ← step ctx cfg
+  check "ime: bottom padded clear of the keyboard"
+    (colorNear (← pixel ctx 10 148) 255 255 255)
+  check "ime: content sits above the keyboard" (colorNear (← pixel ctx 10 110) 0 255 0)
+  -- The SDL hidden event zeroes the inset even without a bridge push.
+  dispatchEvent ctx cfg (.screenKeyboardHidden ⟨0⟩)
+  let _ ← step ctx cfg
+  check "ime: hidden restores full bleed" (colorNear (← pixel ctx 10 148) 0 255 0)
+
+/-- `imePadding` under a safe-area bottom inset pads only the excess (their
+total is `max safe.bottom ime`, both measured from the window bottom). -/
+private def imePaddingSafeAreaOverlap : IO Unit := do
+  let ctx ← boot <| Tests.restartable 1 do
+    -- NB the inner `do`: it keeps the `← Modifier.imePadding` read inside
+    -- the provider (`<|` would lift the bind out to this outer block).
+    CompositionLocalProvider LocalWindowInsets { bottom := 20 } do
+      Box (modifier := ← Modifier.imePadding) do
+        Box (modifier := Modifier.fillMaxSize |>.background .green)
+  let _ ← step ctx cfg
+  dispatchEvent ctx cfg (.user ctx.imeEvent.val ⟨0, ⟨0⟩, 30⟩)
+  let _ ← step ctx cfg
+  check "ime overlap: pads only the excess over the safe bottom"
+    (colorNear (← pixel ctx 10 135) 0 255 0)
+  check "ime overlap: the excess strip is clear"
+    (colorNear (← pixel ctx 10 145) 255 255 255)
+  -- A keyboard shorter than the safe bottom adds nothing.
+  dispatchEvent ctx cfg (.user ctx.imeEvent.val ⟨0, ⟨0⟩, 15⟩)
+  let _ ← step ctx cfg
+  check "ime overlap: below the safe bottom nothing pads"
+    (colorNear (← pixel ctx 10 148) 0 255 0)
+
 /-- The App group. -/
 def run : IO Unit := do
   rendersComposition
   stateWriteRedraws
   firstFrameHookFires
+  imeInsetPadding
+  imePaddingSafeAreaOverlap
   resizeRemeasures
   windowSizeMatchesDensity
   quitHandling

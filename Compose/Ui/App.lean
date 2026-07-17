@@ -240,8 +240,14 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       textEngine := ← backend.createTextEngine }
   let densityState ← MutableState.create ({ density := if scale > 0 then scale else 1 } : Density)
   let safeAreaState ← MutableState.create ({} : WindowInsets)
+  let imeInsetState ← MutableState.create (0 : Dp)
+  -- The window's IME-inset channel: a platform bridge pushes this type with
+  -- code = keyboard inset px (see WindowContext.imeEvent).
+  let some imeEvent ← Sdl.registerEvents 1
+    | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
   let ctx : WindowContext :=
-    { window, backend, densityState, safeAreaState, scheduler, wakeEvent, textContext
+    { window, backend, densityState, safeAreaState, imeInsetState, imeEvent
+      scheduler, wakeEvent, textContext
       root := ← LayoutNode.create
       compositionCell := ← IO.mkRef none
       needsFrame := ← IO.mkRef true
@@ -423,9 +429,18 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     if config.surfaceSwapGrace then
       ctx.presentGrace.set gestureGracePasses
     let _ ← (← ctx.inputSink.get) event
-  | .user t _ =>
+  | .screenKeyboardHidden _ =>
+    -- Belt and braces alongside the bridge's own 0: a keyboard dismissed
+    -- behind the listener's back must not leave stale padding.
+    ctx.setImeInsetPx 0
+    ctx.requestFrame
+  | .user t e =>
     if t == ctx.wakeEvent.val then
       pure () -- wake events exist only to end a wait
+    else if t == ctx.imeEvent.val then
+      -- The platform IME bridge: code = keyboard inset in window pixels.
+      ctx.setImeInsetPx e.code
+      ctx.requestFrame
     else
       let _ ← (← ctx.inputSink.get) event
   | _ =>

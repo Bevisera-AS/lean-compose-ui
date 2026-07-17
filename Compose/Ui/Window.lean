@@ -88,6 +88,30 @@ and refreshed on `windowSafeAreaChanged`/resize/scale events; dynamic, so
 only actual readers recompose when system bars move. -/
 initialize LocalWindowInsets : CompositionLocal WindowInsets ← compositionLocalOf {}
 
+/-- Soft-keyboard inset `Dp` from a raw pixel height, converting window
+pixels to layout dp by `× pixelDensity ÷ density` exactly like
+`WindowInsets.ofSafeArea` (degenerate metrics fall back to factor 1;
+negative heights clamp to zero). -/
+def imeInsetOfPx (px : Int32) (pixelDensity density : Float32) : Dp :=
+  if pixelDensity > 0 && density > 0 then
+    ⟨(max px 0).toFloat32 * pixelDensity / density⟩
+  else
+    ⟨(max px 0).toFloat32⟩
+
+#guard imeInsetOfPx 0 1 3 == (0 : Dp)
+-- Android-style: window coords are pixels (pixelDensity 1), density 3 —
+-- a 396 px keyboard is a 132 dp inset.
+#guard imeInsetOfPx 396 1 3 == (132 : Dp)
+#guard imeInsetOfPx (-5) 1 1 == (0 : Dp)     -- clamped, never negative
+#guard imeInsetOfPx 300 0 0 == (300 : Dp)    -- unreported metrics: factor 1
+
+/-- The ambient soft-keyboard (IME) bottom inset (zero while the keyboard is
+closed — and always on desktop — or outside a window). Provided per window
+and refreshed live while the keyboard animates (see `WindowContext.imeEvent`);
+dynamic, so only actual readers recompose. Mirrors the bottom of
+`WindowInsets.ime`. -/
+initialize LocalImeInset : CompositionLocal Dp ← compositionLocalOf 0
+
 /-- The window's text stack: the shared `FontStore` and the renderer text
 engine both created by `bootstrap`. Consumed by `Material.Text` (and M11's
 `TextField`) to build `TextLayout`s. -/
@@ -163,6 +187,16 @@ structure WindowContext where
   `LocalWindowInsets` readers recompose when system bars/cutouts move
   (refreshed by `refreshSafeArea` on safe-area/resize/scale events). -/
   safeAreaState : MutableState WindowInsets
+  /-- Soft-keyboard (IME) bottom inset in `Dp`; a `MutableState` so
+  `LocalImeInset` readers recompose as the keyboard opens, animates, and
+  closes. Written by `setImeInsetPx` (the `imeEvent` bridge) and zeroed on
+  `screenKeyboardHidden`; stays 0 on desktop. -/
+  imeInsetState : MutableState Dp
+  /-- The registered SDL user event a platform layer pushes with `code` =
+  the keyboard inset in window pixels (LeAndroid's IME bridge installs its
+  listener with this type — see `Leandroid.Platform.installImeBridge`);
+  dispatch turns it into `setImeInsetPx`. -/
+  imeEvent : Sdl.EventType
   /-- Root of the layout tree (the composition's applier root). -/
   root : LayoutNode
   /-- The window's coroutine scheduler (wake = SDL user event push). -/
@@ -256,6 +290,14 @@ def refreshSafeArea (ctx : WindowContext) : IO Unit := do
       (WindowInsets.ofSafeArea safe ww wh pixelDensity density.density)
   catch _ => pure ()
 
+/-- Publish a new soft-keyboard inset from its raw pixel height (readers
+recompose; an unchanged value is skipped by the state's equality). Called by
+event dispatch for `imeEvent` pushes and `screenKeyboardHidden`. -/
+def setImeInsetPx (ctx : WindowContext) (px : Int32) : IO Unit := do
+  let pixelDensity ← try ctx.window.pixelDensity catch _ => pure 0
+  let density ← ctx.densityState.get
+  ctx.imeInsetState.set (imeInsetOfPx px pixelDensity density.density)
+
 /-- The raw SDL renderer of an `.sdlRenderer`-backed window — the test and
 screenshot escape hatch (`readPixels`, `coordinatesToWindow`). Throws for a
 GPU-backed window. -/
@@ -311,11 +353,13 @@ def wrapContent (ctx : WindowContext) (content : Composable Unit) : Composable U
   rootRestartable do
     let d ← ctx.densityState.get
     let insets ← ctx.safeAreaState.get
+    let ime ← ctx.imeInsetState.get
     CompositionLocalProvider LocalWindowContext (some ctx) <|
       CompositionLocalProvider LocalTextContext (some ctx.textContext) <|
         CompositionLocalProvider LocalScheduler (some ctx.scheduler) <|
           CompositionLocalProvider LocalWindowInsets insets <|
-            CompositionLocalProvider LocalDensity d content
+            CompositionLocalProvider LocalImeInset ime <|
+              CompositionLocalProvider LocalDensity d content
 
 end WindowContext
 
@@ -328,6 +372,18 @@ def Modifier.safeAreaPadding (m : Modifier := {}) : Composable Modifier := do
   let insets ← LocalWindowInsets.current
   return m.padding (left := some insets.left) (top := some insets.top)
     (right := some insets.right) (bottom := some insets.bottom)
+
+/-- Pad the bottom by the part of the soft-keyboard inset the safe-area
+bottom does not already cover, so content stays above the IME: combined with
+`Modifier.safeAreaPadding` the total bottom padding is `max safe.bottom ime`
+(both are measured from the window bottom). Zero on desktop and while the
+keyboard is closed. Mirrors `Modifier.imePadding()` — without Compose's
+consumed-inset propagation; the raw value stays readable via
+`LocalImeInset`. -/
+def Modifier.imePadding (m : Modifier := {}) : Composable Modifier := do
+  let ime ← LocalImeInset.current
+  let safe ← LocalWindowInsets.current
+  return m.padding (bottom := some (max 0 (ime - safe.bottom)))
 
 end Compose
 

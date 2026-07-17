@@ -264,6 +264,11 @@ cancellation: stop it via the returned `Job` or an internal liveness check
 protected def _root_.Compose.UiTask.launch (t : UiTask Unit) : UiTask Job :=
   ⟨fun s _ k => do k (← s.launch t)⟩
 
+/-- The ambient scheduler — for handing plain-`IO` callbacks (a pointer
+dispatch finalizer) something they can `Scheduler.launch` coroutines on. -/
+protected def _root_.Compose.UiTask.scheduler : UiTask Scheduler :=
+  ⟨fun s _ k => k s⟩
+
 /-- The earliest instant `runDue` would have work, or `none` when only a
 `wake` (frame schedule, event, task completion) can create work: `0` when
 the run queue is non-empty or a pending await already finished, otherwise

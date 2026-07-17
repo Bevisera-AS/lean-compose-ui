@@ -107,6 +107,16 @@ structure PointerEvent where
   /-- The leftover published so far this dispatch (`none` = no inner scroll
   handler spoke — see `setLeftover`). -/
   getLeftover : IO (Option Offset) := pure none
+  /-- Register a callback to run once this dispatch's leaf→root sweep
+  completes, with the leftover that survived every handler (see
+  `setLeftover`) — how a gesture owner, which dispatches *first*, learns
+  what no outer container consumed (the overscroll trigger: Android's edge
+  effect belongs to the innermost scrollable, after its ancestors decline).
+  Last writer wins — only the gesture owner registers. The callback runs
+  inside the dispatch: it must only write state or `Scheduler.launch` a
+  coroutine, never re-dispatch an event. Bound per `move`/`release`
+  dispatch; a no-op elsewhere. -/
+  onDispatchEnd : (Option Offset → IO Unit) → IO Unit := fun _ => pure ()
 
 instance : Inhabited PointerEvent := ⟨{ eventType := .press, position := .zero }⟩
 

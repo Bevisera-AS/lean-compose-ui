@@ -176,19 +176,25 @@ def dispatchToPath (path : Array HitTarget) (ev : PointerEvent)
   let consumed ← IO.mkRef false
   let ev := { ev with consume := consumed.set true, isConsumed := consumed.get }
   -- Moves and releases carry the nested-scroll leftover cell (the drag
-  -- analog of scrollRemaining below); the closures ride the event through
-  -- `deliver`'s copies, so handlers along the path share one cell.
-  let ev ← match ev.eventType with
-    | .move | .release => do
-      let leftover ← IO.mkRef (none : Option Offset)
-      pure { ev with setLeftover := fun o => leftover.set (some o)
-                     getLeftover := leftover.get }
-    | _ => pure ev
+  -- analog of scrollRemaining below) and the dispatch-end finalizer slot;
+  -- the closures ride the event through `deliver`'s copies, so handlers
+  -- along the path share one cell.
+  let leftover ← IO.mkRef (none : Option Offset)
+  let finalizer ← IO.mkRef (none : Option (Option Offset → IO Unit))
+  let ev := match ev.eventType with
+    | .move | .release =>
+      { ev with setLeftover := fun o => leftover.set (some o)
+                getLeftover := leftover.get
+                onDispatchEnd := fun f => finalizer.set (some f) }
+    | _ => ev
   let scrollRemaining ←
     if ev.eventType == .scroll then some <$> IO.mkRef ev.scrollDelta
     else pure none
   for i in [0:path.size] do
     (path[path.size - 1 - i]!).deliver ev ev.position scrollRemaining stealSlot
+  -- The sweep is synchronous (parked `awaitEvent`s wake inline), so a
+  -- registered finalizer runs here with the surviving leftover.
+  if let some f ← finalizer.get then f (← leftover.get)
   consumed.get
 
 namespace LayoutNode

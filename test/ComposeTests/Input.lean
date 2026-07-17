@@ -1153,6 +1153,40 @@ private def threeLevelCascade : IO Unit := do
   checkEq "cascade: further motion all outer" (← outer.value) 22
   let _ ← r.im.pointerEvent (releaseAt 50 30)
 
+/-- `onDispatchEnd` runs after the whole leaf→root sweep with the surviving
+leftover: the inner (gesture-owner analog) registers on each move, the outer
+final-pass observer rewrites the published leftover afterwards — the
+finalizer must see the outer's value, not the inner's. -/
+private partial def finalizerInner (log : IO.Ref (Array String))
+    (scope : PointerInputScope) : UiTask Unit := do
+  let ev ← scope.awaitEvent
+  if ev.eventType == .move then
+    ev.setLeftover ⟨0, 30⟩
+    ev.onDispatchEnd fun l? => do
+      let s := match l? with
+        | some l => s!"{l.x.toInt32},{l.y.toInt32}"
+        | none => "none"
+      log.modify (·.push s!"end:{s}")
+  finalizerInner log scope
+
+private partial def finalizerOuter (scope : PointerInputScope) : UiTask Unit := do
+  let ev ← scope.awaitEvent
+  if ev.eventType == .move then
+    if let some l ← ev.getLeftover then
+      ev.setLeftover ⟨l.x, l.y - 20⟩
+  finalizerOuter scope
+
+private def dispatchEndFinalizer : IO Unit := do
+  let log ← IO.mkRef (#[] : Array String)
+  let r ← rig <| Box (modifier := Modifier.size 100 100
+      |>.pointerInput 2 finalizerOuter (pass := .final)) do
+    leaf (Modifier.size 50 50 |>.pointerInput 1 (finalizerInner log) (pass := .final))
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  let _ ← r.im.pointerEvent (moveTo 12 12)
+  checkEq "dispatch-end: the finalizer sees the post-sweep leftover"
+    (← log.get) #["end:0,10"]
+  let _ ← r.im.pointerEvent (releaseAt 12 12)
+
 /-! ## Transform gestures -/
 
 /-- Record of one `onTransform` step. -/
@@ -1317,6 +1351,7 @@ def run : IO Unit := do
   nestedFlingNotAtStop
   nestedCrossAxis
   threeLevelCascade
+  dispatchEndFinalizer
   transformZoomFires
   transformStealsFromScrollable
   transformCancelDrops

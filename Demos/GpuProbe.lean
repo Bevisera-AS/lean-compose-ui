@@ -44,6 +44,9 @@ Probed, in order:
 14. Fractional-origin text (M-j): a run drawn at a fractional origin is
    byte-identical to the same run drawn at the `snapTextOrigin`-snapped
    integer origin.
+15. Cache invalidation: `dropImageTexCache` + `GpuRenderer.invalidateCaches`
+   (the backend's `invalidateCaches`) rerenders byte-identically — images
+   re-upload and the layer pool/frame buffers regrow lazily.
 
 Exit code is the number of failed checks; informational verdicts (cycle
 semantics, y-convention, winding) print as notes for the M-b design.
@@ -298,6 +301,31 @@ private def probePresentLoop (dev : Device) (window : Sdl.Window)
       presented := presented + 1
   note s!"presented {presented} frames; waitAndAcquire returned none {noneCount}×"
   check "presented at least one frame" (presented > 0)
+
+/-- ⑯ cache invalidation (the GPU backend's `invalidateCaches`): render an
+image + blurred-layer scene, drop the process image-texture cache and the
+renderer's pool/buffers, render again — the readback must be byte-identical
+(images re-upload and the pool/buffers regrow lazily), proving the reset
+path Android's `lowMemory` takes leaves no dangling references behind. -/
+private def probeInvalidate (r : Compose.Draw.Gpu.GpuRenderer) : IO Unit := do
+  IO.println "⑯ invalidateCaches → lazy re-upload, byte-identical rerender"
+  let img ← ImageBitmap.ofPixels 2 2 fun x y =>
+    match x, y with
+    | 0, 0 => .red
+    | 1, 0 => .green
+    | 0, 1 => .blue
+    | _, _ => .white
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawImage img ⟨10, 10, 50, 50⟩ (sampling := .nearest)
+    DrawScope.withLayer ⟨60, 10, 95, 50⟩ 1.0 (effect := .blur 2) do
+      DrawScope.drawRect (.solid .white) ⟨70, 20⟩ ⟨20, 20⟩
+    DrawScope.drawRect (.solid .red) ⟨100, 10⟩ ⟨30, 20⟩
+  let before ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 140 60
+  Compose.Draw.Gpu.dropImageTexCache
+  r.invalidateCaches
+  let after ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 140 60
+  check "invalidate: image cache and pool dropped without a hang" true
+  check "invalidate: rerender is byte-identical" (before.data == after.data)
 
 /-- ⑥ (SPIR-V-only variant): the same vsync present loop, driven through the
 production `GpuRenderer.render` path — the raw-MSL probe pipeline above is
@@ -837,6 +865,7 @@ def run : IO UInt32 := do
     note "⑬ raw-MSL fragment-uniform micro-probe skipped (the blur pipeline covers pushFragmentUniformData on SPIR-V)"
   probeBlur gpuRenderer swapchainFmt
   probeFractionalText gpuRenderer engine font
+  probeInvalidate gpuRenderer
   match raw with
   | some (_, windowPipe, ibuf) => probePresentLoop dev window windowPipe ibuf
   | none => probePresentLoopRenderer gpuRenderer

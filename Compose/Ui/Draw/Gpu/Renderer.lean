@@ -63,9 +63,19 @@ def getDevice : IO Device := do
 
 /-- Process-wide image texture cache: `ImageBitmap.id` → its premultiplied
 GPU texture (one shared device, so textures work across windows). Never
-evicted — images are immutable and id-keyed; textures live until process
-exit. -/
+evicted in steady state — images are immutable and id-keyed; textures live
+until process exit or a `dropImageTexCache` (backend `invalidateCaches`). -/
 private initialize imageTexCache : IO.Ref (Array (Nat × Texture)) ← IO.mkRef #[]
+
+/-- Release every cached image texture and forget the cache — the process-
+wide half of the GPU backend's `invalidateCaches` (`lowMemory` and the
+renderer-reset events). Textures re-upload lazily on the next frame that
+draws the image; SDL defers destruction of textures still referenced by
+in-flight frames. -/
+def dropImageTexCache : IO Unit := do
+  for (_, tex) in (← imageTexCache.get) do
+    tex.release
+  imageTexCache.set #[]
 
 /-- Upload one bitmap as a premultiplied `r8g8b8a8Unorm` texture: staging
 bytes from `ImageBitmap.premultipliedBytes`, one copy pass on `cb` (before
@@ -614,10 +624,13 @@ def GpuRenderer.renderOffscreen (r : GpuRenderer) (clear : Color)
   dl.release
   return bytes
 
-/-- Release the renderer's per-window GPU resources (pooled layer textures,
-frame buffers, pipelines, sampler). SDL defers destruction of anything still
-referenced by in-flight frames; call before releasing the window. -/
-def GpuRenderer.dispose (r : GpuRenderer) : IO Unit := do
+/-- Drop the renderer's per-window device caches — pooled layer textures and
+the grown frame/transfer buffers; everything rebuilds lazily on the next
+frame. SDL defers destruction of anything still referenced by in-flight
+frames, so no idle-wait is needed. Together with `dropImageTexCache` this
+implements the GPU backend's `RenderBackend.invalidateCaches` (`lowMemory`
+and the renderer-reset events); it is also the whole of `dispose`. -/
+def GpuRenderer.invalidateCaches (r : GpuRenderer) : IO Unit := do
   for e in (← r.pool.get) do
     e.tex.release
   r.pool.set #[]
@@ -630,6 +643,12 @@ def GpuRenderer.dispose (r : GpuRenderer) : IO Unit := do
   if let some tb := bufs.transfer then
     tb.release
   r.buffers.set {}
+
+/-- Release the renderer's per-window GPU resources (pooled layer textures,
+frame/transfer buffers). SDL defers destruction of anything still referenced
+by in-flight frames; call before releasing the window. -/
+def GpuRenderer.dispose (r : GpuRenderer) : IO Unit :=
+  r.invalidateCaches
 
 end Compose.Draw.Gpu
 

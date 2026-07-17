@@ -56,6 +56,16 @@ def create (window : Sdl.Window) : IO RenderBackend := do
       return (x * scale, y * scale)
     setVSync := fun target => applyVSync dev window target
     sdlRenderer? := none
+    invalidateCaches := do
+      -- Drop device-owned caches (process-wide image textures + this
+      -- window's layer pool and frame buffers); everything re-uploads
+      -- lazily. Text-engine glyph atlases are excluded by design: SDL_ttf
+      -- owns them and live `Text` objects reference them — and the GPU
+      -- device (unlike a GL context) survives Android backgrounding, so
+      -- they are never stale. No idle-wait: SDL defers destruction of
+      -- resources still referenced by in-flight frames.
+      Gpu.dropImageTexCache
+      renderer.invalidateCaches
     dispose := do
       -- Wait for in-flight frames before the swapchain goes away; release
       -- the renderer's pooled textures and buffers deterministically

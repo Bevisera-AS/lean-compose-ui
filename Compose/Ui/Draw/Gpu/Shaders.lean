@@ -2,6 +2,8 @@ module
 
 public import Compose.Ui.Draw.Gpu.Instance
 public meta import Compose.Ui.Draw.Gpu.Instance
+public import Compose.Ui.Draw.Gpu.SpirvBlobs
+public meta import Compose.Ui.Draw.Gpu.SpirvBlobs
 public import Sdl
 public meta import Sdl
 

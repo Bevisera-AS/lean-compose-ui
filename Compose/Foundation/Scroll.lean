@@ -203,34 +203,6 @@ where
       s.scrollTo (conv.fromVector (spec.valueAt conv play startVec targetVec v0))
       loop myGen conv startVec targetVec v0 dur? t0
 
-/-- Decay-animate the offset from its current position with initial
-`velocity` (px/s, positive = toward the end), driven by the frame clock —
-the fling a drag-scroll hands off to on release. Interruptible like
-`animateScrollTo` (any newer mutation stands it down at its next frame);
-stops early on reaching either end of the range. The default curve is
-Android's spline decay at mdpi (the drag handler passes the real display
-density); pass `ExponentialDecay.spec` for the exponential curve. Mirrors
-the fling half of `ScrollableState` + `DefaultFlingBehavior`. -/
-partial def fling (s : ScrollState) (velocity : Float32)
-    (decay : DecaySpec := SplineDecay.spec {}) : UiTask Unit := do
-  if velocity.abs ≤ decay.absVelocityThreshold then return
-  let myGen ← s.interrupt
-  let x0 ← s.valueState.cell.get
-  let t0 ← UiTask.awaitFrame
-  loop myGen x0 t0 (decay.durationNs velocity)
-where
-  loop (myGen : Nat) (x0 : Float32) (t0 dur : UInt64) : UiTask Unit := do
-    let ns ← UiTask.awaitFrame
-    if (← s.mutationGen.get) != myGen then return
-    let t := if ns ≤ t0 then 0 else ns - t0
-    let target :=
-      if t ≥ dur then decay.targetValue x0 velocity
-      else decay.valueAt x0 velocity t
-    s.scrollTo target
-    -- Done, or ran into an end of the range (`scrollTo` clamped the rest).
-    unless t ≥ dur || target < 0 || target > (← s.maxValueState.cell.get) do
-      loop myGen x0 t0 dur
-
 /-- The spring phase of `settleOverscroll` under an already-claimed
 mutation generation — `fling`'s edge bounce continues into it without
 re-interrupting itself. -/
@@ -260,6 +232,45 @@ drag's residual velocity buys as overshoot). Interruptible like `fling`:
 any newer mutation stands it down at its next frame. -/
 def settleOverscroll (s : ScrollState) (v0 : Float32 := 0) : UiTask Unit := do
   s.settleOverscrollFrom (← s.interrupt) v0
+
+/-- Decay-animate the offset from its current position with initial
+`velocity` (px/s, positive = toward the end), driven by the frame clock —
+the fling a drag-scroll hands off to on release. Interruptible like
+`animateScrollTo` (any newer mutation stands it down at its next frame);
+stops early on reaching either end of the range — with `bounce`, the
+residual velocity at the edge carries into the overscroll spring instead
+(overshoot-then-settle; a *nested* fling that edges out mid-flight bounces
+locally rather than handing the residual to a parent, the documented cut
+alongside mid-flight handoff). The default curve is Android's spline decay
+at mdpi (the drag handler passes the real display density); pass
+`ExponentialDecay.spec` for the exponential curve. Mirrors the fling half
+of `ScrollableState` + `DefaultFlingBehavior`. -/
+partial def fling (s : ScrollState) (velocity : Float32)
+    (decay : DecaySpec := SplineDecay.spec {}) (bounce : Bool := false) :
+    UiTask Unit := do
+  if velocity.abs ≤ decay.absVelocityThreshold then return
+  let myGen ← s.interrupt
+  let x0 ← s.valueState.cell.get
+  let t0 ← UiTask.awaitFrame
+  loop myGen x0 t0 (decay.durationNs velocity)
+where
+  loop (myGen : Nat) (x0 : Float32) (t0 dur : UInt64) : UiTask Unit := do
+    let ns ← UiTask.awaitFrame
+    if (← s.mutationGen.get) != myGen then return
+    let t := if ns ≤ t0 then 0 else ns - t0
+    let target :=
+      if t ≥ dur then decay.targetValue x0 velocity
+      else decay.valueAt x0 velocity t
+    s.scrollTo target
+    -- Done, or ran into an end of the range (`scrollTo` clamped the rest).
+    if target < 0 || target > (← s.maxValueState.cell.get) then
+      -- Edge hit: with bounce, the remaining momentum stretches the band
+      -- (same claimed generation — the spring is this fling's tail; the
+      -- value pins, so visual continuity puts −v into overscroll space).
+      if bounce then
+        s.settleOverscrollFrom myGen (-(decay.velocityAt velocity t))
+    else
+      unless t ≥ dur do loop myGen x0 t0 dur
 
 end ScrollState
 
@@ -489,7 +500,8 @@ where
           if can then
             ev.setLeftover (mkLeftover 0 0)
             let den ← scope.density
-            let _ ← UiTask.launch (state.fling v (SplineDecay.spec (.ofDensity den)))
+            let _ ← UiTask.launch
+              (state.fling v (SplineDecay.spec (.ofDensity den)) (bounce := bounce))
           else
             -- End-stopped (or still): the fling velocity bubbles out —
             -- and whatever no ancestor flings bounces off this stop.
@@ -529,7 +541,8 @@ where
           if can then
             ev.setLeftover (mkLeftover 0 (crossOf l))
             let den ← scope.density
-            let _ ← UiTask.launch (state.fling v (SplineDecay.spec (.ofDensity den)))
+            let _ ← UiTask.launch
+              (state.fling v (SplineDecay.spec (.ofDensity den)) (bounce := bounce))
         idle
       else follow pid
     | .exit => idle

@@ -348,6 +348,48 @@ private def imePaddingSafeAreaOverlap : IO Unit := do
   check "ime overlap: below the safe bottom nothing pads"
     (colorNear (← pixel ctx 10 148) 0 255 0)
 
+/-- The bring-into-view trigger chain end to end: focus gain (through
+`installInput`'s hook) scrolls a below-the-fold focusable into view, and an
+IME inset change re-reveals it above the keyboard — both serviced by
+`renderFrame` after remeasure, so the reveal sees the post-`imePadding`
+layout. Animations run on the window's real-time scheduler here, so the
+test steps with short sleeps under a bounded budget. -/
+private def bringIntoViewOnFocusAndIme : IO Unit := do
+  let sc ← ScrollState.create
+  let ctx ← boot <| Tests.restartable 1 do
+    Box (modifier := ← Modifier.imePadding) do
+      Box (modifier := Modifier.fillMaxSize |>.verticalScroll sc) do
+        Column do
+          Box (modifier := Modifier.size 200 250)
+          Box (modifier := Modifier.size 200 20 |>.focusable)
+  let im ← installInput ctx
+  let _ ← step ctx cfg
+  checkEq "reveal e2e: content overflows" (← sc.maxValue) 120
+  -- Tab focuses the offscreen box: the service is post-measure, next frame.
+  check "reveal e2e: tab handled" (← im.keyEvent { key := .tab })
+  check "reveal e2e: focus marks the frame dirty" (← ctx.needsFrame.get)
+  let settle (want : Float32) : IO Unit := do
+    for _ in [0:200] do
+      if (← sc.value) == want then break
+      IO.sleep 5
+      let _ ← step ctx cfg
+  settle 120
+  checkEq "reveal e2e: focus scrolls the field into view" (← sc.value) 120
+  -- The keyboard opens 30 px: the viewport shrinks and the field re-reveals.
+  dispatchEvent ctx cfg (.user ctx.imeEvent.val ⟨0, ⟨0⟩, 30⟩)
+  settle 150
+  checkEq "reveal e2e: the IME inset re-reveals above the keyboard"
+    (← sc.value) 150
+  checkEq "reveal e2e: the range grew with the shrunk viewport"
+    (← sc.maxValue) 150
+  -- Hidden: the viewport grows back and the value re-clamps to the new
+  -- max — the field stays at the bottom edge, nothing animates.
+  dispatchEvent ctx cfg (.screenKeyboardHidden ⟨0⟩)
+  let _ ← step ctx cfg
+  let _ ← step ctx cfg
+  checkEq "reveal e2e: dismissing the keyboard re-clamps into range"
+    (← sc.value) 120
+
 /-- The App group. -/
 def run : IO Unit := do
   rendersComposition
@@ -355,6 +397,7 @@ def run : IO Unit := do
   firstFrameHookFires
   imeInsetPadding
   imePaddingSafeAreaOverlap
+  bringIntoViewOnFocusAndIme
   resizeRemeasures
   windowSizeMatchesDensity
   quitHandling

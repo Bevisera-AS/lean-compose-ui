@@ -1491,6 +1491,83 @@ private def wheelNoBounce : IO Unit := do
   checkEq "wheel: snaps a standing band" (← st.overscroll) 0
   checkEq "wheel: and scrolls normally" (← st.value) 150
 
+/-! ## Bring into view -/
+
+/-- The reveal dispatcher: a below-the-fold focusable scrolls the minimal
+amount into view (bottom to the edge), an above-the-fold one the other way
+(top to the edge), an already-visible request neither moves nor interrupts,
+and a wheel mid-reveal stands the animation down. -/
+private def bringIntoViewReveal : IO Unit := do
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      Column do
+        leaf (Modifier.size 100 150)
+        leaf (Modifier.size 100 20 |>.focusable)
+        leaf (Modifier.size 100 130)
+  check "reveal: tab focuses the target" (← r.im.keyEvent { key := .tab })
+  let some n ← r.im.focus.focused | throw (IO.userError "reveal: nothing focused")
+  n.bringIntoView r.s
+  advance r.s r.clock (ms 1)
+  for i in [0:26] do
+    r.s.tickFrame (ms (16 + 16 * i.toUInt64))
+  checkEq "reveal below: minimal scroll, bottom to the edge" (← st.value) 70
+  -- Already visible: nothing moves, nothing is interrupted. (The real
+  -- pipeline services requests post-measure — the rig remeasures by hand.)
+  r.settle
+  let gen ← st.mutationGen.get
+  n.bringIntoView r.s
+  advance r.s r.clock (ms 450)
+  r.s.tickFrame (ms 466)
+  checkEq "reveal: already visible moves nothing" (← st.value) 70
+  checkEq "reveal: already visible never interrupts" (← st.mutationGen.get) gen
+  -- Above the fold: top to the edge.
+  st.scrollTo 200
+  r.settle
+  n.bringIntoView r.s
+  advance r.s r.clock (ms 500)
+  for i in [0:26] do
+    r.s.tickFrame (ms (516 + 16 * i.toUInt64))
+  checkEq "reveal above: minimal scroll, top to the edge" (← st.value) 150
+  -- A wheel mid-reveal interrupts: the animation stands down.
+  st.scrollTo 0
+  r.settle
+  n.bringIntoView r.s
+  advance r.s r.clock (ms 1000)
+  r.s.tickFrame (ms 1016)
+  r.s.tickFrame (ms 1032)
+  let _ ← r.im.pointerEvent (scrollAt 50 50 ⟨0, -1⟩)
+  let atWheel ← st.value
+  for i in [0:26] do
+    r.s.tickFrame (ms (1048 + 16 * i.toUInt64))
+  checkEq "reveal: a wheel mid-flight stands the animation down"
+    (← st.value) atWheel
+
+/-- A deep focusable inside two nested scrollables: both containers animate,
+the outer seeing the bounds pre-compensated by the inner's upcoming shift. -/
+private def bringIntoViewNested : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll outer) do
+      Column do
+        leaf (Modifier.size 100 120)
+        Box (modifier := Modifier.size 100 100 |>.verticalScroll inner) do
+          Column do
+            leaf (Modifier.size 100 130)
+            leaf (Modifier.size 100 20 |>.focusable)
+  checkEq "nested reveal: inner range" (← inner.maxValue) 50
+  checkEq "nested reveal: outer range" (← outer.maxValue) 120
+  check "nested reveal: tab focuses the deep target" (← r.im.keyEvent { key := .tab })
+  let some n ← r.im.focus.focused | throw (IO.userError "nested reveal: nothing focused")
+  n.bringIntoView r.s
+  advance r.s r.clock (ms 1)
+  for i in [0:26] do
+    r.s.tickFrame (ms (16 + 16 * i.toUInt64))
+  checkEq "nested reveal: the inner reveals within its viewport" (← inner.value) 50
+  checkEq "nested reveal: the outer accounts for the inner's shift"
+    (← outer.value) 120
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -1523,6 +1600,8 @@ def run : IO Unit := do
   catchDuringBounce
   nestedBounceLandsOnOwner
   wheelNoBounce
+  bringIntoViewReveal
+  bringIntoViewNested
   transformZoomFires
   transformStealsFromScrollable
   transformCancelDrops

@@ -58,14 +58,22 @@ open Sdl.Gpu Compose Compose.Draw
 
 initialize failures : IO.Ref Nat ← IO.mkRef 0
 
+/-- Probe output: stdout, plus SDL's log (→ logcat) on Android, where stdout
+goes nowhere — `scripts/smoke-gpu-android.sh`-style wrappers grep the log
+for the verdict markers. -/
+private def say (msg : String) : IO Unit := do
+  IO.println msg
+  if (← Sdl.getPlatform) == "Android" then
+    Sdl.logInfo (msg := msg)
+
 private def check (name : String) (cond : Bool) : IO Unit := do
   if cond then
-    IO.println s!"  ok: {name}"
+    say s!"  ok: {name}"
   else
     failures.modify (· + 1)
-    IO.println s!"  FAIL: {name}"
+    say s!"  FAIL: {name}"
 
-private def note (msg : String) : IO Unit := IO.println s!"  {msg}"
+private def note (msg : String) : IO Unit := say s!"  {msg}"
 
 /-! ## Little-endian packers (instance data + uniforms) -/
 
@@ -166,7 +174,7 @@ private def px (bytes : ByteArray) (x y : Nat) : UInt8 × UInt8 × UInt8 × UInt
 into an offscreen rgba8 target, then `downloadFromTexture` pixel asserts. -/
 private def probeOffscreenDraw (dev : Device) (pipe : GraphicsPipeline)
     (ibuf : Buffer) : IO Unit := do
-  IO.println "③ firstInstance + offscreen render + readback"
+  say "③ firstInstance + offscreen render + readback"
   let tex ← dev.createTexture
     { format := .r8g8b8a8Unorm, usage := .colorTarget, width := 64, height := 64 }
   let dl ← dev.createTransferBuffer .download (64 * 64 * 4)
@@ -194,10 +202,11 @@ private def probeOffscreenDraw (dev : Device) (pipe : GraphicsPipeline)
 /-- ⑤ of the spike list: GPU text engine draw data — the y-axis convention and
 winding are the design's biggest unknowns; print everything. Returns the
 engine and font for the display-list probe. -/
-private def probeTextEngine (dev : Device) : IO (Sdl.Ttf.TextEngine × Sdl.Ttf.Font) := do
-  IO.println "④ GPU text engine + gpuDrawData"
+private def probeTextEngine (dev : Device) (fontPath : String) :
+    IO (Sdl.Ttf.TextEngine × Sdl.Ttf.Font) := do
+  say "④ GPU text engine + gpuDrawData"
   Sdl.Ttf.init
-  let font ← Sdl.Ttf.openFont "assets/fonts/Roboto-Regular.ttf" 16
+  let font ← Sdl.Ttf.openFont fontPath 16
   let engine ← Sdl.Ttf.createGpuTextEngine dev
   note s!"engine default winding: {repr (← engine.gpuWinding)}"
   let text ← engine.createText font "Hi jump!"
@@ -238,7 +247,7 @@ private def probeTextEngine (dev : Device) : IO (Sdl.Ttf.TextEngine × Sdl.Ttf.F
 preserve the earlier upload? Informational — decides whether M-b may reuse one
 transfer buffer within a frame (e.g. for layer passes). -/
 private def probeTransferCycle (dev : Device) : IO Unit := do
-  IO.println "⑤ transfer-buffer cycle semantics"
+  say "⑤ transfer-buffer cycle semantics"
   let buf ← dev.createBuffer .vertex 8
   let tb ← dev.createTransferBuffer .upload 4
   let dl ← dev.createTransferBuffer .download 8
@@ -268,9 +277,8 @@ private def probeTransferCycle (dev : Device) : IO Unit := do
 `waitAndAcquireSwapchainTexture`, submitting on `none`. Resize the window to
 observe live-resize behavior; close it to end early. -/
 private def probePresentLoop (dev : Device) (window : Sdl.Window)
-    (pipe : GraphicsPipeline) (ibuf : Buffer) : IO Unit := do
-  let frames := ((← IO.getEnv "GPU_PROBE_FRAMES").bind (·.toNat?)).getD 180
-  IO.println s!"⑥ present loop ({frames} frames @ vsync; resize to test, close to end)"
+    (pipe : GraphicsPipeline) (ibuf : Buffer) (frames : Nat) : IO Unit := do
+  say s!"⑥ present loop ({frames} frames @ vsync; resize to test, close to end)"
   try dev.setSwapchainParameters window .sdr .vsync
   catch e => note s!"setSwapchainParameters failed: {e}"
   let mut noneCount := 0
@@ -308,7 +316,7 @@ renderer's pool/buffers, render again — the readback must be byte-identical
 (images re-upload and the pool/buffers regrow lazily), proving the reset
 path Android's `lowMemory` takes leaves no dangling references behind. -/
 private def probeInvalidate (r : Compose.Draw.Gpu.GpuRenderer) : IO Unit := do
-  IO.println "⑯ invalidateCaches → lazy re-upload, byte-identical rerender"
+  say "⑯ invalidateCaches → lazy re-upload, byte-identical rerender"
   let img ← ImageBitmap.ofPixels 2 2 fun x y =>
     match x, y with
     | 0, 0 => .red
@@ -331,9 +339,9 @@ private def probeInvalidate (r : Compose.Draw.Gpu.GpuRenderer) : IO Unit := do
 production `GpuRenderer.render` path — the raw-MSL probe pipeline above is
 unavailable where the device has no MSL format (Vulkan), and exercising the
 real render entry point there is exactly what the Android port needs. -/
-private def probePresentLoopRenderer (r : Compose.Draw.Gpu.GpuRenderer) : IO Unit := do
-  let frames := ((← IO.getEnv "GPU_PROBE_FRAMES").bind (·.toNat?)).getD 180
-  IO.println s!"⑥ present loop (production render path; {frames} frames @ vsync; close to end)"
+private def probePresentLoopRenderer (r : Compose.Draw.Gpu.GpuRenderer)
+    (frames : Nat) : IO Unit := do
+  say s!"⑥ present loop (production render path; {frames} frames @ vsync; close to end)"
   try r.dev.setSwapchainParameters r.window .sdr .vsync
   catch e => note s!"setSwapchainParameters failed: {e}"
   let (list, _) ← DrawScope.record {} do
@@ -366,7 +374,7 @@ so a pipeline local must stay reachable past its draw or Lean's RC frees it
 right after `bindPipeline` (SDL debug validation then reads the freed struct
 and aborts with a nonsense "missing vertex sampler" assert). -/
 private def probeFragmentUniform (dev : Device) : IO Unit := do
-  IO.println "⑬ vertex-buffer-free pipeline + pushFragmentUniformData"
+  say "⑬ vertex-buffer-free pipeline + pushFragmentUniformData"
   let src := "
 #include <metal_stdlib>
 using namespace metal;
@@ -436,7 +444,7 @@ pixel-assert solid interiors, clipping, and that text marked the target. -/
 private def probeDisplayList (r : Compose.Draw.Gpu.GpuRenderer)
     (engine : Sdl.Ttf.TextEngine) (font : Sdl.Ttf.Font)
     (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
-  IO.println "⑦ display list → GPU renderer → offscreen pixels"
+  say "⑦ display list → GPU renderer → offscreen pixels"
   let text ← engine.createText font "Hi"
   let (list, _) ← DrawScope.record {} do
     DrawScope.drawRect (.solid .red) ⟨10, 10⟩ ⟨30, 20⟩
@@ -473,7 +481,7 @@ double-blend), the analytic Gaussian shadow, exact rounded clipping of
 arbitrary content, and the ripple's masked circle quad. -/
 private def probeLayersShadows (r : Compose.Draw.Gpu.GpuRenderer)
     (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
-  IO.println "⑧ layers, shadows, rounded clip → offscreen pixels"
+  say "⑧ layers, shadows, rounded clip → offscreen pixels"
   let (list, _) ← DrawScope.record {} do
     -- group opacity: two overlapping red rects inside one 50 % layer
     DrawScope.withLayer ⟨10, 10, 90, 50⟩ 0.5 do
@@ -519,7 +527,7 @@ GPU mesh pipeline — the donut hole and the fill-rule discrimination must
 survive the whole encode/replay path. -/
 private def probePaths (r : Compose.Draw.Gpu.GpuRenderer)
     (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
-  IO.println "⑨ path fills → mesh pipeline → offscreen pixels"
+  say "⑨ path fills → mesh pipeline → offscreen pixels"
   let donut := Path.build (fillRule := .evenOdd) do
     PathM.addOval ⟨10, 10, 70, 70⟩
     PathM.addOval ⟨25, 25, 55, 55⟩
@@ -554,7 +562,7 @@ nearest scaling, source-rect cuts, and the ambient alpha fold must survive
 the resolve/encode/replay path. -/
 private def probeImages (r : Compose.Draw.Gpu.GpuRenderer)
     (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
-  IO.println "⑩ image upload + textured quads → offscreen pixels"
+  say "⑩ image upload + textured quads → offscreen pixels"
   let img ← ImageBitmap.ofPixels 2 2 fun x y =>
     match x, y with
     | 0, 0 => .red
@@ -594,7 +602,7 @@ survives the layer pass. -/
 private def probeTransforms (r : Compose.Draw.Gpu.GpuRenderer)
     (engine : Sdl.Ttf.TextEngine) (font : Sdl.Ttf.Font)
     (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
-  IO.println "⑪ graphics-layer transforms → mapped composites → offscreen pixels"
+  say "⑪ graphics-layer transforms → mapped composites → offscreen pixels"
   let text ← engine.createText font "Hi"
   let (list, _) ← DrawScope.record {} do
     -- 90° rotation about the layer center: left red / right blue → top/bottom
@@ -644,7 +652,7 @@ them — and the IGN dither must perturb gradient fills by ±1 step while
 leaving solid fills byte-exact. -/
 private def probeGradients (r : Compose.Draw.Gpu.GpuRenderer)
     (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
-  IO.println "⑫ radial/sweep gradient quads + IGN dither → offscreen pixels"
+  say "⑫ radial/sweep gradient quads + IGN dither → offscreen pixels"
   let radial : Brush := .radial .red .blue ⟨50, 50⟩ 40
   let sweep : Brush := .sweepGradient #[(0, .red), (1, .blue)] ⟨140, 50⟩
   -- A shallow horizontal ramp (16 quantization steps over 180 px — ~11 px
@@ -728,7 +736,7 @@ composes with group alpha and spreads past the recorded bounds (the `3σ + 1`
 margin). -/
 private def probeBlur (r : Compose.Draw.Gpu.GpuRenderer)
     (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
-  IO.println "⑭ layer blur → separable Gaussian passes → offscreen pixels"
+  say "⑭ layer blur → separable Gaussian passes → offscreen pixels"
   let (list, _) ← DrawScope.record {} do
     -- impulse: a 1 px white line, σ = 4
     DrawScope.withBlur ⟨10, 10, 90, 70⟩ 4 do
@@ -773,7 +781,7 @@ the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
 byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
 private def probeFractionalText (r : Compose.Draw.Gpu.GpuRenderer)
     (engine : Sdl.Ttf.TextEngine) (font : Sdl.Ttf.Font) : IO Unit := do
-  IO.println "⑮ fractional text origin snaps to the integer rendering"
+  say "⑮ fractional text origin snaps to the integer rendering"
   let text ← engine.createText font "Hi jump!"
   let render (origin : Offset) : IO ByteArray := do
     let (list, _) ← DrawScope.record {} do
@@ -792,11 +800,13 @@ private def probeFractionalText (r : Compose.Draw.Gpu.GpuRenderer)
   check "fractional origin renders byte-identical to the snapped origin"
     (frac.data == snapped.data)
 
-def run : IO UInt32 := do
-  IO.println "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
+def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
+    (frames? : Option Nat := none) : IO UInt32 := do
+  let frames := frames?.getD (((← IO.getEnv "GPU_PROBE_FRAMES").bind (·.toNat?)).getD 180)
+  say "== gpu-probe: SDL_GPU runtime facts for the GPU renderer backend =="
   Sdl.init .video
 
-  IO.println "① device + swapchain"
+  say "① device + swapchain"
   note s!"built-in GPU drivers: {← getDrivers}"
   let driver ← IO.getEnv "COMPOSE_GPU_DRIVER"
   check "MSL or SPIR-V shader format supported"
@@ -822,7 +832,7 @@ def run : IO UInt32 := do
   -- embedded SPIR-V blobs), and the present loop runs on the production
   -- render path instead.
   let raw ← if hasMsl then do
-      IO.println "② MSL shader pair + instance-rate quad pipelines"
+      say "② MSL shader pair + instance-rate quad pipelines"
       let vs ← dev.createShader
         { code := mslSource.toUTF8, entrypoint := "vmain", format := .msl, stage := .vertex
           numUniformBuffers := 1 }
@@ -845,12 +855,12 @@ def run : IO UInt32 := do
       cb.submit
       pure (some (offscreenPipe, windowPipe, ibuf))
     else do
-      IO.println "② raw-MSL micro-probes skipped (device has no MSL format)"
+      say "② raw-MSL micro-probes skipped (device has no MSL format)"
       pure none
 
   if let some (offscreenPipe, _, ibuf) := raw then
     probeOffscreenDraw dev offscreenPipe ibuf
-  let (engine, font) ← probeTextEngine dev
+  let (engine, font) ← probeTextEngine dev fontPath
   probeTransferCycle dev
   let gpuRenderer ← Compose.Draw.Gpu.GpuRenderer.create dev window
   probeDisplayList gpuRenderer engine font swapchainFmt
@@ -867,14 +877,12 @@ def run : IO UInt32 := do
   probeFractionalText gpuRenderer engine font
   probeInvalidate gpuRenderer
   match raw with
-  | some (_, windowPipe, ibuf) => probePresentLoop dev window windowPipe ibuf
-  | none => probePresentLoopRenderer gpuRenderer
+  | some (_, windowPipe, ibuf) => probePresentLoop dev window windowPipe ibuf frames
+  | none => probePresentLoopRenderer gpuRenderer frames
 
   dev.releaseWindow window
   let n ← failures.get
-  IO.println (if n == 0 then "== gpu-probe: all checks passed ==" else s!"== gpu-probe: {n} FAILED ==")
+  say (if n == 0 then "== gpu-probe: all checks passed ==" else s!"== gpu-probe: {n} FAILED ==")
   return UInt32.ofNat n
 
 end Demos.GpuProbe
-
-def main : IO UInt32 := Demos.GpuProbe.run

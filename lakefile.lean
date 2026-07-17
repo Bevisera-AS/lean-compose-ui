@@ -198,13 +198,21 @@ transfer-buffer cycle, present loop). Real driver only — SDL_GPU has no
 dummy-video backend — so it is not in the headless suite; run
 `lake exe gpu-probe` locally (`Demos/GpuProbe.lean`). -/
 lean_exe «gpu-probe» where
-  root := `Demos.GpuProbe
+  root := `Demos.GpuProbeMain
 
 /-- M-d parity diff: renders identical display lists through the GPU renderer
 (offscreen) and the software SDL backend and asserts per-scene pixel-difference
 bounds. Real driver only; `scripts/smoke-gpu.sh` runs it (`Demos/GpuParity.lean`). -/
 lean_exe «gpu-parity» where
-  root := `Demos.GpuParity
+  root := `Demos.GpuParityMain
+
+/-- The GPU probe/parity *bodies* as an importable lib (no `_root_.main` —
+the exe shims are `Demos.GpuProbeMain`/`Demos.GpuParityMain`), so downstream
+packages can wrap them: LeAndroid ships `Demos.GpuProbe.run` as an on-device
+APK. Not a default target — real drivers only. -/
+lean_lib GpuChecks where
+  srcDir := "."
+  globs := #[.one `Demos.GpuProbe, .one `Demos.GpuParity]
 
 /-- M12 demo *libraries* (model + UI, no `_root_.main`): the reusable modules
 the demo exes wrap and the MT suites import. Declared as their own

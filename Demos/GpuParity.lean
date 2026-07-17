@@ -360,5 +360,3 @@ def run : IO UInt32 := do
   return UInt32.ofNat n
 
 end Demos.GpuParity
-
-def main : IO UInt32 := Demos.GpuParity.run

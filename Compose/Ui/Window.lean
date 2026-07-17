@@ -148,12 +148,18 @@ structure OverlayEntry where
   of where the `Popup` sits, like Compose's popup composition inheriting the
   parent `CompositionContext`. -/
   locals : IO.Ref LocalMap
+  /-- Backdrop-blur radius (dp) this overlay requests for the window's *base*
+  content while it is open (`0` = none; forced to 0 while the overlay is
+  inert/exiting). The host applies the max over all registered entries —
+  see `WindowContext.recomputeBackdropBlur`. -/
+  blurBehind : IO.Ref Float32
 
 instance : Nonempty OverlayEntry :=
   ⟨{ id := 0
      content := Classical.choice inferInstance
      revision := Classical.choice inferInstance
-     locals := Classical.choice inferInstance }⟩
+     locals := Classical.choice inferInstance
+     blurBehind := Classical.choice inferInstance }⟩
 
 /-- An app-level key handler registered by an overlay (M10): `capture`
 handlers run *before* focused-node routing (a focusable popup grabs the
@@ -242,6 +248,11 @@ structure WindowContext where
   order). A state so the overlay host recomposes on register/unregister;
   never-equal policy — entries carry no useful equality. -/
   overlays : MutableState (Array OverlayEntry)
+  /-- The base content's backdrop-blur radius (dp): the max `blurBehind`
+  over the registered overlays, recomputed on register/unregister and each
+  owner refresh (`recomputeBackdropBlur`). Observed by the overlay host's
+  base-content wrapper, which applies `Modifier.blur` when positive. -/
+  backdropBlurState : MutableState Float32
   /-- Overlay key handlers (see `OverlayKeyHandler`); consulted by the input
   router. -/
   keyHandlers : IO.Ref (Array OverlayKeyHandler)
@@ -335,14 +346,25 @@ def requestBringIntoView (ctx : WindowContext) : IO Unit := do
   ctx.bringIntoViewPending.set true
   ctx.requestFrame
 
+/-- Recompute the base content's backdrop-blur radius: the max `blurBehind`
+over the registered overlays (state equality skips no-op writes, so this is
+cheap to call on every overlay refresh). -/
+def recomputeBackdropBlur (ctx : WindowContext) : IO Unit := do
+  let mut r : Float32 := 0
+  for e in (← ctx.overlays.cell.get) do
+    r := max r (← e.blurBehind.get)
+  ctx.backdropBlurState.set r
+
 /-- Append an overlay entry (drawn on top of all earlier ones). The state
 write recomposes the overlay host. -/
-def registerOverlay (ctx : WindowContext) (e : OverlayEntry) : IO Unit :=
+def registerOverlay (ctx : WindowContext) (e : OverlayEntry) : IO Unit := do
   ctx.overlays.modify (·.push e)
+  ctx.recomputeBackdropBlur
 
 /-- Remove the overlay entry with the given id. -/
-def unregisterOverlay (ctx : WindowContext) (id : Nat) : IO Unit :=
+def unregisterOverlay (ctx : WindowContext) (id : Nat) : IO Unit := do
   ctx.overlays.modify (·.filter (·.id != id))
+  ctx.recomputeBackdropBlur
 
 /-- Register an overlay key handler (innermost = last registered wins the
 first look; see `OverlayKeyHandler`). -/

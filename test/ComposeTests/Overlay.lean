@@ -499,6 +499,46 @@ private def dialogModal : IO Unit := do
   r.settle
   checkEq "dialog: button clickable again after dismissal" (← clicks.get) 2
 
+/-- `blurBehind`: an open dialog wraps the window's *base* content in a blur
+layer (radius 8 dp → σ 4 px at density 1), the dialog's own content stays
+outside it, and closing removes the layer and resets the state. (Pixels
+can't assert this rig — the software renderer documentedly ignores blur —
+so the recorded display list is the witness; gpu-probe ⑭ covers the GPU
+pixels.) -/
+private def dialogBlurBehind : IO Unit := do
+  let open' ← MutableState.create true
+  let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white) do
+    Box (modifier := Modifier.size 60 40 |>.background .red)
+    Tests.restartable 1 do
+      if ← open'.get then
+        withGroup 1 <| Dialog (open'.set false) (blurBehind := 8)
+          (Box (modifier := Modifier.size 80 40 |>.background .blue))
+      else
+        withGroup 2 (pure ())
+  r.settle
+  checkEq "blur-behind: the max radius lands in the window state"
+    (← r.ctx.backdropBlurState.cell.get) 8
+  let (frame, _) ← Compose.Draw.DrawScope.record {} r.ctx.root.drawTree
+  let isBlurLayer : Compose.Draw.Prim → Bool := fun p =>
+    match p with
+    | .layer _ _ props _ => (props.effect matches .blur _)
+    | _ => false
+  match frame.find? isBlurLayer with
+  | some (.layer _ _ props inner) =>
+    let sigma : Float32 := match props.effect with | .blur s => s | _ => 0
+    checkEq "blur-behind: σ = radius/2 px" sigma 4
+    let innerBriefs := String.intercalate "\n" (inner.map (·.brief)).toList
+    check "blur-behind: the base content is inside the blur layer"
+      ((innerBriefs.splitOn "#ff0000ff").length ≥ 2)
+    check "blur-behind: the dialog content stays outside it"
+      ((innerBriefs.splitOn "#0000ffff").length == 1)
+  | _ => check "blur-behind: a blur layer wraps the base content" false
+  open'.set false
+  r.settle
+  checkEq "blur-behind: closing resets the state" (← r.ctx.backdropBlurState.cell.get) 0
+  let (after, _) ← Compose.Draw.DrawScope.record {} r.ctx.root.drawTree
+  check "blur-behind: no blur layer after closing" (after.find? isBlurLayer |>.isNone)
+
 /-- AlertDialog: title/text/buttons render and the confirm button fires. -/
 private def alertDialogBasics : IO Unit := do
   let open' ← MutableState.create true
@@ -699,6 +739,7 @@ def run : IO Unit := do
   popupFlip
   popupStackedEsc
   dialogModal
+  dialogBlurBehind
   alertDialogBasics
   menuMouse
   menuKeyboard

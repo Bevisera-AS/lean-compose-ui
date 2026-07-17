@@ -364,8 +364,9 @@ private def mouseSelection : IO Unit := do
   r.pump
   checkEq "mouse: triple-click selects all" (← value.get)
     (⟨text, ⟨0, 11⟩, none⟩)
-  -- I-beam hover cursor is declared on the chain.
-  let d ← (← r.ctx.root.child 0).data
+  -- I-beam hover cursor is declared on the chain (root.child 0 is the
+  -- backdrop-blur wrapper; the app content sits under it).
+  let d ← (← (← r.ctx.root.child 0).child 0).data
   check "mouse: I-beam hover icon on the field"
     (d.modifier.elems.any (· matches .pointer (.hoverIcon .text)))
 

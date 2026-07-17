@@ -29,11 +29,11 @@ typically `TextButton`s whose `onClick` closes the dialog. Mirrors
 composable def AlertDialog (onDismissRequest : IO Unit) (title : String)
     (text : String) (confirmButton : Composable Unit)
     (dismissButton : Option (Composable Unit) := none)
-    (modifier : Modifier := {}) : Composable Unit := do
+    (modifier : Modifier := {}) (blurBehind : Dp := 0) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let typo ← MaterialTheme.typography
   let shapes ← MaterialTheme.shapes
-  Dialog onDismissRequest do
+  Dialog onDismissRequest (blurBehind := blurBehind) do
     Surface (modifier := modifier.semantics (role := some .dialog)
         |>.sizeIn (minWidth := some 280) (maxWidth := some 560))
       (shape := shapes.large) (color := some colors.surface) (elevation := 6) do

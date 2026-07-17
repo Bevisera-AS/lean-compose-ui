@@ -265,6 +265,7 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       framesRendered := ← IO.mkRef 0
       inputSink := ← IO.mkRef fun _ => pure false
       overlays := ← MutableState.createPolicy (fun _ _ => false) #[]
+      backdropBlurState := ← MutableState.create 0
       keyHandlers := ← IO.mkRef #[]
       focusManager := ← IO.mkRef none
       modalFocusHook := ← IO.mkRef fun _ _ => pure ()

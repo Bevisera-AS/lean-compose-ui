@@ -42,8 +42,8 @@ composable def sheetHandle : Composable Unit := do
 /-- A modal bottom sheet. Compose it while your `show` state is true;
 `onDismissRequest` fires on scrim tap, Esc/back, and drag-down release. -/
 composable def ModalBottomSheet (onDismissRequest : IO Unit)
-    (content : Composable Unit := pure ()) (modifier : Modifier := {}) :
-    Composable Unit := do
+    (content : Composable Unit := pure ()) (modifier : Modifier := {})
+    (blurBehind : Dp := 0) : Composable Unit := do
   let density ← LocalDensity.current
   let dismissRef ← rememberUpdatedRef onDismissRequest
   -- Downward drag displacement, px. A plain state: dragging writes it every
@@ -55,7 +55,8 @@ composable def ModalBottomSheet (onDismissRequest : IO Unit)
   overlayImpl (anchor := none) (alignment := .bottomCenter) (offset := ⟨0, 0⟩)
     (onDismissRequest := some (do (← dismissRef.get)))
     (focusable := true) (onKeyEvent := fun _ => pure false)
-    (scrimColor := some dialogScrimColor) (modal := true) (interactive := true) do
+    (scrimColor := some dialogScrimColor) (modal := true) (interactive := true)
+    (blurBehind := blurBehind) do
     let colors ← MaterialTheme.colorScheme
     let dragPx ← drag.get
     AnimatedVisibility (← shown.get)

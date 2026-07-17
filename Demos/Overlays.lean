@@ -51,12 +51,26 @@ composable def dialogSection (dialogOpen : MutableState Bool) : Composable Unit 
       (confirmButton := TextButton (dialogOpen.set false) (Text "Discard"))
       (dismissButton := some (TextButton (dialogOpen.set false) (Text "Keep")))
 
+/-- The frosted dialog: `blurBehind` Gaussian-blurs the app content behind
+the scrim while open (GPU backend; the software renderer keeps the plain
+scrim). -/
+composable def frostedSection (frostedOpen : MutableState Bool) : Composable Unit := do
+  let open' ← frostedOpen.get
+  Button (frostedOpen.set true) (Text "Frosted dialog")
+  if open' then
+    AlertDialog (onDismissRequest := frostedOpen.set false)
+      (title := "Frosted glass")
+      (text := "The content behind this dialog is Gaussian-blurred (16 dp).")
+      (confirmButton := TextButton (frostedOpen.set false) (Text "Close"))
+      (blurBehind := 16)
+
 /-- The gallery screen (see the module docstring). -/
 composable def overlaysUi : Composable Unit := do
   let scroll ← rememberScrollState
   let choice ← remember (mutableStateOf "Vanilla")
   let menuOpen ← remember (mutableStateOf false)
   let dialogOpen ← remember (mutableStateOf false)
+  let frostedOpen ← remember (mutableStateOf false)
   MaterialTheme do
     Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
       Text "Scroll, menus, dialogs" (style := { fontSize := 22 })
@@ -65,6 +79,7 @@ composable def overlaysUi : Composable Unit := do
           (verticalAlignment := .centerVertically) do
         flavorPicker choice menuOpen
         dialogSection dialogOpen
+        frostedSection frostedOpen
 
 end Demos.Overlays
 

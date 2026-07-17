@@ -207,12 +207,24 @@ composable def overlayHost (ctx : WindowContext) : Composable Unit := do
   for entry in entries do
     keyed entry.id (overlayLayer entry)
 
-/-- The root content wrapper `bootstrap` composes: the app content, then the
-overlay host (its layers become later — topmost — children of the window
-root). -/
+/-- The base-content wrapper: an **always-present** layout node (structure
+stays stable — no composition-state loss when the blur toggles) whose
+modifier Gaussian-blurs the whole base subtree while any open overlay
+requests a backdrop blur (`OverlayEntry.blurBehind`; the observed read
+recomposes exactly this wrapper). GPU backend only — the SDL software
+backend renders unblurred (the documented blur approximation). -/
+composable def backdropHost (ctx : WindowContext) (content : Composable Unit) :
+    Composable Unit := do
+  let r ← ctx.backdropBlurState.get
+  Layout (if r > 0 then Modifier.blur ⟨r⟩ else {}) .root content
+    (policyInputs := some 0x62647270)
+
+/-- The root content wrapper `bootstrap` composes: the app content (under
+the backdrop-blur wrapper), then the overlay host (its layers become later —
+topmost — children of the window root). -/
 def WindowContext.withOverlayHost (ctx : WindowContext) (content : Composable Unit) :
     Composable Unit := do
-  content
+  backdropHost ctx content
   overlayHost ctx
 
 /-! ## Popup and Dialog -/
@@ -221,11 +233,16 @@ def WindowContext.withOverlayHost (ctx : WindowContext) (content : Composable Un
 overlay entry). -/
 private def captureLocals : Composable LocalMap := fun c => c.locals.get
 
-/-- Shared implementation of `Popup` and `Dialog` (see their docstrings). -/
+/-- Shared implementation of `Popup` and `Dialog` (see their docstrings).
+`blurBehind` requests a Gaussian backdrop blur of the window's *base*
+content while this overlay is open and interactive — static, latched per
+composition; the host applies the max over all open overlays (see
+`backdropHost`; an animated radius is future work). -/
 composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     (offset : IntOffset) (onDismissRequest : Option (IO Unit)) (focusable : Bool)
     (onKeyEvent : KeyEvent → IO Bool) (scrimColor : Option Color) (modal : Bool)
-    (interactive : Bool) (content : Composable Unit) : Composable Unit := do
+    (interactive : Bool) (content : Composable Unit)
+    (blurBehind : Dp := 0) : Composable Unit := do
   let ctx? ← LocalWindowContext.current
   match ctx? with
   | none =>
@@ -235,7 +252,8 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
       pure { id := ← freshId
              content := ← IO.mkRef (pure () : Composable Unit)
              revision := ← MutableState.create 0
-             locals := ← IO.mkRef .empty }
+             locals := ← IO.mkRef .empty
+             blurBehind := ← IO.mkRef 0 }
     let dismissRef ← rememberUpdatedRef onDismissRequest
     let keyRef ← rememberUpdatedRef onKeyEvent
     -- Latest interactivity, read live by the long-lived key handler: an inert
@@ -243,11 +261,14 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     let interactiveRef ← rememberUpdatedRef interactive
     let locals ← captureLocals
     -- Refresh the entry every composition: latest locals + content capture,
-    -- then bump the revision so the host layer recomposes with them.
+    -- then bump the revision so the host layer recomposes with them. The
+    -- backdrop request follows interactivity — an exiting overlay unblurs.
     entry.locals.set locals
     entry.content.set (overlayLayerContent entry.id anchor alignment offset
       dismissRef onDismissRequest.isSome scrimColor modal interactive content)
     entry.revision.modify (· + 1)
+    entry.blurBehind.set (if interactive then max 0 blurBehind.value else 0)
+    ctx.recomputeBackdropBlur
     DisposableEffect entry.id do
       ctx.registerOverlay entry
       ctx.registerKeyHandler
@@ -279,28 +300,32 @@ When `onDismissRequest` is set, a click landing outside the content and Esc
 call it (innermost overlay first). `focusable` popups grab key routing while
 open (`onKeyEvent` sees every key before the focused node). `interactive :=
 false` makes the popup inert (no dismiss scrim, no key routing, transparent to
-the pointer) while it is only mounted to play an exit animation. The popup
-itself emits no local layout — its content lives in the window's overlay host.
-Mirrors `androidx.compose.ui.window.Popup`. -/
+the pointer) while it is only mounted to play an exit animation. `blurBehind`
+Gaussian-blurs the window's base content while open (GPU backend; static).
+The popup itself emits no local layout — its content lives in the window's
+overlay host. Mirrors `androidx.compose.ui.window.Popup`. -/
 def Popup (content : Composable Unit := pure ())
     (anchor : Option Rect := none) (alignment : Alignment := .topStart)
     (offset : IntOffset := ⟨0, 0⟩) (onDismissRequest : Option (IO Unit) := none)
     (focusable : Bool := false) (onKeyEvent : KeyEvent → IO Bool := fun _ => pure false)
-    (interactive : Bool := true) : Composable Unit :=
+    (interactive : Bool := true) (blurBehind : Dp := 0) : Composable Unit :=
   overlayImpl anchor alignment offset onDismissRequest focusable onKeyEvent
     (scrimColor := none) (modal := false) interactive content
+    (blurBehind := blurBehind)
 
 /-- A modal overlay: a full-window scrim (black at 32 %) swallows every
 pointer event below it, `content` is centered, and Esc or a scrim click
-calls `onDismissRequest`. Mirrors `androidx.compose.ui.window.Dialog`
-(in-window; keyboard focus is not scoped to the dialog — a documented M10
-limitation). -/
-def Dialog (onDismissRequest : IO Unit) (content : Composable Unit := pure ()) :
-    Composable Unit :=
+calls `onDismissRequest`. `blurBehind` Gaussian-blurs the base content
+behind the scrim while open — the frosted-dialog look (GPU backend; the
+SDL software backend keeps the plain scrim). Mirrors
+`androidx.compose.ui.window.Dialog` (in-window; keyboard focus is not
+scoped to the dialog — a documented M10 limitation). -/
+def Dialog (onDismissRequest : IO Unit) (content : Composable Unit := pure ())
+    (blurBehind : Dp := 0) : Composable Unit :=
   overlayImpl (anchor := none) (alignment := .center) (offset := ⟨0, 0⟩)
     (onDismissRequest := some onDismissRequest) (focusable := true)
     (onKeyEvent := fun _ => pure false) (scrimColor := some dialogScrimColor)
-    (modal := true) (interactive := true) content
+    (modal := true) (interactive := true) content (blurBehind := blurBehind)
 
 end Compose
 

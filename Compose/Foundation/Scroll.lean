@@ -42,6 +42,14 @@ gesture even when a clickable child consumed the press, takes it over past
 `dragScrollSlop` along its axis (`PointerEvent.steal` cancels the child's
 pending press), tracks velocity, and hands off to a `fling` on release —
 see `scrollDragHandler`.
+
+Nested drag + fling mirror the wheel: the gesture-owning container publishes
+the pointer motion (and, on release, velocity) it could not consume through
+the per-dispatch leftover cell (`PointerEvent.setLeftover`); the nearest
+outer scrollable — whose final-pass observer runs later in the same
+leaf→root sweep — *follows* the remainder on its own axis and republishes
+what it leaves, so deeper nests cascade. A consumed gesture that publishes
+nothing (a slider) still stands outer containers off entirely.
 -/
 
 /-- Pixels scrolled per mouse-wheel notch (the desktop-Compose-ish line
@@ -52,6 +60,17 @@ def wheelScrollStep : Float32 := 50
 default): a press that moves less than this along the scroll axis stays a
 click; past it the drag owns the gesture. -/
 def dragScrollSlop : Dp := 8
+
+/-- Pointer motion left over after a scroll consumed `moved` px of `motion`
+px of pointer travel — the signs are opposite (content moves against the
+pointer), so the remainder is their sum: `0` when fully consumed, all of
+`motion` at a hard end-stop. -/
+def unconsumedMotion (motion moved : Float32) : Float32 := motion + moved
+
+#guard unconsumedMotion 10 (-10) == 0    -- fully consumed
+#guard unconsumedMotion 10 0 == 10       -- end-stopped
+#guard unconsumedMotion (-24) 24 == 0
+#guard unconsumedMotion 10 (-4) == 6     -- partial: the range ran out mid-move
 
 /-- Scroll position state for `Modifier.verticalScroll`/`horizontalScroll`:
 the offset in px (`0` = start, grows toward the end), plus the observable
@@ -257,14 +276,32 @@ gesture that exceeds the slop *across* the axis first, or one an inner drag
 (a slider) consumes, is left alone. The session is bound to the pointer that
 pressed (`PointerEvent.pointerId`) — a second finger landing mid-gesture
 runs its own gesture elsewhere and must not corrupt this one's origin or
-velocity math. Mirrors the drag half of `Modifier.scrollable`'s touch
-handling. -/
+velocity math.
+
+Nested scroll: whichever container owns the gesture publishes its
+unconsumed remainder into the dispatch's leftover cell (see
+`PointerEvent.setLeftover`); an outer container whose `track` sees a
+consumed move *with* a published leftover `follow`s — consuming the
+remainder on its own axis, republishing what it leaves, and flinging a
+published end-stop velocity on release — while a consumed move with no
+leftover (a slider's) still deadens it. Mirrors the drag half of
+`Modifier.scrollable`'s touch handling plus the spirit of its nested-scroll
+dispatch. -/
 private partial def scrollDragHandler (state : ScrollState) (vertical : Bool)
     (scope : PointerInputScope) : UiTask Unit :=
   idle
 where
   axisOf (p : Offset) : Float32 := if vertical then p.y else p.x
   crossOf (p : Offset) : Float32 := if vertical then p.x else p.y
+  mkLeftover (axis cross : Float32) : Offset :=
+    if vertical then ⟨cross, axis⟩ else ⟨axis, cross⟩
+  /-- Scroll this container by the leftover's axis component and republish
+  the remainder (the cross axis passes through untouched). -/
+  consumeLeftover (ev : PointerEvent) (l : Offset) : IO Unit := do
+    let motion := axisOf l
+    if motion != 0 then
+      let moved ← state.scrollBy (-motion)
+      ev.setLeftover (mkLeftover (unconsumedMotion motion moved) (crossOf l))
   /-- No gesture in flight: a primary press catches a running fling and arms
   tracking (even when a child consumed it — gesture boundaries stay visible
   to a final-pass observer). The pressing pointer owns the session. -/
@@ -286,8 +323,15 @@ where
     match ev.eventType with
     | .move =>
       if ← ev.isConsumed then
-        -- An inner drag (a slider) owns this gesture.
-        dead pid
+        -- An inner gesture owns this pointer: an inner scrollable's
+        -- published remainder is ours to follow; silence (a slider) means
+        -- stand off entirely.
+        match ← ev.getLeftover with
+        | some l =>
+          let _ ← state.interrupt
+          consumeLeftover ev l
+          follow pid
+        | none => dead pid
       else
         let vt := vt.add ev.timestamp (axisOf ev.position)
         let slop := (← scope.density).dpToPx dragScrollSlop
@@ -297,8 +341,10 @@ where
           ev.consume
           let _ ← state.interrupt
           -- Start from the slop edge, not with a jump over the dead zone.
-          let _ ← state.scrollBy (-(d - (if d > 0 then slop else -slop)))
-          drag pid (axisOf ev.position) vt
+          let motion := d - (if d > 0 then slop else -slop)
+          let moved ← state.scrollBy (-motion)
+          ev.setLeftover (mkLeftover (unconsumedMotion motion moved) 0)
+          drag pid ev.position vt
         else if (crossOf ev.position - crossOf origin).abs > slop then
           dead pid
         else
@@ -306,28 +352,69 @@ where
     | .release => if ev.button == some .left then idle else track pid origin vt
     | .exit => idle
     | _ => track pid origin vt
-  /-- Past the slop, gesture stolen: moves scroll (consumed), release flings,
+  /-- Past the slop, gesture stolen: moves scroll (consumed; the unconsumed
+  remainder and the untouched cross axis published for outer containers),
+  release flings — or, end-stopped, publishes the velocity instead — and
   window leave cancels without a fling. -/
-  drag (pid : UInt64) (lastAxis : Float32) (vt : VelocityTracker) : UiTask Unit := do
+  drag (pid : UInt64) (last : Offset) (vt : VelocityTracker) : UiTask Unit := do
     let ev ← scope.awaitEvent
-    if ev.pointerId != pid then drag pid lastAxis vt else
+    if ev.pointerId != pid then drag pid last vt else
     match ev.eventType with
     | .move =>
       ev.consume
       let a := axisOf ev.position
-      let _ ← state.scrollBy (-(a - lastAxis))
-      drag pid a (vt.add ev.timestamp a)
+      let motion := a - axisOf last
+      let moved ← state.scrollBy (-motion)
+      ev.setLeftover (mkLeftover (unconsumedMotion motion moved)
+        (crossOf ev.position - crossOf last))
+      drag pid ev.position (vt.add ev.timestamp a)
     | .release =>
       if ev.button == some .left then
         ev.consume
         -- Content moves opposite the pointer; carry that into the fling.
-        let v := -(vt.velocity ev.timestamp)
-        let _ ← UiTask.launch (state.fling v)
+        let pv := vt.velocity ev.timestamp
+        let v := -pv
+        let can ← if v > 0 then state.canScrollForward
+                  else if v < 0 then state.canScrollBackward
+                  else pure false
+        if can then
+          ev.setLeftover (mkLeftover 0 0)
+          let _ ← UiTask.launch (state.fling v)
+        else
+          -- End-stopped (or still): the fling velocity bubbles out.
+          ev.setLeftover (mkLeftover pv 0)
         idle
       else
-        drag pid lastAxis vt
+        drag pid last vt
     | .exit => idle
-    | _ => drag pid lastAxis vt
+    | _ => drag pid last vt
+  /-- An inner scrollable owns the gesture but ran out of range: consume the
+  leftover it publishes on this container's axis (republishing the rest, so
+  a third container cascades) and fling a published end-stop velocity on
+  release — leaving it for outer containers when this one is end-stopped
+  too. Never steals: the inner keeps the gesture. -/
+  follow (pid : UInt64) : UiTask Unit := do
+    let ev ← scope.awaitEvent
+    if ev.pointerId != pid then follow pid else
+    match ev.eventType with
+    | .move =>
+      if let some l ← ev.getLeftover then consumeLeftover ev l
+      follow pid
+    | .release =>
+      if ev.button == some .left then
+        if let some l ← ev.getLeftover then
+          let pv := axisOf l
+          let v := -pv
+          let can ← if v > 0 then state.canScrollForward
+                    else if v < 0 then state.canScrollBackward
+                    else pure false
+          if can then
+            ev.setLeftover (mkLeftover 0 (crossOf l))
+            let _ ← UiTask.launch (state.fling v)
+        idle
+      else follow pid
+    | .exit => idle
+    | _ => follow pid
   /-- This gesture belongs to someone else: sit out the session pointer's
   gesture until it ends (other pointers' events pass through). -/
   dead (pid : UInt64) : UiTask Unit := do

@@ -1030,6 +1030,129 @@ private def dragScrollIgnoresSecondFinger : IO Unit := do
     (← st.value) 52
   let _ ← r.im.pointerEvent (fingerRelease 1 50 20)
 
+/-! ## Nested scroll (drag + fling) -/
+
+/-- Shared rig: a 100px vertical outer (content 400) holding a 100px vertical
+inner (content 150, `maxValue` 50) above 300px of filler. -/
+private def nestedRig (outer inner : ScrollState) : Composable Unit :=
+  Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll outer) do
+      Column do
+        Box (modifier := Modifier.size 100 100 |>.verticalScroll inner) do
+          leaf (Modifier.size 100 150)
+        leaf (Modifier.size 100 300)
+
+/-- An end-stopped inner hands unconsumed drag motion to the outer 1:1;
+reversing direction feeds the inner first again while the outer holds. -/
+private def nestedDragHandsOff : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| nestedRig outer inner
+  checkEq "nested drag: inner range" (← inner.maxValue) 50
+  checkEq "nested drag: outer range" (← outer.maxValue) 300
+  let _ ← r.im.pointerEvent (pressAt 50 90)
+  let _ ← r.im.pointerEvent (moveTo 50 60)   -- steal: inner takes 22
+  checkEq "nested drag: inner consumes first" (← inner.value) 22
+  checkEq "nested drag: outer holds while inner has range" (← outer.value) 0
+  let _ ← r.im.pointerEvent (moveTo 50 32)   -- inner tops out exactly (50)
+  checkEq "nested drag: inner pinned at its end" (← inner.value) 50
+  checkEq "nested drag: nothing spilled yet" (← outer.value) 0
+  let _ ← r.im.pointerEvent (moveTo 50 20)   -- fully end-stopped: outer follows
+  checkEq "nested drag: inner stays pinned" (← inner.value) 50
+  checkEq "nested drag: the remainder scrolls the outer 1:1" (← outer.value) 12
+  -- Reversal: the inner leaves its end-stop first, the outer freezes.
+  let _ ← r.im.pointerEvent (moveTo 50 40)
+  checkEq "nested drag: reversing feeds the inner first" (← inner.value) 30
+  checkEq "nested drag: the outer holds on reversal" (← outer.value) 12
+  let _ ← r.im.pointerEvent (releaseAt 50 40)
+
+/-- A release with the inner parked at its end-stop hands the tracked
+velocity to the outer, which flings; the inner stays pinned. -/
+private def nestedFlingHandoff : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| nestedRig outer inner
+  -- Uniform 1250 px/s upward drag that parks the inner at 50 before release.
+  let _ ← r.im.pointerEvent (pressT 50 90 0)
+  let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
+  let _ ← r.im.pointerEvent (moveT 50 50 (ms 32))
+  let _ ← r.im.pointerEvent (moveT 50 30 (ms 48))
+  checkEq "nested fling: inner parked at the end" (← inner.value) 50
+  let outerAtRelease ← outer.value
+  let _ ← r.im.pointerEvent (releaseT 50 30 (ms 56))
+  advance r.s r.clock (ms 56)      -- starts the outer's fling coroutine
+  r.s.tickFrame (ms 60)
+  r.s.tickFrame (ms 76)
+  let v1 ← outer.value
+  check s!"nested fling: the outer coasts ({v1})" (v1 > outerAtRelease)
+  r.s.tickFrame (ms 92)
+  check "nested fling: keeps decaying" ((← outer.value) > v1)
+  checkEq "nested fling: the inner never moves past its end" (← inner.value) 50
+
+/-- A release with the inner mid-range flings the inner itself; the outer
+gets nothing. -/
+private def nestedFlingNotAtStop : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| nestedRig outer inner
+  let _ ← r.im.pointerEvent (pressT 50 90 0)
+  let _ ← r.im.pointerEvent (moveT 50 70 (ms 16))
+  let _ ← r.im.pointerEvent (moveT 50 60 (ms 32))
+  checkEq "nested fling mid: inner mid-range" (← inner.value) 22
+  let _ ← r.im.pointerEvent (releaseT 50 60 (ms 40))
+  advance r.s r.clock (ms 40)
+  r.s.tickFrame (ms 44)
+  r.s.tickFrame (ms 60)
+  r.s.tickFrame (ms 76)
+  check s!"nested fling mid: the inner flings ({← inner.value})"
+    ((← inner.value) > 22)
+  checkEq "nested fling mid: the outer stays put" (← outer.value) 0
+
+/-- A horizontal outer over an end-stopped vertical inner: the vertical
+leftover has no horizontal component, so the outer never moves. -/
+private def nestedCrossAxis : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.horizontalScroll outer) do
+      Row do
+        Box (modifier := Modifier.size 100 100 |>.verticalScroll inner) do
+          leaf (Modifier.size 100 120)
+        leaf (Modifier.size 300 100)
+  let _ ← r.im.pointerEvent (pressAt 50 90)
+  let _ ← r.im.pointerEvent (moveTo 50 40)
+  let _ ← r.im.pointerEvent (moveTo 50 20)
+  checkEq "nested cross-axis: inner pinned at its end" (← inner.value) 20
+  checkEq "nested cross-axis: the horizontal outer never moves" (← outer.value) 0
+  let _ ← r.im.pointerEvent (releaseAt 50 20)
+
+/-- Three nested verticals: the innermost tops out, the middle consumes the
+remainder to its own end, the outer takes the rest — one event cascades
+through all three. -/
+private def threeLevelCascade : IO Unit := do
+  let outer ← ScrollState.create
+  let middle ← ScrollState.create
+  let inner ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll outer) do
+      Column do
+        Box (modifier := Modifier.size 100 100 |>.verticalScroll middle) do
+          Column do
+            Box (modifier := Modifier.size 100 100 |>.verticalScroll inner) do
+              leaf (Modifier.size 100 110)
+            leaf (Modifier.size 100 20)
+        leaf (Modifier.size 100 300)
+  checkEq "cascade: inner range" (← inner.maxValue) 10
+  checkEq "cascade: middle range" (← middle.maxValue) 20
+  let _ ← r.im.pointerEvent (pressAt 50 90)
+  let _ ← r.im.pointerEvent (moveTo 50 40)   -- 42px past the slop, one event
+  checkEq "cascade: inner filled" (← inner.value) 10
+  checkEq "cascade: middle filled" (← middle.value) 20
+  checkEq "cascade: outer takes the rest" (← outer.value) 12
+  let _ ← r.im.pointerEvent (moveTo 50 30)   -- both stops hit: outer 1:1
+  checkEq "cascade: further motion all outer" (← outer.value) 22
+  let _ ← r.im.pointerEvent (releaseAt 50 30)
+
 /-! ## Transform gestures -/
 
 /-- Record of one `onTransform` step. -/
@@ -1189,6 +1312,11 @@ def run : IO Unit := do
   dragScrollFlingEndStop
   dragScrollInnerDragWins
   dragScrollIgnoresSecondFinger
+  nestedDragHandsOff
+  nestedFlingHandoff
+  nestedFlingNotAtStop
+  nestedCrossAxis
+  threeLevelCascade
   transformZoomFires
   transformStealsFromScrollable
   transformCancelDrops

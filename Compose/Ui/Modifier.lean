@@ -354,6 +354,16 @@ instance : BEq PointerElem where
 #guard (PointerElem.input 1 .main fun _ => pure ()) != (PointerElem.input 1 .final fun _ => pure ())
 #guard (PointerElem.onScroll fun _ => pure .zero) != (PointerElem.onScroll fun _ => pure .zero)
 
+/-- The responder half of bring-into-view, attached by scroll containers
+(see `Modifier.bringIntoView`): given a descendant's bounds in this
+wrapper's (viewport) coordinates and the viewport size, it returns the
+root-coordinate shift its content is about to make (so a request
+pre-compensates outer ancestors) and, when a scroll is needed, the
+animation the dispatcher launches. Mirrors
+`Modifier.bringIntoViewResponder`. -/
+structure BringIntoViewResponder where
+  respond : Rect → Size → IO (Offset × Option (UiTask Unit))
+
 /-- A focus/keyboard modifier element. Mirrors the `FocusModifier` +
 `KeyInputModifier` families. -/
 inductive FocusElem where
@@ -386,6 +396,11 @@ inductive FocusElem where
   topmost scope's subtree — focusables underneath a modal scrim are skipped.
   Mirrors Compose's `focusProperties`/focus-scoping behavior for `Dialog`. -/
   | scope (id : Nat)
+  /-- The bring-into-view responder of a scroll container: a focused
+  descendant's reveal request walks its ancestor chain and asks each of
+  these to scroll it visible (see `LayoutNode.bringIntoView`). Compared by
+  `key`, like `requester`. -/
+  | bringIntoView (key : UInt64) (r : BringIntoViewResponder)
 
 /-- `focusable`/`requester`/`scope` carry comparable data; handler elements
 never compare equal (capturing-lambda behavior). -/
@@ -394,6 +409,7 @@ instance : BEq FocusElem where
     | .focusable a, .focusable b => a == b
     | .requester a, .requester b => a == b
     | .scope a, .scope b => a == b
+    | .bringIntoView a _, .bringIntoView b _ => a == b
     | _, _ => false
 
 #guard (FocusElem.focusable true) == (FocusElem.focusable true)
@@ -403,6 +419,10 @@ instance : BEq FocusElem where
 #guard (FocusElem.onFocusChanged fun _ => pure ()) != (FocusElem.onFocusChanged fun _ => pure ())
 #guard (FocusElem.requester 3) == (FocusElem.requester 3)
 #guard (FocusElem.requester 3) != (FocusElem.requester 4)
+#guard (FocusElem.bringIntoView 3 ⟨fun _ _ => pure (.zero, none)⟩)
+        == (FocusElem.bringIntoView 3 ⟨fun _ _ => pure (.zero, none)⟩)
+#guard (FocusElem.bringIntoView 3 ⟨fun _ _ => pure (.zero, none)⟩)
+        != (FocusElem.bringIntoView 4 ⟨fun _ _ => pure (.zero, none)⟩)
 
 /-- One element of a modifier chain. Mirrors `Modifier.Element`.
 `layout` elements shape the wrapper chain; `draw`, `pointer`, `focus`, and
@@ -650,6 +670,14 @@ codepoint-indexed cursor `start`/`length` (M11 addition — see
 def onTextEditing (handler : String → Int32 → Int32 → IO Bool)
     (m : Modifier := {}) : Modifier :=
   m.append (.focus (.onTextEditing handler))
+
+/-- Attach a bring-into-view responder (scroll containers do — see
+`Modifier.verticalScroll`): a focused descendant's reveal request asks it
+to scroll the minimal amount to make the descendant visible. Framework
+plumbing; apps get this through focus and `TextField`. -/
+def bringIntoView (key : UInt64) (r : BringIntoViewResponder)
+    (m : Modifier := {}) : Modifier :=
+  m.append (.focus (.bringIntoView key r))
 
 /-! ## Semantics combinators -/
 

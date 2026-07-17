@@ -67,6 +67,24 @@ default): a press that moves less than this along the scroll axis stays a
 click; past it the drag owns the gesture. -/
 def dragScrollSlop : Dp := 8
 
+/-- Minimal scroll delta revealing `[leading, trailing]` in a viewport
+`[0, viewport]`: `0` when already visible — or when an oversized child
+already covers the viewport — else the nearest-edge distance (positive
+scrolls forward). Mirrors the relocation math of Compose's
+`ContentInViewNode`. -/
+def bringIntoViewDelta (leading trailing viewport : Float32) : Float32 :=
+  if leading >= 0 && trailing <= viewport then 0
+  else if leading < 0 && trailing > viewport then 0
+  else if leading.abs < (trailing - viewport).abs then leading
+  else trailing - viewport
+
+#guard bringIntoViewDelta 10 40 100 == 0        -- already visible
+#guard bringIntoViewDelta 150 170 100 == 70     -- below: bottom to the edge
+#guard bringIntoViewDelta (-30) (-10) 100 == -30 -- above: top to the edge
+#guard bringIntoViewDelta (-10) 120 100 == 0    -- oversized, covering
+#guard bringIntoViewDelta 150 300 100 == 150    -- oversized, below: align top
+#guard bringIntoViewDelta 0 100 100 == 0        -- exactly filling
+
 /-- Pointer motion left over after a scroll consumed `moved` px of `motion`
 px of pointer travel — the signs are opposite (content moves against the
 pointer), so the remainder is their sum: `0` when fully consumed, all of
@@ -306,6 +324,25 @@ private def scrollLayoutBlock (state : ScrollState) (vertical : Bool) : CustomLa
     let over ← state.overscrollState.get
     let off := -(roundHalfUp v') + roundHalfUp over
     return (size, if vertical then ⟨0, off⟩ else ⟨off, 0⟩)⟩
+
+/-- The scroll container's reveal responder: scroll the minimal amount
+(`bringIntoViewDelta`, clamped into range) to make the rect visible,
+animated via `animateScrollTo`. An already-visible rect returns no task —
+it must not interrupt a running fling. -/
+private def scrollBringIntoViewResponder (state : ScrollState) (vertical : Bool) :
+    BringIntoViewResponder :=
+  ⟨fun rect vp => do
+    let (leading, trailing, extent) :=
+      if vertical then (rect.top, rect.bottom, vp.height)
+      else (rect.left, rect.right, vp.width)
+    let v ← state.valueState.cell.get
+    let maxV ← state.maxValueState.cell.get
+    let target := min (max (v + bringIntoViewDelta leading trailing extent) 0) maxV
+    if target == v then return (.zero, none)
+    -- The content is about to move opposite the value change.
+    let shift := v - target
+    return (if vertical then (⟨0, shift⟩ : Offset) else ⟨shift, 0⟩,
+            some (state.animateScrollTo target))⟩
 
 /-- The wheel handler shared by both axes: scroll by `wheelScrollStep` px per
 notch and consume this axis's delta iff movement actually happened — the
@@ -573,6 +610,8 @@ def verticalScroll (state : ScrollState) (m : Modifier := {})
   |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.v")
         (mixKeys state.id (if bounce then 1 else 0)))
       (scrollDragHandler state true bounce) (pass := .final)
+  |>.bringIntoView (mixKeys (stringKey "Compose.Modifier.bringIntoView.v") state.id)
+      (scrollBringIntoViewResponder state true)
   |>.clip .rectangle
   |>.customLayout (mixKeys (stringKey "Compose.Modifier.verticalScroll") state.id)
       (scrollLayoutBlock state true)
@@ -585,6 +624,8 @@ def horizontalScroll (state : ScrollState) (m : Modifier := {})
   |>.pointerInput (mixKeys (stringKey "Compose.Modifier.dragScroll.h")
         (mixKeys state.id (if bounce then 1 else 0)))
       (scrollDragHandler state false bounce) (pass := .final)
+  |>.bringIntoView (mixKeys (stringKey "Compose.Modifier.bringIntoView.h") state.id)
+      (scrollBringIntoViewResponder state false)
   |>.clip .rectangle
   |>.customLayout (mixKeys (stringKey "Compose.Modifier.horizontalScroll") state.id)
       (scrollLayoutBlock state false)

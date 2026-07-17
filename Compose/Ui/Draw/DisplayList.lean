@@ -56,31 +56,49 @@ inductive LayerEffect where
   | none
   /-- Gaussian blur with standard deviation `sigma` (device px). -/
   | blur (sigma : Float32)
+  /-- The Android-12 overscroll stretch (`StretchEffect`): the composite
+  samples the texture through a non-linear warp that pins one edge and
+  compresses content toward it — `(sx, sy)` is the signed normalized
+  intensity per axis (positive pins the start edge; `EdgeEffect` feeds
+  ≈ ±0.032 max). Meant under a clip (a scrollable's) — content only
+  ever moves inward, so it spreads nothing. -/
+  | stretch (sx sy : Float32)
   deriving Repr, BEq, Inhabited
 
 namespace LayerEffect
 
 /-- Canonical form for recording: a non-positive `sigma` is no effect, and
 `sigma` caps at 16 (the GPU pass samples `3σ` texels per side; larger blurs
-would want a downsample stage — deferred). -/
+would want a downsample stage — deferred); a zero stretch is no effect, and
+each stretch component clamps into `[-1, 1]` (physics feeds ≈ ±0.032). -/
 def normalize : LayerEffect → LayerEffect
   | .blur sigma => if sigma <= 0 then .none else .blur (min sigma 16)
+  | .stretch sx sy =>
+    if sx == 0 && sy == 0 then .none
+    else .stretch (min (max sx (-1)) 1) (min (max sy (-1)) 1)
   | .none => .none
 
 /-- How far (px) the effect can spread content past its geometry: a Gaussian's
-tails are negligible beyond `3σ` (+1 px AA). Inflates layer damage bounds and
-the encoder's composite-region margin. -/
+tails are negligible beyond `3σ` (+1 px AA); a stretch only ever compresses
+content toward its pinned edge (the enlarged region AOSP draws lies outside
+the viewport a scrollable clips to), so it spreads nothing. Inflates layer
+damage bounds and the encoder's composite-region margin. -/
 def spread : LayerEffect → Float32
   | .none => 0
   | .blur sigma => 3 * sigma + 1
+  | .stretch _ _ => 0
 
 #guard normalize (.blur 0) == .none
 #guard normalize (.blur (-2)) == .none
 #guard normalize (.blur 4) == .blur 4
 #guard normalize (.blur 99) == .blur 16
 #guard normalize .none == .none
+#guard normalize (.stretch 0 0) == .none
+#guard normalize (.stretch 0.03 0) == .stretch 0.03 0
+#guard normalize (.stretch (-3) 2) == .stretch (-1) 1
 #guard spread .none == 0
 #guard spread (.blur 4) == 13
+#guard spread (.stretch 0.03 0) == 0
 
 end LayerEffect
 
@@ -264,6 +282,7 @@ partial def Prim.brief : Prim → String
           | none => "")
       ++ (match props.effect with
           | .blur sigma => s!" blur={fmtF sigma}"
+          | .stretch sx sy => s!" stretch=({fmtF sx},{fmtF sy})"
           | .none => "")
       ++ "\n"
       ++ String.intercalate "\n" (content.map (fun p => "  " ++ p.brief)).toList
@@ -280,6 +299,10 @@ partial def Prim.brief : Prim → String
         == "shape @(0,0) clip=(0,0,40,40) rrFill rr(0,0,40,40)r8 #0000ffff"
 #guard (Prim.layer {} ⟨0, 0, 20, 20⟩ { effect := .blur 4 } #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]).brief
         == "layer @(0,0) bounds=(0,0,20,20) a=1 blur=4\n  rect @(0,0) #ff0000ff tl=(0,0) sz=4x4"
+#guard (Prim.layer {} ⟨0, 0, 20, 20⟩ { effect := .stretch 0 0.5 }
+          #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]).brief
+        == s!"layer @(0,0) bounds=(0,0,20,20) a=1 stretch=(0,{fmtF 0.5})\n"
+            ++ "  rect @(0,0) #ff0000ff tl=(0,0) sz=4x4"
 
 /-- All primitives (including layer content, recursively) satisfy `p` —
 the well-formedness walker the IR test group uses. -/
@@ -351,6 +374,9 @@ def DisplayList.bounds (list : DisplayList) : Option Rect := Id.run do
 -- A blur spreads the content union by 3σ + 1 (pre-transform).
 #guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { effect := .blur 4 }
           #[.rect {} .red ⟨15, 15⟩ ⟨20, 20⟩]).bounds == some ⟨2, 2, 48, 48⟩
+-- A stretch spreads nothing: damage is the content union.
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { effect := .stretch 0 0.03 }
+          #[.rect {} .red ⟨15, 15⟩ ⟨20, 20⟩]).bounds == some ⟨15, 15, 35, 35⟩
 #guard (Prim.layer {} ⟨0, 0, 50, 50⟩
           { transform := some (.translation ⟨5, 0⟩), effect := .blur 1 }
           #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds == some ⟨11, 6, 39, 34⟩

@@ -268,6 +268,13 @@ inductive DrawElem where
   layer (σ = `radius / 2` px). GPU-only; the SDL backend renders unblurred.
   Mirrors `Modifier.blur`. -/
   | blur (radius : Dp)
+  /-- Composite the content (and everything inner) through an offscreen layer
+  warped by `LayerEffect.stretch`, with the signed per-axis intensity read
+  from `intensity` at draw time — the raw element behind foundation's stretch
+  overscroll (mirrors `RenderNode.stretch`). A `(0, 0)` read records no
+  layer. Identity-keyed like `customLayout`: `key` alone is the element,
+  the closure is re-read every draw. -/
+  | stretchLayer (key : UInt64) (intensity : IO (Float32 × Float32))
   /-- Arbitrary drawing behind the content at the wrapper's coordinates.
   Mirrors `Modifier.drawBehind`. -/
   | drawBehind (block : Draw.DrawM Unit)
@@ -290,10 +297,13 @@ instance : BEq DrawElem where
     | .alpha a, .alpha a' => a == a'
     | .graphicsLayer g, .graphicsLayer g' => g == g'
     | .blur r, .blur r' => r == r'
+    | .stretchLayer k _, .stretchLayer k' _ => k == k'
     | _, _ => false
 
 #guard (DrawElem.blur 4) == (DrawElem.blur 4)
 #guard (DrawElem.blur 4) != (DrawElem.blur 8)
+#guard (DrawElem.stretchLayer 7 (pure (0, 0))) == (DrawElem.stretchLayer 7 (pure (1, 1)))
+#guard (DrawElem.stretchLayer 7 (pure (0, 0))) != (DrawElem.stretchLayer 8 (pure (0, 0)))
 #guard (DrawElem.background .red .rectangle) == (DrawElem.background .red .rectangle)
 #guard (DrawElem.background .red .rectangle) != (DrawElem.background .blue .rectangle)
 #guard (DrawElem.shadow 2 .rectangle .black) == (DrawElem.shadow 2 .rectangle .black)
@@ -591,6 +601,15 @@ DESIGN.md). Compared structurally, so animating the radius invalidates
 exactly this element's draw. Mirrors `Modifier.blur`. -/
 def blur (radius : Dp) (m : Modifier := {}) : Modifier :=
   m.append (.draw (.blur radius))
+
+/-- Composite content and children through an offscreen layer warped by the
+Android-12 overscroll stretch, reading the signed per-axis intensity from
+`intensity` at draw time (a `(0, 0)` read records no layer) — the raw element
+behind foundation's stretch overscroll; see `DrawElem.stretchLayer` for the
+identity-key contract. Mirrors `RenderNode.stretch`. -/
+def stretchLayer (key : UInt64) (intensity : IO (Float32 × Float32))
+    (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.stretchLayer key intensity))
 
 /-- Draw behind the content with full `DrawM` access. Mirrors
 `Modifier.drawBehind`. -/

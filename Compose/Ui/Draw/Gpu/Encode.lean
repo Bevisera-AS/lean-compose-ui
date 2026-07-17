@@ -545,7 +545,7 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
         cmds := saved.push (.layer idx linear (scissorAt s.clip shift))
         layers := st.layers.push
           { bounds := ⟨l, t, rt, bt⟩, alpha := props.alpha * extraAlpha
-            transform, sigma := match effect with | .blur sg => sg | .none => 0
+            transform, sigma := match effect with | .blur sg => sg | _ => 0
             cmds := st.cmds } }
 
 /-- Encode a display list against its resolved text runs and image texture

@@ -60,6 +60,26 @@ private def textSnap : IO Unit := do
   check s!"text snap: fractional origin matches the snapped rendering ({diffs} diff px)"
     (diffs == 0)
 
+/-- Stretch-layer recording: `withGraphicsLayer (effect := .stretch)` records
+exactly one layer prim carrying the intensity; a zero intensity normalizes
+away (no layer at all — content records inline). -/
+private def stretchRecord : IO Unit := do
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.withGraphicsLayer ⟨0, 0, 100, 100⟩ {}
+      (drawRect (.solid Color.red) ⟨10, 10⟩ ⟨40, 40⟩)
+      (effect := .stretch 0 0.5)
+  let briefs := list.map (·.brief)
+  let expected := s!"layer @(0,0) bounds=(0,0,100,100) a=1 stretch=(0,{fmtF 0.5})\n"
+                    ++ "  rect @(0,0) #ff0000ff tl=(10,10) sz=40x40"
+  check s!"stretch record: one layer prim carrying the intensity ({briefs})"
+    (briefs == #[expected])
+  let (flat, _) ← DrawScope.record {} do
+    DrawScope.withGraphicsLayer ⟨0, 0, 100, 100⟩ {}
+      (drawRect (.solid Color.red) ⟨10, 10⟩ ⟨40, 40⟩)
+      (effect := .stretch 0 0)
+  check "stretch record: zero intensity records no layer"
+    (flat.map (·.brief) == #["rect @(0,0) #ff0000ff tl=(10,10) sz=40x40"])
+
 /-- The Draw group. -/
 def run : IO Unit := do
   Sdl.init .video
@@ -231,7 +251,10 @@ def run : IO Unit := do
     check "blur fallback: nothing spreads outside"
       (colorNear (← shot.readPixel 54 30) 0 0 0)
 
-  -- 11. text run-origin snapping (M-j)
+  -- 11. stretch-layer recording
+  stretchRecord
+
+  -- 12. text run-origin snapping (M-j)
   textSnap
 
 end Tests.Draw

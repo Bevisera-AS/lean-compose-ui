@@ -167,6 +167,14 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
         -- (σ = radius/2 px, the shadow convention; GPU-only — SDL flattens
         -- unblurred).
         DrawScope.withBlur (Rect.ofOffsetSize off sz) (ctx.density.dpToPx radius / 2) cont
+      | .stretchLayer _ intensity =>
+        -- Overscroll stretch: the intensity is read fresh each draw (a plain
+        -- IO read — the scroll owner's observed reads drive invalidation);
+        -- zero records no layer at all.
+        let (sx, sy) ← intensity
+        if sx == 0 && sy == 0 then cont
+        else DrawScope.withGraphicsLayer (Rect.ofOffsetSize off sz) {} cont
+              (effect := .stretch sx sy)
       | .drawBehind block =>
         DrawScope.translate off (DrawScope.withSize sz block)
         cont

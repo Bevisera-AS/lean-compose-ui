@@ -38,10 +38,11 @@ as demos.
   dropdown menus, dialogs.
 - **Two render backends** — an SDL_GPU backend (the default) rendering
   instanced SDF shapes, analytic Gaussian elevation shadows, real offscreen
-  layers for group opacity, and exact rounded clipping, and an SDL_Renderer
-  backend with feathered CPU tessellation (`COMPOSE_BACKEND=sdl`; the
-  automatic fallback, runs headless — all tests use it), from the same
-  recorded display list.
+  layers for group opacity, Gaussian blur (including opt-in blur-behind for
+  dialogs), the Android-12 stretch-overscroll warp, and exact rounded
+  clipping, and an SDL_Renderer backend with feathered CPU tessellation
+  (`COMPOSE_BACKEND=sdl`; the automatic fallback, runs headless — all tests
+  use it), from the same recorded display list.
 - **Desktop components** — declarative multi-window `application` with
   `Window`/`DialogWindow`, an in-window `MenuBar`, `ContextMenuArea`,
   `TooltipArea`, and a system `Tray`.

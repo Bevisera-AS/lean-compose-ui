@@ -445,8 +445,33 @@ sampler (one bilinear fetch weighs two texels — `Gpu.Sdf.blurWeight`/
 in/premul out. The SDL backend renders blur-layer content **unblurred** (a
 documented approximation, pixel-pinned; a CPU Gaussian would verify nothing
 the GPU probe doesn't). Backdrop blur (sampling behind the layer) is out of
-scope. Verified by `gpu-probe` ⑭ (impulse response, energy conservation,
+scope — but see **blur-behind**: `Popup`/`Dialog` (and the Material
+wrappers) take `blurBehind : Dp`, and while such an overlay is open the
+window's *base* content composes under an always-present wrapper node that
+applies `Modifier.blur` (max radius over open overlays, recomputed on
+register/unregister/refresh; static — animated radii are future work).
+Verified by `gpu-probe` ⑭ (impulse response, energy conservation,
 near-identity at tiny σ); excluded from `gpu-parity` (GPU-only by design).
+
+**Stretch** (`LayerEffect.stretch (sx sy)`): the Android-12 overscroll warp
+(AOSP `StretchEffect` in Flutter's normalized-UV form — identical because
+hwui always stretches the whole viewport). The composite samples the layer
+texture through `out(p) = 1/(1+s) − (1−p)/(1 + s·(1 − 0.7·p))` per axis
+(`Gpu.Sdf.stretchPosUp`/`stretchPos` twins; sign picks the pinned edge) —
+no extra pass: the layer's composite draw switches to a seventh pipeline
+whose fragment warps the UV (clamped to the *content* extent, not the
+pooled texture's slack) with the intensity pushed as a per-draw fragment
+uniform mid-pass. Content only compresses toward the pin, so the effect
+spreads nothing. The SDL backend approximates with a uniform `(1+|s|)`
+scale anchored at the pinned edge through its transformed-layer path
+(Flutter's non-shader fallback; the enclosing scroll clip crops the
+overdraw). Fed by `Foundation`'s `OverscrollMode.stretch` (the scroll
+default): `overscrollState` holds the raw pull, `stretchIntensity` damps it
+(`0.016·d + 0.016·(1 − e^(−d·e/0.33))`, ≤ ~3.2%), and release runs
+EdgeEffect's ω₀ = 24.657 / ζ = 0.98 spring with the 200 px/s glide endgame
+(×13 fling absorb) — all `#guard`-twinned in `Overscroll.lean`. Verified by
+`gpu-probe` ⑰ (stripe positions against the Lean twin on every driver) and
+a headless SDL scale-fallback pixel test.
 
 **Text positioning**: layout produces integer run origins (measure/place
 round up through constraints), and scroll offsets stay integer — text is
@@ -487,8 +512,10 @@ has no dummy-video backend):
   segments per corner, min 4). Untransformed layers flatten by folding alpha
   (documented double-blend approximation, pinned by a pixel test);
   *transformed* layers render to real pooled offscreen targets and composite
-  via `textureAffine` (see **Transforms**); layer *effects* are ignored —
-  blur content renders unblurred (see **Blur**); elevation shadows
+  via `textureAffine` (see **Transforms**); blur effects are ignored —
+  content renders unblurred (see **Blur**) — while stretch effects
+  approximate as a pinned-edge scale through the transformed-layer path
+  (see **Stretch**); elevation shadows
   tessellate as rings 3σ inward and outward of the silhouette whose vertex
   alphas sample the same analytic shadow function the GPU evaluates
   (`roundRectShadow`).
@@ -507,7 +534,8 @@ has no dummy-video backend):
   passes** (group opacity composites once — no double blend; a transform maps
   the composite quad's corners, nearest when `snapComposite` else linear; a
   blur effect adds two separable Gaussian passes through a second pooled
-  texture), textures from a per-window pool (64 px-quantized, first-fit,
+  texture; a stretch effect swaps the composite draw onto the UV-warping
+  stretch pipeline), textures from a per-window pool (64 px-quantized, first-fit,
   trimmed after 120 idle frames). One shared `Gpu.Device` per process; MSL shaders compiled at
   runtime; premultiplied blending with non-premultiplied vertex colors
   (interpolation matches SDL's). Clips are per-command integer scissors with

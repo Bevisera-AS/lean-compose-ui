@@ -254,6 +254,11 @@ structure WindowContext where
   prior focus); the default is a no-op (headless compositions with no input
   pipeline). -/
   modalFocusHook : IO.Ref (Nat → Bool → IO Unit)
+  /-- A bring-into-view request for the focused node is pending: serviced by
+  `renderFrame` right after remeasure (positions are final there), then
+  cleared. Raised by focus gains and IME inset changes — see
+  `requestBringIntoView`. -/
+  bringIntoViewPending : IO.Ref Bool
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app
@@ -315,6 +320,14 @@ def requestFrame (ctx : WindowContext) : IO Unit :=
 /-- Ask the loop to exit (honored at the next iteration). -/
 def requestQuit (ctx : WindowContext) : IO Unit :=
   ctx.quitRequested.set true
+
+/-- Ask for the focused node to be scrolled into view on the next frame,
+*after* remeasure — the deferral makes an IME-raised reveal compute
+against the post-`imePadding` layout instead of racing it (see
+`LayoutNode.bringIntoView`). Idempotent, level-triggered. -/
+def requestBringIntoView (ctx : WindowContext) : IO Unit := do
+  ctx.bringIntoViewPending.set true
+  ctx.requestFrame
 
 /-- Append an overlay entry (drawn on top of all earlier ones). The state
 write recomposes the overlay host. -/

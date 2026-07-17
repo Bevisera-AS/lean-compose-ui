@@ -405,6 +405,9 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
     (overlayKeys := some ctx.keyHandlers)
     (sched := some ctx.scheduler)
     (onFocusTarget := fun target => do
+    -- Focus gain (click, Tab, FocusRequester, modal restore) reveals the
+    -- new target — Compose's focusable requests bringIntoView on gain.
+    if target.isSome then ctx.requestBringIntoView
     let now ← match target with
       | some n => do pure (← n.data).modifier.isTextInputClient
       | none => pure false

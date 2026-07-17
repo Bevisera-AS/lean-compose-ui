@@ -106,6 +106,8 @@ public import Compose.Ui.Node
 public meta import Compose.Ui.Node
 public import Compose.Ui.Input.HitTest
 public meta import Compose.Ui.Input.HitTest
+public import Compose.Ui.Input.BringIntoView
+public meta import Compose.Ui.Input.BringIntoView
 public import Compose.Ui.Layout
 public meta import Compose.Ui.Layout
 public import Compose.Ui.Text.Style

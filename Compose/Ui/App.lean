@@ -8,6 +8,8 @@ public import Compose.Ui.Overlay
 public meta import Compose.Ui.Overlay
 public import Compose.Ui.Input.Router
 public meta import Compose.Ui.Input.Router
+public import Compose.Ui.Input.BringIntoView
+public meta import Compose.Ui.Input.BringIntoView
 public import Compose.Ui.Draw.Scope
 public meta import Compose.Ui.Draw.Scope
 public import Compose.Ui.Draw.SdlBackend
@@ -259,7 +261,8 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       overlays := ← MutableState.createPolicy (fun _ _ => false) #[]
       keyHandlers := ← IO.mkRef #[]
       focusManager := ← IO.mkRef none
-      modalFocusHook := ← IO.mkRef fun _ _ => pure () }
+      modalFocusHook := ← IO.mkRef fun _ _ => pure ()
+      bringIntoViewPending := ← IO.mkRef false }
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame
@@ -433,14 +436,15 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     -- Belt and braces alongside the bridge's own 0: a keyboard dismissed
     -- behind the listener's back must not leave stale padding.
     ctx.setImeInsetPx 0
-    ctx.requestFrame
+    ctx.requestBringIntoView
   | .user t e =>
     if t == ctx.wakeEvent.val then
       pure () -- wake events exist only to end a wait
     else if t == ctx.imeEvent.val then
       -- The platform IME bridge: code = keyboard inset in window pixels.
+      -- A focused field re-reveals against the new inset (post-measure).
       ctx.setImeInsetPx e.code
-      ctx.requestFrame
+      ctx.requestBringIntoView
     else
       let _ ← (← ctx.inputSink.get) event
   | _ =>
@@ -464,6 +468,13 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := t
   -- Root constraints are the window pixels as maxima with zero minima —
   -- content wraps unless it fills (Compose's `ComposeScene` constraints).
   let _ ← ctx.root.remeasure { maxWidth := pw, maxHeight := ph } density
+  -- Bring-into-view is serviced post-measure so the reveal computes
+  -- against settled positions (an IME-raised request already saw its
+  -- imePadding relayout in this same frame's drain + remeasure).
+  if ← ctx.bringIntoViewPending.modifyGet fun p => (p, false) then
+    if let some fm ← ctx.focusManager.get then
+      if let some n ← fm.focused then
+        n.bringIntoView ctx.scheduler
   let (list, _) ← DrawScope.record density ctx.root.drawTree
   let presented ← ctx.backend.render config.clearColor list mayBlock
   if presented then

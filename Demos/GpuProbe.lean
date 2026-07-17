@@ -299,6 +299,36 @@ private def probePresentLoop (dev : Device) (window : Sdl.Window)
   note s!"presented {presented} frames; waitAndAcquire returned none {noneCount}×"
   check "presented at least one frame" (presented > 0)
 
+/-- ⑥ (SPIR-V-only variant): the same vsync present loop, driven through the
+production `GpuRenderer.render` path — the raw-MSL probe pipeline above is
+unavailable where the device has no MSL format (Vulkan), and exercising the
+real render entry point there is exactly what the Android port needs. -/
+private def probePresentLoopRenderer (r : Compose.Draw.Gpu.GpuRenderer) : IO Unit := do
+  let frames := ((← IO.getEnv "GPU_PROBE_FRAMES").bind (·.toNat?)).getD 180
+  IO.println s!"⑥ present loop (production render path; {frames} frames @ vsync; close to end)"
+  try r.dev.setSwapchainParameters r.window .sdr .vsync
+  catch e => note s!"setSwapchainParameters failed: {e}"
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawRect (.solid .red) ⟨10, 10⟩ ⟨30, 20⟩
+    DrawScope.drawCircle (.solid .green) ⟨120, 30⟩ 15
+  let mut noneCount := 0
+  let mut presented := 0
+  let mut quit := false
+  for _ in [0:frames] do
+    if quit then break
+    let mut draining := true
+    while draining do
+      match ← Sdl.pollEvent with
+      | none => draining := false
+      | some (.quit _) | some (.windowCloseRequested _) => quit := true
+      | some _ => pure ()
+    if ← r.render ⟨0.15, 0.15, 0.15, 1⟩ list (mayBlock := true) then
+      presented := presented + 1
+    else
+      noneCount := noneCount + 1
+  note s!"presented {presented} frames; no swapchain texture {noneCount}×"
+  check "presented at least one frame" (presented > 0)
+
 /-- ⑬ (probed *before* the blur pipeline was wired into the renderer, which
 depends on both facts): a pipeline with **no vertex buffers at all** (corners
 from `vertex_id` only) is accepted, and `pushFragmentUniformData` binds at the
@@ -740,10 +770,14 @@ def run : IO UInt32 := do
 
   IO.println "① device + swapchain"
   note s!"built-in GPU drivers: {← getDrivers}"
-  check "MSL shader format supported" (← supportsShaderFormats .msl)
-  let dev ← createDevice .msl (debugMode := true)
+  let driver ← IO.getEnv "COMPOSE_GPU_DRIVER"
+  check "MSL or SPIR-V shader format supported"
+    (← supportsShaderFormats (ShaderFormat.msl ||| .spirv) driver)
+  let dev ← createDevice (ShaderFormat.msl ||| .spirv) (debugMode := true) (name := driver)
   note s!"device driver: {← dev.getDriver}"
-  note s!"device shader formats: {(← dev.getShaderFormats).val}"
+  let formats ← dev.getShaderFormats
+  note s!"device shader formats: {formats.val}"
+  let hasMsl := formats.has .msl
   let window ← Sdl.createWindow "gpu-probe" 512 384 .resizable
   dev.claimWindow window
   let swapchainFmt ← dev.getSwapchainTextureFormat window
@@ -754,29 +788,40 @@ def run : IO UInt32 := do
   for mode in [PresentMode.vsync, .immediate, .mailbox] do
     note s!"present mode {repr mode} supported: {← dev.windowSupportsPresentMode window mode}"
 
-  IO.println "② MSL shader pair + instance-rate quad pipelines"
-  let vs ← dev.createShader
-    { code := mslSource.toUTF8, entrypoint := "vmain", format := .msl, stage := .vertex
-      numUniformBuffers := 1 }
-  let fs ← dev.createShader
-    { code := mslSource.toUTF8, entrypoint := "fmain", format := .msl, stage := .fragment }
-  let offscreenPipe ← makeQuadPipeline dev vs fs .r8g8b8a8Unorm
-  let windowPipe ← makeQuadPipeline dev vs fs swapchainFmt
-  vs.release
-  fs.release
-  check "MSL source compiled; pipelines created; shaders released after" true
+  -- The raw-MSL micro-probes (②③⑬ and the raw present loop) need MSL-source
+  -- support (Metal). On SPIR-V-only devices (Vulkan) the same SDL facts are
+  -- exercised through the framework pipelines (⑦–⑮ build all six from the
+  -- embedded SPIR-V blobs), and the present loop runs on the production
+  -- render path instead.
+  let raw ← if hasMsl then do
+      IO.println "② MSL shader pair + instance-rate quad pipelines"
+      let vs ← dev.createShader
+        { code := mslSource.toUTF8, entrypoint := "vmain", format := .msl, stage := .vertex
+          numUniformBuffers := 1 }
+      let fs ← dev.createShader
+        { code := mslSource.toUTF8, entrypoint := "fmain", format := .msl, stage := .fragment }
+      let offscreenPipe ← makeQuadPipeline dev vs fs .r8g8b8a8Unorm
+      let windowPipe ← makeQuadPipeline dev vs fs swapchainFmt
+      vs.release
+      fs.release
+      check "MSL source compiled; pipelines created; shaders released after" true
 
-  let ibuf ← dev.createBuffer .vertex (UInt32.ofNat instances.size)
-  let up ← dev.createTransferBuffer .upload (UInt32.ofNat instances.size)
-  let cb ← dev.acquireCommandBuffer
-  up.write instances (cycle := true)
-  let cp ← cb.beginCopyPass
-  cp.uploadToBuffer { buffer := up }
-    { buffer := ibuf, size := UInt32.ofNat instances.size } (cycle := true)
-  cp.finish
-  cb.submit
+      let ibuf ← dev.createBuffer .vertex (UInt32.ofNat instances.size)
+      let up ← dev.createTransferBuffer .upload (UInt32.ofNat instances.size)
+      let cb ← dev.acquireCommandBuffer
+      up.write instances (cycle := true)
+      let cp ← cb.beginCopyPass
+      cp.uploadToBuffer { buffer := up }
+        { buffer := ibuf, size := UInt32.ofNat instances.size } (cycle := true)
+      cp.finish
+      cb.submit
+      pure (some (offscreenPipe, windowPipe, ibuf))
+    else do
+      IO.println "② raw-MSL micro-probes skipped (device has no MSL format)"
+      pure none
 
-  probeOffscreenDraw dev offscreenPipe ibuf
+  if let some (offscreenPipe, _, ibuf) := raw then
+    probeOffscreenDraw dev offscreenPipe ibuf
   let (engine, font) ← probeTextEngine dev
   probeTransferCycle dev
   let gpuRenderer ← Compose.Draw.Gpu.GpuRenderer.create dev window
@@ -786,10 +831,15 @@ def run : IO UInt32 := do
   probeImages gpuRenderer swapchainFmt
   probeTransforms gpuRenderer engine font swapchainFmt
   probeGradients gpuRenderer swapchainFmt
-  probeFragmentUniform dev
+  if hasMsl then
+    probeFragmentUniform dev
+  else
+    note "⑬ raw-MSL fragment-uniform micro-probe skipped (the blur pipeline covers pushFragmentUniformData on SPIR-V)"
   probeBlur gpuRenderer swapchainFmt
   probeFractionalText gpuRenderer engine font
-  probePresentLoop dev window windowPipe ibuf
+  match raw with
+  | some (_, windowPipe, ibuf) => probePresentLoop dev window windowPipe ibuf
+  | none => probePresentLoopRenderer gpuRenderer
 
   dev.releaseWindow window
   let n ← failures.get

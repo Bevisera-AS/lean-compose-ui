@@ -121,7 +121,11 @@ private def compareScene (name : String) (r : Compose.Draw.Gpu.GpuRenderer) (bgr
 def run : IO UInt32 := do
   IO.println "== gpu-parity: GPU vs SDL pixel diff =="
   Sdl.init .video
-  let dev ← createDevice .msl (debugMode := true)
+  -- Same format mask + driver override as the framework's `getDevice` —
+  -- COMPOSE_GPU_DRIVER=vulkan diffs the SPIR-V pipelines (over MoltenVK on
+  -- macOS) against the software renderer.
+  let dev ← createDevice (ShaderFormat.msl ||| .spirv) (debugMode := true)
+    (name := ← IO.getEnv "COMPOSE_GPU_DRIVER")
   dev.setAllowedFramesInFlight 2
   let window ← Sdl.createWindow "gpu-parity" 256 160
   dev.claimWindow window

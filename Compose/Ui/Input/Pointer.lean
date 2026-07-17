@@ -94,6 +94,19 @@ structure PointerEvent where
   Rebound per element during captured `move` dispatch; a no-op elsewhere.
   The router half of a drag-scroll taking over past the touch slop. -/
   steal : IO Unit := pure ()
+  /-- Publish the gesture delta this handler could not consume — screen-axis
+  px on a `move`, pointer velocity px/s on a `release` — for outer
+  scrollables observing later in the final pass: the drag analog of the
+  wheel path's remaining-delta cell (nested scroll). Contract: a scroll
+  gesture owner publishes on *every* consumed move/release (`0` on its axis
+  when fully consumed, the cross axis passed through), while a gesture that
+  owns its pointers outright (a slider) never does — that difference is how
+  an outer scrollable tells "follow the remainder" from "stand off". Bound
+  per `move`/`release` dispatch; a no-op elsewhere. -/
+  setLeftover : Offset → IO Unit := fun _ => pure ()
+  /-- The leftover published so far this dispatch (`none` = no inner scroll
+  handler spoke — see `setLeftover`). -/
+  getLeftover : IO (Option Offset) := pure none
 
 instance : Inhabited PointerEvent := ⟨{ eventType := .press, position := .zero }⟩
 

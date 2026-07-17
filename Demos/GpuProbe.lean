@@ -816,7 +816,10 @@ def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
   let formats ← dev.getShaderFormats
   note s!"device shader formats: {formats.val}"
   let hasMsl := formats.has .msl
-  let window ← Sdl.createWindow "gpu-probe" 512 384 .resizable
+  -- Same flags as compose-ui's bootstrapWindow — the probe must exercise
+  -- the exact window configuration the framework renders into.
+  let window ← Sdl.createWindow "gpu-probe" 512 384
+    (Sdl.WindowFlags.resizable ||| .highPixelDensity)
   dev.claimWindow window
   let swapchainFmt ← dev.getSwapchainTextureFormat window
   note s!"swapchain format: {repr swapchainFmt}"

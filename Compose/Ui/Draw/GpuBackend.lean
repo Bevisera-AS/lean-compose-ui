@@ -44,6 +44,10 @@ private def applyVSync (dev : Sdl.Gpu.Device) (window : Sdl.Window)
 its `RenderBackend`. Throws when no GPU backend exists (dummy driver). -/
 def create (window : Sdl.Window) : IO RenderBackend := do
   let dev ← Gpu.getDevice
+  -- The positive twin of makeBackend's fallback warning — on a phone this
+  -- logcat line is the one cheap proof of which backend/driver is live.
+  Sdl.logInfo (msg :=
+    s!"Compose GPU backend: driver {← dev.getDriver}, shader formats {(← dev.getShaderFormats).val}")
   dev.claimWindow window
   let renderer ← Gpu.GpuRenderer.create dev window
   return {

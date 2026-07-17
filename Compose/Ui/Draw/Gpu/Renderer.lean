@@ -581,19 +581,34 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
   rp.finish
 
+/-- One-shot breadcrumbs for the process's very first on-screen render —
+the stage reached pinpoints where a broken device/driver stalls (e.g. a
+swapchain acquire that never returns), which is otherwise undebuggable
+from a phone's logcat. -/
+private initialize firstRenderTrace : IO.Ref Bool ← IO.mkRef true
+
 /-- Render one frame: returns `false` when no swapchain texture was available
 (the caller re-arms a frame request), `true` after a successful submit. -/
 def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
     (mayBlock : Bool) : IO Bool := do
+  let trace ← firstRenderTrace.modifyGet fun b => (b, false)
+  if trace then
+    Sdl.logInfo (msg := s!"Compose GPU: first render — prepare (mayBlock {mayBlock})")
   let cb ← r.dev.acquireCommandBuffer
   let (enc, atlases, layerTexs, imageTexs) ← r.prepare cb list
+  if trace then
+    Sdl.logInfo (msg := "Compose GPU: first render — acquiring swapchain texture")
   let sc? ← if mayBlock then cb.waitAndAcquireSwapchainTexture r.window
             else cb.acquireSwapchainTexture r.window
   match sc? with
   | none =>
+    if trace then
+      Sdl.logInfo (msg := "Compose GPU: first render — no swapchain texture")
     cb.submit
     return false
   | some sc =>
+    if trace then
+      Sdl.logInfo (msg := s!"Compose GPU: first render — acquired {sc.width}x{sc.height}, submitting")
     r.passes cb sc.texture sc.width sc.height clear enc atlases layerTexs imageTexs
     cb.submit
     return true

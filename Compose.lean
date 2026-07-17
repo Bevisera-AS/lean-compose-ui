@@ -138,6 +138,8 @@ public import Compose.Foundation.Interaction
 public meta import Compose.Foundation.Interaction
 public import Compose.Foundation.Scroll
 public meta import Compose.Foundation.Scroll
+public import Compose.Foundation.Transformable
+public meta import Compose.Foundation.Transformable
 public import Compose.Foundation.Lazy
 public meta import Compose.Foundation.Lazy
 public import Compose.Foundation.BackHandler

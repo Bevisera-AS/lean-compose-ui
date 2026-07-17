@@ -1029,6 +1029,116 @@ private def dragScrollIgnoresSecondFinger : IO Unit := do
     (← st.value) 52
   let _ ← r.im.pointerEvent (fingerRelease 1 50 20)
 
+/-! ## Transform gestures -/
+
+/-- Record of one `onTransform` step. -/
+private structure TransformCall where
+  centroid : Offset
+  pan : Offset
+  zoom : Float32
+  rotation : Float32
+  deriving Inhabited
+
+private def approxF (a b : Float32) (eps : Float32 := 0.001) : Bool :=
+  (a - b).abs ≤ eps
+
+/-- Two diverging fingers cross the transform slop and stream zoom steps;
+one finger alone never fires. -/
+private def transformZoomFires : IO Unit := do
+  let calls ← IO.mkRef (#[] : Array TransformCall)
+  let stCell ← IO.mkRef (none : Option TransformableState)
+  let r ← rig <| Box do
+    let st ← rememberTransformableState fun c pan zoom rot =>
+      calls.modify (·.push ⟨c, pan, zoom, rot⟩)
+    SideEffect (stCell.set (some st))
+    leaf (Modifier.size 100 100 |>.transformable st)
+  -- One finger dragging is not a transform.
+  let _ ← r.im.pointerEvent (fingerPress 1 40 50)
+  let _ ← r.im.pointerEvent (fingerMove 1 10 50)
+  let _ ← r.im.pointerEvent (fingerRelease 1 10 50)
+  checkEq "transform: a single finger never fires" (← calls.get).size 0
+  -- Two fingers diverge: under slop first, then the crossing step fires.
+  let _ ← r.im.pointerEvent (fingerPress 1 40 50)
+  let _ ← r.im.pointerEvent (fingerPress 2 60 50)
+  let _ ← r.im.pointerEvent (fingerMove 1 30 50)   -- motion 7.5 < 8: pending
+  checkEq "transform: under the slop nothing fires" (← calls.get).size 0
+  let _ ← r.im.pointerEvent (fingerMove 2 70 50)   -- motion 20 > 8: fires
+  let cs ← calls.get
+  checkEq "transform: crossing the slop fires once" cs.size 1
+  check s!"transform: the crossing step's zoom ({cs[0]!.zoom})"
+    (approxF cs[0]!.zoom (4.0 / 3.0))
+  checkEq "transform: centroid at the pointer mean" cs[0]!.centroid ⟨50, 50⟩
+  checkEq "transform: pure spread has no rotation" cs[0]!.rotation 0
+  let _ ← r.im.pointerEvent (fingerMove 1 20 50)   -- active: fires per move
+  let cs ← calls.get
+  checkEq "transform: active streams per move" cs.size 2
+  check s!"transform: second step's zoom ({cs[1]!.zoom})"
+    (approxF cs[1]!.zoom 1.25)
+  let _ ← r.im.pointerEvent (fingerRelease 1 20 50)
+  let _ ← r.im.pointerEvent (fingerRelease 2 70 50)
+
+/-- A pinch on a transformable inside a scrollable zooms — the scroll stays
+put and a pending click under a finger cancels; below two fingers the
+scrollable still owns single-finger drags. -/
+private def transformStealsFromScrollable : IO Unit := do
+  let calls ← IO.mkRef (0 : Nat)
+  let clicks ← IO.mkRef (0 : Nat)
+  let srcCell ← IO.mkRef (none : Option InteractionSource)
+  let scroll ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll scroll) do
+      let st ← rememberTransformableState fun _ _ _ _ => calls.modify (· + 1)
+      Box (modifier := Modifier.size 100 300 |>.transformable st) do
+        let src ← rememberInteractionSource
+        SideEffect (srcCell.set (some src))
+        leaf (Modifier.size 100 300 |>.clickable (clicks.modify (· + 1))
+          (source := some src))
+  let some src ← srcCell.get | throw (IO.userError "source not captured")
+  -- Symmetric vertical pinch: each finger stays under the scroll slop while
+  -- the spread crosses the transform slop.
+  let _ ← r.im.pointerEvent (fingerPress 1 50 40)
+  check "transform-steal: pressed on the child" (← src.pressed.get)
+  let _ ← r.im.pointerEvent (fingerPress 2 50 60)
+  let _ ← r.im.pointerEvent (fingerMove 1 50 34)   -- transform 3.9, scroll 6: neither
+  checkEq "transform-steal: under both slops nothing moves" (← scroll.value) 0
+  let _ ← r.im.pointerEvent (fingerMove 2 50 66)   -- transform 9.6 > 8: steal
+  check "transform-steal: the pinch crossed first" ((← calls.get) ≥ 1)
+  check "transform-steal: the pending press unlatched" (!(← src.pressed.get))
+  let _ ← r.im.pointerEvent (fingerMove 1 50 30)   -- active: consumed move
+  checkEq "transform-steal: the scrollable never moved" (← scroll.value) 0
+  let _ ← r.im.pointerEvent (fingerRelease 1 50 30)
+  let _ ← r.im.pointerEvent (fingerRelease 2 50 66)
+  checkEq "transform-steal: the stolen click never fires" (← clicks.get) 0
+  -- A single finger on the same tree still drag-scrolls.
+  let before ← calls.get
+  let _ ← r.im.pointerEvent (fingerPress 1 50 80)
+  let _ ← r.im.pointerEvent (fingerMove 1 50 40)
+  let _ ← r.im.pointerEvent (fingerRelease 1 50 40)
+  checkEq "transform-steal: one finger scrolls the parent" (← scroll.value) 32
+  checkEq "transform-steal: one finger never transforms" (← calls.get) before
+
+/-- A finger cancel (system-stolen gesture) mid-transform drops the gesture;
+a fresh second press starts over with fresh slop accumulation. -/
+private def transformCancelDrops : IO Unit := do
+  let calls ← IO.mkRef (0 : Nat)
+  let r ← rig <| Box do
+    let st ← rememberTransformableState fun _ _ _ _ => calls.modify (· + 1)
+    leaf (Modifier.size 100 100 |>.transformable st)
+  let _ ← r.im.pointerEvent (fingerPress 1 40 50)
+  let _ ← r.im.pointerEvent (fingerPress 2 60 50)
+  let _ ← r.im.pointerEvent (fingerMove 1 30 50)
+  let _ ← r.im.pointerEvent (fingerMove 2 70 50)
+  checkEq "transform-cancel: active" (← calls.get) 1
+  let _ ← r.im.pointerEvent (fingerCancel 1 30 50)
+  let _ ← r.im.pointerEvent (fingerMove 2 60 50)
+  checkEq "transform-cancel: below two fingers nothing fires" (← calls.get) 1
+  -- Re-press: accumulators start fresh — a small step stays under the slop.
+  let _ ← r.im.pointerEvent (fingerPress 1 40 50)
+  let _ ← r.im.pointerEvent (fingerMove 2 62 50)
+  checkEq "transform-cancel: a new gesture accumulates from zero" (← calls.get) 1
+  let _ ← r.im.pointerEvent (fingerRelease 1 40 50)
+  let _ ← r.im.pointerEvent (fingerRelease 2 62 50)
+
 /-- The Input group. -/
 def run : IO Unit := do
   hitZOrder
@@ -1049,6 +1159,9 @@ def run : IO Unit := do
   dragScrollFlingEndStop
   dragScrollInnerDragWins
   dragScrollIgnoresSecondFinger
+  transformZoomFires
+  transformStealsFromScrollable
+  transformCancelDrops
   focusTraversal
   keyRouting
   textRouting

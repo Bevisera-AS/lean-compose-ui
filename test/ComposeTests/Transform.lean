@@ -125,6 +125,30 @@ private def nestedLayers : IO Unit := do
   check "nested: rotated content at combined alpha"
     (colorNear (← shot.readPixel 20 20) 128 0 0 (tol := 3))
 
+/-- The SDL stretch approximation: a `.stretch` layer composites through the
+transformed-offscreen path as a uniform scale anchored at the pinned edge
+(the GPU backend's non-linear warp is probe ⑰'s job) — the pinned edge
+stays, the far edge extends by `|s|·extent`, the un-stretched axis is
+untouched, and the enclosing clip crops the overdraw. -/
+private def stretchScaleFallback : IO Unit := do
+  let ren ← mkRen 64 80
+  clear ren 0 0 0
+  DrawScope.run ren {} do
+    clipRect ⟨10, 10, 50, 55⟩ do
+      -- s = 0.5 pins the top: content maps y ↦ 10 + 1.5·(y − 10), so the
+      -- white fill [10, 50] shows as [10, 70], cropped at the clip's 55.
+      withGraphicsLayer ⟨10, 10, 50, 50⟩ {}
+        (drawRect (.solid .white) ⟨10, 10⟩ ⟨40, 40⟩)
+        (effect := .stretch 0 0.5)
+  let shot ← ren.readPixels
+  check "stretch fallback: pinned edge stays" (colorNear (← shot.readPixel 30 12) 255 255 255)
+  check "stretch fallback: far edge extends past the unstretched extent"
+    (colorNear (← shot.readPixel 30 53) 255 255 255)
+  check "stretch fallback: the clip crops the overdraw"
+    (colorNear (← shot.readPixel 30 57) 0 0 0)
+  check "stretch fallback: the un-stretched axis is untouched"
+    (colorNear (← shot.readPixel 55 30) 0 0 0)
+
 /-- Clip semantics: an *enclosing* clip scissors the composite (target
 coordinates); a clip *inside* the layer bakes into the texture and rotates
 with the content. -/
@@ -223,6 +247,7 @@ def run : IO Unit := do
   scenario "whole-pixel translation snaps" snappedTranslation
   scenario "group opacity without double blend" groupOpacityNoDoubleBlend
   scenario "nested layers" nestedLayers
+  scenario "stretch scale fallback" stretchScaleFallback
   scenario "clip inside vs outside the layer" clipSemantics
   scenario "rotated image" rotatedImage
   scenario "IR goldens and mapped bounds" irGoldens

@@ -32,11 +32,14 @@ yields premultiplied texels), then one `textureAffine` composite maps the
 region's corners through the layer transform with `.blendPremultiplied` and
 the group alpha as color+alpha mod (scaling all four premultiplied channels).
 SDL clip state is per render target, so the clip tracker resets across every
-`setTarget`. Layer *effects* (`LayerEffect.blur`) are ignored — content
+`setTarget`. Layer *effects*: `LayerEffect.blur` is ignored — content
 renders unblurred on this backend (a documented approximation, like the
 rounded-clip story; a CPU Gaussian on the software path buys nothing the GPU
-backend doesn't already verify). Works headless under the dummy video
-driver — the whole test suite runs on this backend.
+backend doesn't already verify) — while `LayerEffect.stretch` approximates
+as a uniform scale anchored at the pinned edge (Flutter's non-shader
+fallback) through the transformed-layer path, so overscroll stays visible
+here too. Works headless under the dummy video driver — the whole test
+suite runs on this backend.
 -/
 
 namespace Compose.Draw
@@ -226,7 +229,23 @@ private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
     let toF (x : Rect) : Sdl.FRect := ⟨x.left, x.top, x.width, x.height⟩
     r.texture tex (src.map toF) (some (toF d))
   | .layer st bounds props content => do
-    match props.transform with
+    -- The stretch approximation (Flutter's non-shader fallback, AOSP's
+    -- `StretchEffect.makeLinearStretch`): a uniform scale `(1 + |s|)`
+    -- anchored at the pinned edge, composed into the layer transform — the
+    -- enclosing (scroll) clip crops the overdraw. The GPU backend runs the
+    -- true non-linear warp instead; the visual difference at overscroll's
+    -- ≤ 3.2% intensities is slight (distant content moves proportionally
+    -- rather than easing off).
+    let transform := match props.effect.normalize with
+      | .stretch sx sy =>
+        let ax := if sx > 0 then bounds.left else bounds.right
+        let ay := if sy > 0 then bounds.top else bounds.bottom
+        let scale := (Affine.translation ⟨ax, ay⟩).comp
+          ((Affine.scaling (1 + sx.abs) (1 + sy.abs)).comp
+            (Affine.translation ⟨-ax, -ay⟩))
+        some (scale.comp (props.transform.getD .identity))
+      | _ => props.transform
+    match transform with
     | none =>
       -- Flatten: fold the layer alpha into the content (the documented
       -- double-blend approximation of group opacity; DESIGN.md). The GPU

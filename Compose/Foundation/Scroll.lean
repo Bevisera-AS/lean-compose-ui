@@ -12,6 +12,10 @@ public import Compose.Animation.Spec
 public meta import Compose.Animation.Spec
 public import Compose.Animation.SplineDecay
 public meta import Compose.Animation.SplineDecay
+public import Compose.Animation.Spring
+public meta import Compose.Animation.Spring
+public import Compose.Foundation.Overscroll
+public meta import Compose.Foundation.Overscroll
 public import Compose.Animation.Decay
 public meta import Compose.Animation.Decay
 
@@ -97,6 +101,12 @@ structure ScrollState where
   scroll), so a running scroll animation stands down when a newer mutation
   starts — the single-threaded analog of Compose's `MutatorMutex`. -/
   mutationGen : IO.Ref Nat
+  /-- The *visible* overscroll displacement in px along the axis, added to
+  the content placement on top of `-value` (observable): `> 0` = content
+  displaced toward larger coordinates (pulled past the start), `< 0` past
+  the end. Written by the drag rubber-band and the bounce spring (see
+  `settleOverscroll`); `0` whenever the content is inside its range. -/
+  overscrollState : MutableState Float32
 
 instance : Nonempty ScrollState :=
   ⟨{ id := 0
@@ -104,7 +114,8 @@ instance : Nonempty ScrollState :=
      maxValueState := Classical.choice inferInstance
      viewportSizeState := Classical.choice inferInstance
      contentSizeState := Classical.choice inferInstance
-     mutationGen := Classical.choice inferInstance }⟩
+     mutationGen := Classical.choice inferInstance
+     overscrollState := Classical.choice inferInstance }⟩
 
 namespace ScrollState
 
@@ -115,7 +126,8 @@ def create (initial : Float32 := 0) : IO ScrollState :=
            maxValueState := ← MutableState.create 0
            viewportSizeState := ← MutableState.create 0
            contentSizeState := ← MutableState.create 0
-           mutationGen := ← IO.mkRef 0 }
+           mutationGen := ← IO.mkRef 0
+           overscrollState := ← MutableState.create 0 }
 
 /-- Cancel any in-flight scroll animation and claim the mutation lock; returns
 the new generation the caller must keep matching to stay live (Compose's
@@ -134,6 +146,10 @@ def viewportSize (s : ScrollState) : IO Float32 := s.viewportSizeState.get
 
 /-- The content extent on the scroll axis (observed read). -/
 def contentSize (s : ScrollState) : IO Float32 := s.contentSizeState.get
+
+/-- The visible overscroll displacement (observed read) — see
+`overscrollState`. -/
+def overscroll (s : ScrollState) : IO Float32 := s.overscrollState.get
 
 /-- Jump to `target`, clamped into `[0, maxValue]`. Mirrors
 `ScrollState.scrollTo`. -/
@@ -215,6 +231,36 @@ where
     unless t ≥ dur || target < 0 || target > (← s.maxValueState.cell.get) do
       loop myGen x0 t0 dur
 
+/-- The spring phase of `settleOverscroll` under an already-claimed
+mutation generation — `fling`'s edge bounce continues into it without
+re-interrupting itself. -/
+partial def settleOverscrollFrom (s : ScrollState) (myGen : Nat)
+    (v0 : Float32 := 0) : UiTask Unit := do
+  let o0 ← s.overscrollState.cell.get
+  if o0 == 0 && v0 == 0 then return
+  let t0 ← UiTask.awaitFrame
+  loop o0 t0
+where
+  loop (o0 : Float32) (t0 : UInt64) : UiTask Unit := do
+    let ns ← UiTask.awaitFrame
+    if (← s.mutationGen.get) != myGen then return
+    let t := if ns ≤ t0 then 0 else ns - t0
+    let (x, v) := Spring.evaluate overscrollDamping overscrollStiffness o0 0 v0
+      ((t.toFloat / 1e9).toFloat32)
+    if Spring.isAtEquilibrium 0 overscrollVisibilityThreshold x v then
+      s.overscrollState.set 0
+    else
+      s.overscrollState.set x
+      loop o0 t0
+
+/-- Spring the visible overscroll back to rest (stiffness 200, critically
+damped, 0.5 px settle threshold — CMP's Cupertino constants), carrying an
+initial overscroll-space velocity `v0` (px/s — the bounce a fling's or
+drag's residual velocity buys as overshoot). Interruptible like `fling`:
+any newer mutation stands it down at its next frame. -/
+def settleOverscroll (s : ScrollState) (v0 : Float32 := 0) : UiTask Unit := do
+  s.settleOverscrollFrom (← s.interrupt) v0
+
 end ScrollState
 
 /-- Remember a `ScrollState` at this composition position. Mirrors
@@ -245,7 +291,9 @@ private def scrollLayoutBlock (state : ScrollState) (vertical : Bool) : CustomLa
     if v' != v then
       -- Content/viewport change re-clamps (settles next pass, values equal).
       state.valueState.set v'
-    let off := -(roundHalfUp v')
+    -- Observed like `value`: a bounce write re-measures exactly this node.
+    let over ← state.overscrollState.get
+    let off := -(roundHalfUp v') + roundHalfUp over
     return (size, if vertical then ⟨0, off⟩ else ⟨off, 0⟩)⟩
 
 /-- The wheel handler shared by both axes: scroll by `wheelScrollStep` px per

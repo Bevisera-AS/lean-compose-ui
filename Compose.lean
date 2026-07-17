@@ -138,6 +138,8 @@ public import Compose.Foundation.Gestures
 public meta import Compose.Foundation.Gestures
 public import Compose.Foundation.Interaction
 public meta import Compose.Foundation.Interaction
+public import Compose.Foundation.Overscroll
+public meta import Compose.Foundation.Overscroll
 public import Compose.Foundation.Scroll
 public meta import Compose.Foundation.Scroll
 public import Compose.Foundation.Transformable

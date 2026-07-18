@@ -177,6 +177,18 @@ structure OverlayKeyHandler where
 instance : Inhabited OverlayKeyHandler :=
   ⟨{ id := 0, capture := false, handler := fun _ => pure false }⟩
 
+/-- App→IME state sync (the reverse of the IME-inset bridge): called with a
+focused text field's full text plus its selection as *UTF-16 code-unit*
+offsets (`start ≤ end` — the units and order
+`InputMethodManager.updateSelection` speaks) whenever that pair changes.
+SDL has no app→IME channel, so on Android the platform layer (LeAndroid's
+IME bridge) installs one that resets the input connection's mirror buffer
+and notifies the IME — without it, an app-side caret move or edit leaves
+the IME's belief stale (wrong suggestions/deletions after a caret tap).
+Desktop leaves the hook `none`. -/
+structure ImeSync where
+  sync : (text : String) → (selStart selEnd : UInt32) → IO Unit
+
 /-- Per-window state owned by the app shell (see the module docstring).
 Create via `Compose.bootstrap`; the record itself is plumbing — composables
 should prefer the dedicated locals (`LocalDensity`, `LocalScheduler`). -/
@@ -280,6 +292,9 @@ structure WindowContext where
   frame clock — the `COMPOSE_INPUT_RECORD` frame marks (`installInput` sets
   it to the recorder's `frame`); `none` when not recording. -/
   frameProbe : IO.Ref (Option (UInt64 → IO Unit))
+  /-- The app→IME sync hook (see `ImeSync`); installed by the embedding
+  platform layer, fired by the focused `TextField`'s draw pass. -/
+  imeSyncHook : IO.Ref (Option ImeSync)
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app

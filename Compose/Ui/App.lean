@@ -271,7 +271,8 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       modalFocusHook := ← IO.mkRef fun _ _ => pure ()
       bringIntoViewPending := ← IO.mkRef false
       renderFailures := ← IO.mkRef 0
-      frameProbe := ← IO.mkRef none }
+      frameProbe := ← IO.mkRef none
+      imeSyncHook := ← IO.mkRef none }
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame

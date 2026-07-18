@@ -261,6 +261,39 @@ private def touchLongPress : IO Unit := do
   r.tick 600
   checkEq "long-press: the raced-out timer never fires" (← value.get) before
 
+/-- The app→IME sync hook: a focused field pushes its (text, selection) pair
+— selection in UTF-16 code units — through `WindowContext.imeSyncHook`
+exactly once per change (caret taps and edits alike); an unfocused field
+never fires it. -/
+private def imeSyncHook : IO Unit := do
+  let text := "héllo wörld"   -- multi-byte: the byte→UTF-16 conversion shows
+  let (r, value, _) ← fieldRig { text, selection := .caret 0 }
+  let syncs ← IO.mkRef (#[] : Array (String × UInt32 × UInt32))
+  r.ctx.imeSyncHook.set (some ⟨fun t s e => syncs.modify (·.push (t, s, e))⟩)
+  r.pump
+  checkEq "ime sync: nothing while unfocused" ((← syncs.get).size) 0
+  -- Click after "w" (byte 8 = 7 UTF-16 units: é and ö are 2 bytes, 1 unit).
+  let x8 ← caretScreenX r text 8
+  r.click (x8 + 1) 20
+  r.pump
+  checkEq "ime sync: focus click pushed the caret once" (← syncs.get)
+    #[(text, 7, 7)]
+  r.pump
+  checkEq "ime sync: redraws don't re-push" ((← syncs.get).size) 1
+  -- Typing changes text + caret: one more push with the new pair.
+  r.text "x"
+  r.pump
+  checkEq "ime sync: an edit pushes the new state" ((← syncs.get).back?)
+    (some ("héllo wxörld", 8, 8))
+  checkEq "ime sync: exactly one push per change" ((← syncs.get).size) 2
+  -- Programmatic selection change while unfocused stays silent.
+  r.key .escape
+  r.pump
+  value.set { (← value.get) with selection := .caret 0 }
+  r.pump
+  checkEq "ime sync: unfocused programmatic move stays silent"
+    ((← syncs.get).size) 2
+
 /-! ## End-to-end typing (controlled loop, MT framework) -/
 
 /-- One tagged controlled `ValueTextField` bound to `value`, logging every
@@ -779,6 +812,7 @@ def run : IO Unit := do
   mouseSelection
   touchFieldGesture
   touchLongPress
+  imeSyncHook
   clipboardOps
   imeComposition
   imeGreedyCommitRepair

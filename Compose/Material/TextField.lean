@@ -365,6 +365,9 @@ private structure FieldVisuals where
   window? : Option WindowContext
   /-- Last published IME area `(x, y, w, h, caretX)` in window coordinates. -/
   lastImeArea : IO.Ref (Option (Int32 × Int32 × Int32 × Int32 × Int32))
+  /-- Last `(text, selection)` pushed through the window's app→IME sync hook
+  (dedup — the pair changes far less often than the draw pass runs). -/
+  lastImeSync : IO.Ref (Option (String × TextRange))
 
 /-- Draw the whole field: outline, selection, text/placeholder, composition
 underline, caret, label — and publish the IME caret area when it moved.
@@ -444,6 +447,18 @@ private def drawTextField (vis : FieldVisuals) : DrawM Unit := do
         vis.lastImeArea.set (some area)
         let (ax, ay, aw, ah, acur) := area
         w.window.setTextInputArea (some ⟨ax, ay, aw, ah⟩) (acur - ax)
+      -- App→IME sync: whenever the (text, selection) the IME should believe
+      -- changed — a tapped caret, a programmatic edit, or an IME edit echoed
+      -- back — push it through the platform hook (the receiving side diffs
+      -- against its mirror, so echoes are cheap no-ops). UTF-16 units, the
+      -- offsets `InputMethodManager.updateSelection` speaks.
+      let state := (vis.value.text, vis.value.selection)
+      unless (← vis.lastImeSync.get) == some state do
+        vis.lastImeSync.set (some state)
+        if let some h ← w.imeSyncHook.get then
+          let t := vis.value.text
+          h.sync t (Utf8.utf16Offset t vis.value.selection.start).toUInt32
+            (Utf8.utf16Offset t vis.value.selection.«end»).toUInt32
 
 /-! ## The composable -/
 
@@ -494,6 +509,8 @@ composable def ValueTextField (value : TextFieldValue)
     let scrollRef ← remember (IO.mkRef (0.0 : Float32))
     let lastImeArea ← remember
       (IO.mkRef (none : Option (Int32 × Int32 × Int32 × Int32 × Int32)))
+    let lastImeSync ← remember
+      (IO.mkRef (none : Option (String × TextRange)))
     let cellText ← remember (IO.mkRef (none : Option TextLayout))
     let cellPlaceholder ← remember (IO.mkRef (none : Option TextLayout))
     let cellLabel ← remember (IO.mkRef (none : Option TextLayout))
@@ -607,7 +624,7 @@ composable def ValueTextField (value : TextFieldValue)
         outlineColor, outlineWidth, caretColor
         selectionColor := colors.primary.withAlpha 0.40
         textColor, shape, hasLabel := label.isSome
-        scroll := scrollRef, window?, lastImeArea }
+        scroll := scrollRef, window?, lastImeArea, lastImeSync }
     let hasLabel := label.isSome
     let policy : MeasurePolicy := fun scope _ c => do
       let d := scope.density

@@ -182,6 +182,28 @@ def codepointToByte (s : String) (cp : Nat) : Nat := Id.run do
 #guard codepointToByte "日本語" 2 == 6
 #guard codepointToByte "abc" 99 == 3
 
+/-- UTF-16 code units before byte offset `n` (a mid-codepoint offset counts
+its containing codepoint) — the unit Android's
+`InputMethodManager.updateSelection` speaks; astral codepoints count two. -/
+def utf16Offset (s : String) (n : Nat) : Nat := Id.run do
+  let mut b : Nat := 0
+  let mut u : Nat := 0
+  for _ in [0:s.length] do
+    if b ≥ n then break
+    u := u + (if (charAt s b).toNat ≥ 0x10000 then 2 else 1)
+    b := next s b
+  return u
+
+-- byte → UTF-16 unit: ASCII 1:1, BMP multi-byte 1 unit, astral 2 units
+#guard utf16Offset "abc" 2 == 2
+#guard utf16Offset "abc" 99 == 3
+#guard utf16Offset "héllo" 3 == 2   -- h(1B) + é(2B) → 2 units
+#guard utf16Offset "héllo" 2 == 2   -- mid-é counts é
+#guard utf16Offset "Hột" 4 == 2     -- ộ = U+1ED9, 3 bytes, 1 unit
+#guard utf16Offset "a😀b" 5 == 3    -- 😀 = U+1F600, 4 bytes, 2 units
+#guard utf16Offset "a😀b" 1 == 1
+#guard utf16Offset "" 0 == 0
+
 end Utf8
 
 /-- A selection/composition range as UTF-8 byte offsets, stored as

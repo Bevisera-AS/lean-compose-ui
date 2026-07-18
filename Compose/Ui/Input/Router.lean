@@ -440,11 +440,14 @@ def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
   let cursor ← match cursor with
     | some c => pure c
     | none => CursorSetter.sdl
+  -- Empty counts as unset: Android's SDL_ENV.* manifest injection sets the
+  -- variable even when the placeholder is blank (the recording-off build).
   let recorder ← match ← IO.getEnv "COMPOSE_INPUT_RECORD" with
-    | some path => do
-      let (pw, ph) ← ctx.window.getSizeInPixels
-      let density := (← ctx.densityState.get).density
-      some <$> InputRecorder.create path pw ph density
+    | some path =>
+      if path.isEmpty then pure none else do
+        let (pw, ph) ← ctx.window.getSizeInPixels
+        let density := (← ctx.densityState.get).density
+        some <$> InputRecorder.create path pw ph density
     | none => pure none
   ctx.frameProbe.set (recorder.map (·.frame))
   let isClient ← IO.mkRef false

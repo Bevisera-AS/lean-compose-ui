@@ -189,10 +189,24 @@ private structure FieldGestureParams where
   start text input through the focus hook instead — `SDL_StartTextInput`
   is a no-op while text input is active, so this bounces it. -/
   reshowKeyboard : IO Unit
+  /-- Select the word at an element-local position and return the resulting
+  selection — the finger long-press entry, returning the word range the
+  selection drag anchors to. -/
+  selectWord : Offset → IO TextRange
 
 private instance : Nonempty FieldGestureParams :=
   ⟨{ enabled := false, hitCaret := fun _ => pure 0, edit := fun _ => pure ()
-     reshowKeyboard := pure () }⟩
+     reshowKeyboard := pure (), selectWord := fun _ => pure {} }⟩
+
+/-- Finger long-press timeout, ms (Android's `LONG_PRESS_TIMEOUT`; matches
+`detectTapGestures`' default). -/
+private def fieldLongPressMillis : UInt32 := 500
+
+/-- How a finger contact on the field resolved: the long-press timer won, or
+the tap wait ended first (release, cancel, or an enclosing scroll's steal). -/
+private inductive FingerFieldOutcome where
+  | longPressed
+  | ended
 
 /-- The caret/selection gesture.
 
@@ -206,8 +220,13 @@ router at the same up — Android focuses on the tap, not the touch-down),
 while a drag belongs to an enclosing scrollable: moves stay unconsumed so
 a drag-scroll's slop tracking sees them, and its steal cancels the tap
 (the capture cut delivers `exit`). Press and release are consumed (an
-outer clickable must not also fire). Finger selection-drag is out of
-scope for now (Android needs a long-press for it too). -/
+outer clickable must not also fire). A *long-press* (the finger holds
+`fieldLongPressMillis` before releasing, drifting past slop, or being
+stolen) selects the word under the press and switches to a selection drag:
+from there moves are consumed and extend the selection word-to-caret
+(Android's word-anchored extension), which also parks the enclosing scroll
+— its tracker stands off from a consumed gesture. No handles or toolbar
+yet. -/
 private partial def fieldGesture (params : IO.Ref FieldGestureParams)
     (scope : PointerInputScope) : UiTask Unit := do
   let ev ← scope.awaitEvent
@@ -228,7 +247,18 @@ private partial def fieldGesture (params : IO.Ref FieldGestureParams)
           dragLoop off
       else
         ev.consume
-        fingerTap ev.pointerId
+        let pid := ev.pointerId
+        let pressPos := ev.position
+        -- Race the long-press timer against the tap wait: a raced-out
+        -- awaiter's event is buffered, not swallowed (`offer`), so either
+        -- winner leaves the stream intact.
+        match ← UiTask.race
+            (do UiTask.delay fieldLongPressMillis; pure FingerFieldOutcome.longPressed)
+            (do fingerTap pid; pure .ended) with
+        | .ended => pure ()
+        | .longPressed =>
+          let p ← params.get
+          selDrag pid (← p.selectWord pressPos)
   fieldGesture params scope
 where
   /-- Await the finger tap's release: place the caret there. Moves pass
@@ -245,6 +275,30 @@ where
       p.reshowKeyboard
     | .exit => pure ()
     | _ => fingerTap pid
+  /-- Post-long-press selection drag: moves are consumed (the enclosing
+  scroll's tracker stands off from a consumed gesture — the field owns the
+  pointer now) and extend the selection from the long-pressed word,
+  word-anchored: dragging past the word's start anchors at its end and vice
+  versa; inside the word the whole word stays selected. Release keeps the
+  selection; `exit` (window leave / system cancel) abandons the drag. -/
+  selDrag (pid : UInt64) (word : TextRange) : UiTask Unit := do
+    let ev ← scope.awaitEvent
+    if ev.pointerId != pid then selDrag pid word else
+    match ev.eventType with
+    | .move =>
+      ev.consume
+      let p ← params.get
+      let off ← p.hitCaret ev.position
+      let lo := word.start
+      let hi := word.«end»
+      p.edit (.setSelection <|
+        if off < lo then ⟨hi, off⟩
+        else if off > hi then ⟨lo, off⟩
+        else ⟨lo, hi⟩)
+      selDrag pid word
+    | .release => ev.consume
+    | .exit => pure ()
+    | _ => selDrag pid word
   /-- Follow the press: anchor fixed at the press offset. -/
   dragLoop (anchor : Nat) : UiTask Unit := do
     let ev ← scope.awaitEvent
@@ -532,8 +586,12 @@ composable def ValueTextField (value : TextFieldValue)
         if let some w := window? then
           w.window.stopTextInput
           w.window.startTextInput
+    let selectWord (pos : Offset) : IO TextRange := do
+      doEdit (.selectWord (← hitCaret pos))
+      return (← valueRef.get).selection
     let gestureParams ← rememberUpdatedRef
-      ({ enabled, hitCaret, edit := doEdit, reshowKeyboard } : FieldGestureParams)
+      ({ enabled, hitCaret, edit := doEdit, reshowKeyboard, selectWord }
+        : FieldGestureParams)
     -- Caret blink: composed only while focused, so an idle field schedules
     -- no frame work.
     let caretOn ← if focused && enabled then do

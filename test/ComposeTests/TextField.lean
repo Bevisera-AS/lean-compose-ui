@@ -201,6 +201,66 @@ private def touchFieldGesture : IO Unit := do
   checkEq "touch field: a tap after the flick still works" (← value.get)
     (⟨text, .caret 8, none⟩)
 
+/-- Android long-press selection on touch: holding the finger past the
+long-press timeout selects the word under it; dragging then extends the
+selection word-anchored with moves *consumed* (the enclosing scroll stands
+off — the field owns the pointer). A flick that crosses the scroll slop
+before the timeout still scrolls, and the raced-out timer must not fire
+late. -/
+private def touchLongPress : IO Unit := do
+  let text := "hello world"
+  let value ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let st ← ScrollState.create
+  let r ← tboot <| Tests.restartable 1 do
+    Box (modifier := Modifier.size 240 100 |>.verticalScroll st) do
+      Column do
+        let v ← value.get
+        ValueTextField v value.set
+        Box (modifier := Modifier.size 240 300) do pure ()
+  -- Long-press inside "hello" (no release): the timer selects the word.
+  let x2 ← caretScreenX r text 2
+  r.fingerDown (x2 + 1) 20
+  r.tick 600
+  checkEq "long-press: selects the word under the finger" (← value.get)
+    (⟨text, ⟨0, 5⟩, none⟩)
+  -- Drag forward past the word: extends word-start → caret, and the
+  -- consumed moves keep the scroll parked.
+  let x8 ← caretScreenX r text 8
+  r.fingerMove (x8 + 1) 20
+  checkEq "long-press: drag extends word-anchored" (← value.get)
+    (⟨text, ⟨0, 8⟩, none⟩)
+  r.fingerMove (x8 + 1) 60
+  checkEq "long-press: selection drag never scrolls" (← st.value) 0
+  -- Release keeps the selection.
+  r.fingerUp (x8 + 1) 60
+  r.pump
+  checkEq "long-press: release keeps the selection" ((← value.get).selection.«end») 8
+  checkEq "long-press: still no scroll after the up" (← st.value) 0
+  -- Drag back before the word start from a fresh long-press on "world":
+  -- anchors at the word end.
+  let x7 ← caretScreenX r text 7
+  r.fingerDown (x7 + 1) 20
+  r.tick 600
+  checkEq "long-press: second press selects its word" (← value.get)
+    (⟨text, ⟨6, 11⟩, none⟩)
+  let x2b ← caretScreenX r text 2
+  r.fingerMove (x2b + 1) 20
+  checkEq "long-press: backward drag anchors at the word end" (← value.get)
+    (⟨text, ⟨11, 2⟩, none⟩)
+  r.fingerUp (x2b + 1) 20
+  r.pump
+  -- A flick that crosses slop before the timeout scrolls and cancels the
+  -- pending long-press: the raced-out timer must not select late.
+  let before ← value.get
+  r.fingerDown 100 30
+  r.fingerMove 100 16
+  r.fingerMove 100 2
+  r.fingerUp 100 2
+  r.pump
+  check s!"long-press: pre-timeout flick scrolls ({← st.value})" ((← st.value) > 10)
+  r.tick 600
+  checkEq "long-press: the raced-out timer never fires" (← value.get) before
+
 /-! ## End-to-end typing (controlled loop, MT framework) -/
 
 /-- One tagged controlled `ValueTextField` bound to `value`, logging every
@@ -718,6 +778,7 @@ def run : IO Unit := do
   multiByteEditing
   mouseSelection
   touchFieldGesture
+  touchLongPress
   clipboardOps
   imeComposition
   imeGreedyCommitRepair

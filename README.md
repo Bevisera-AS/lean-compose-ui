@@ -123,6 +123,14 @@ until you `advanceTimeBy`/`settle`, so animations are deterministic. Failures
 dump the semantics tree. See `test/ComposeTests/UiTest.lean` for worked
 examples.
 
+Real-device input is regression-tested by **record & replay**: run any app
+with `COMPOSE_INPUT_RECORD=<path>` and every translated pointer event (plus
+each frame-clock tick) is dumped as JSONL; the `Replay` test group drives
+committed recordings (`assets/test/input/`) back through the router with
+their original timestamps and asserts invariants — real finger streams carry
+the fractional coordinates and batched timing that synthetic events can't
+fake.
+
 ## Project layout
 
 ```

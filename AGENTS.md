@@ -32,6 +32,11 @@ material). `Compose/Runtime/SlotVal.lean` is the only module allowed to use
 - tests: `SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy lake exe test`
   (`COMPOSE_TEST_GROUP=<Name>` for one group)
 - headless demo smoke: `scripts/smoke-demos.sh` (uses `COMPOSE_MAX_FRAMES`)
+- input record/replay: `COMPOSE_INPUT_RECORD=<path>` dumps the translated
+  pointer stream (+ frame-tick marks) as JSONL; the `Replay` test group
+  replays committed recordings from `assets/test/input/` through the router
+  (invariant assertions, not pixel-exact). New fixtures must fail with the
+  fix they guard reverted before they count as coverage.
 - GPU smoke (real driver, local-only): `scripts/smoke-gpu.sh` — Metal/MSL
   pass plus a SPIR-V pass over MoltenVK (`COMPOSE_GPU_DRIVER=vulkan` forces
   the driver; skipped where no Vulkan loader exists)

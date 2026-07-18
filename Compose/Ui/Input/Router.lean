@@ -59,6 +59,12 @@ structure InputManager where
   `PointerEvent.pointerId`; an entry lives while that pointer holds a
   button. -/
   captures : IO.Ref (Std.HashMap UInt64 (Array HitTarget))
+  /-- Touch click-to-focus is tap-gated: a finger press *arms* the deepest
+  focusable under it here (`none` = the press hit no focusable, so the tap
+  clears focus); the release commits it, a steal or gesture cancel drops it
+  — a drag-scroll over a text field must not pop the keyboard. Mouse
+  presses focus immediately (`focusOnPress`) and never appear here. -/
+  pendingFocus : IO.Ref (Std.HashMap UInt64 (Option LayoutNode))
   /-- Buttons currently held per pointer (tracked from press/release events
   so synthetic tests need no SDL mouse state). -/
   buttonsHeld : IO.Ref (Std.HashMap UInt64 Sdl.MouseButtonFlags)
@@ -137,6 +143,7 @@ def create (root : LayoutNode) (cursor : CursorSetter)
       focus := ← FocusManager.create root onFocusTarget
       hover := ← HoverState.create cursor
       captures := ← IO.mkRef {}
+      pendingFocus := ← IO.mkRef {}
       buttonsHeld := ← IO.mkRef {}
       lastPos := ← IO.mkRef .zero
       pointerInside := ← IO.mkRef false
@@ -166,6 +173,9 @@ def stealCapture (im : InputManager) (pid : UInt64) (nid : Nat) (pos : Offset) :
     if cut.isNone then
       if (← path[i]!.node.nodeId) == nid then cut := some i
   let some i := cut | return
+  -- The takeover cancels the tap: an armed touch focus must not commit on
+  -- the up (the finger is scrolling, not tapping the focusable).
+  im.pendingFocus.modify (·.erase pid)
   let inner := path.extract (i + 1) path.size
   unless inner.isEmpty do
     im.captures.modify (·.insert pid (path.extract 0 (i + 1)))
@@ -196,7 +206,13 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       let path ← im.root.hitTest ev.position
       im.captures.modify (·.insert pid path)
       -- Click-to-focus before delivery: handlers observe the updated focus.
-      im.focus.focusOnPress path
+      -- Mouse only — a finger arms a tap-gated pending focus instead,
+      -- committed at the release (Android focuses on the tap, not the
+      -- touch-down: a drag-scroll starting on a text field never focuses).
+      if isMouse then
+        im.focus.focusOnPress path
+      else
+        im.pendingFocus.modify (·.insert pid (← FocusManager.focusCandidate path))
       dispatchToPath path { ev with buttons := held }
     else
       -- A second button mid-gesture stays with the captured path.
@@ -210,6 +226,17 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       if held == .none then h.erase pid else h.insert pid held
     let path := (← im.captures.get).getD pid #[]
     let path ← if path.isEmpty then im.root.hitTest ev.position else pure path
+    -- A finger tap commits its armed focus at the up — before delivery, so
+    -- release handlers observe the updated focus (the ordering mouse gets
+    -- at press time). A steal or cancel already dropped the entry.
+    if !isMouse && held == .none then
+      if let some cand := (← im.pendingFocus.get).get? pid then
+        im.pendingFocus.modify (·.erase pid)
+        match cand with
+        | some n =>
+          if ← im.focus.isAttached n then im.focus.requestFocus (some n)
+          else im.focus.clearFocus
+        | none => im.focus.clearFocus
     let consumed ← dispatchToPath path { ev with buttons := held }
     if held == .none then
       im.captures.modify (·.erase pid)
@@ -253,6 +280,7 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
     if isMouse then
       im.pointerInside.set false
     let captured := (← im.captures.get).getD pid #[]
+    im.pendingFocus.modify (·.erase pid)
     unless captured.isEmpty do
       let _ ← dispatchToPath captured ev
       im.captures.modify (·.erase pid)

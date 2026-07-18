@@ -188,29 +188,56 @@ private structure FieldGestureParams where
 private instance : Nonempty FieldGestureParams :=
   ⟨{ enabled := false, hitCaret := fun _ => pure 0, edit := fun _ => pure () }⟩
 
-/-- The caret/selection mouse gesture: press places the caret (or selects the
-word on double-click / everything on triple-click, via SDL's consecutive-click
+/-- The caret/selection gesture.
+
+Mouse (pointer `0`): press places the caret (or selects the word on
+double-click / everything on triple-click, via SDL's consecutive-click
 counter), dragging extends the selection from the press anchor. Presses,
-drag moves, and releases are consumed. -/
+drag moves, and releases are consumed.
+
+Finger: a *tap* places the caret at the release (focus commits in the
+router at the same up — Android focuses on the tap, not the touch-down),
+while a drag belongs to an enclosing scrollable: moves stay unconsumed so
+a drag-scroll's slop tracking sees them, and its steal cancels the tap
+(the capture cut delivers `exit`). Press and release are consumed (an
+outer clickable must not also fire). Finger selection-drag is out of
+scope for now (Android needs a long-press for it too). -/
 private partial def fieldGesture (params : IO.Ref FieldGestureParams)
     (scope : PointerInputScope) : UiTask Unit := do
   let ev ← scope.awaitEvent
   if ev.eventType == .press then
     let p ← params.get
     if p.enabled then
-      ev.consume
-      let off ← p.hitCaret ev.position
-      if ev.clicks ≥ 3 then
-        p.edit .selectAll
-        awaitRelease
-      else if ev.clicks == 2 then
-        p.edit (.selectWord off)
-        awaitRelease
+      if ev.pointerId == 0 then
+        ev.consume
+        let off ← p.hitCaret ev.position
+        if ev.clicks ≥ 3 then
+          p.edit .selectAll
+          awaitRelease
+        else if ev.clicks == 2 then
+          p.edit (.selectWord off)
+          awaitRelease
+        else
+          p.edit (.setSelection (.caret off))
+          dragLoop off
       else
-        p.edit (.setSelection (.caret off))
-        dragLoop off
+        ev.consume
+        fingerTap ev.pointerId
   fieldGesture params scope
 where
+  /-- Await the finger tap's release: place the caret there. Moves pass
+  through unconsumed (an enclosing drag-scroll may take the gesture; its
+  steal ends this wait with the capture-cut `exit`). -/
+  fingerTap (pid : UInt64) : UiTask Unit := do
+    let ev ← scope.awaitEvent
+    if ev.pointerId != pid then fingerTap pid else
+    match ev.eventType with
+    | .release =>
+      ev.consume
+      let p ← params.get
+      p.edit (.setSelection (.caret (← p.hitCaret ev.position)))
+    | .exit => pure ()
+    | _ => fingerTap pid
   /-- Follow the press: anchor fixed at the press offset. -/
   dragLoop (anchor : Nat) : UiTask Unit := do
     let ev ← scope.awaitEvent

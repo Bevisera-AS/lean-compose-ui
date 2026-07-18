@@ -641,6 +641,42 @@ private def multiTouchCancel : IO Unit := do
   checkEq "finger cancel: A never clicked" (← aClicks.get) 0
   checkEq "finger cancel: B clicked" (← bClicks.get) 1
 
+/-- Touch click-to-focus is tap-gated (Android focuses on the tap's up, not
+the touch-down): a finger press alone focuses nothing, the release commits,
+a drag-scroll steal cancels the armed focus (a flick over a text field must
+not pop the keyboard), a system cancel drops it, and a tap on nothing
+clears. Mouse click-to-focus stays press-time (`focusTraversal`). -/
+private def touchTapFocus : IO Unit := do
+  let log ← IO.mkRef (#[] : Array String)
+  let fc (tag : String) : Bool → IO Unit := fun b =>
+    log.modify (·.push s!"{tag}{if b then "+" else "-"}")
+  let st ← ScrollState.create
+  let r ← rig <| Box do
+    Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+      Column do
+        leaf (Modifier.size 100 40 |>.focusable |>.onFocusChanged (fc "a"))
+        leaf (Modifier.size 100 260)
+  -- A tap: the press arms, the release commits.
+  let _ ← r.im.pointerEvent (fingerPress 1 50 20)
+  checkEq "touch focus: the press alone focuses nothing" (← log.get) #[]
+  let _ ← r.im.pointerEvent (fingerRelease 1 50 20)
+  checkEq "touch focus: the tap's release commits" (← log.get) #["a+"]
+  log.set #[]
+  -- A drag past slop: the scroll's steal cancels the armed focus; the
+  -- release commits nothing and focus stays where it was.
+  let _ ← r.im.pointerEvent (fingerPress 2 50 20)
+  let _ ← r.im.pointerEvent (fingerMove 2 50 90)
+  let _ ← r.im.pointerEvent (fingerRelease 2 50 90)
+  checkEq "touch focus: a drag-scroll leaves focus untouched" (← log.get) #[]
+  -- A system cancel (gesture stolen) drops the armed focus.
+  let _ ← r.im.pointerEvent (fingerPress 3 50 20)
+  let _ ← r.im.pointerEvent (fingerCancel 3 50 20)
+  checkEq "touch focus: a cancelled gesture commits nothing" (← log.get) #[]
+  -- A tap on nothing focusable clears.
+  let _ ← r.im.pointerEvent (fingerPress 4 50 80)
+  let _ ← r.im.pointerEvent (fingerRelease 4 50 80)
+  checkEq "touch focus: a tap on nothing clears" (← log.get) #["a-"]
+
 /-- The mouse (pointer 0) and a finger are independent: a finger press on B
 while the mouse holds A neither joins the mouse's capture nor disturbs its
 click. -/
@@ -1763,6 +1799,7 @@ def run : IO Unit := do
   clickableCancelMt
   multiTouchIndependentPresses
   multiTouchCancel
+  touchTapFocus
   mouseAndFingerCoexist
   pointerInputLifecycle
   missingScheduler

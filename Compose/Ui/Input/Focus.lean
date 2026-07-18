@@ -140,15 +140,25 @@ def moveFocus (fm : FocusManager) (backward : Bool := false) : IO Unit := do
     | some i => if backward then (i + fs.size - 1) % fs.size else (i + 1) % fs.size
   fm.requestFocus (some fs[next]!)
 
-/-- Click-to-focus on a press: focus the deepest focusable node on the hit
-path, or clear when the press hit none. -/
-def focusOnPress (fm : FocusManager) (path : Array HitTarget) : IO Unit := do
+/-- The deepest focus-enabled node on a press's hit path — what a
+click/tap-to-focus would focus (`none`: the press hit no focusable, so the
+commit clears focus). -/
+def focusCandidate (path : Array HitTarget) : IO (Option LayoutNode) := do
   for i in [0:path.size] do
     let t := path[path.size - 1 - i]!
     if (← t.node.data).modifier.focusEnabled then
-      fm.requestFocus (some t.node)
-      return
-  fm.clearFocus
+      return some t.node
+  return none
+
+/-- Click-to-focus on a press: focus the deepest focusable node on the hit
+path, or clear when the press hit none. Mouse presses only — a finger's
+press *arms* this instead and the router commits it on the tap's release
+(see `InputManager.pointerEvent`), so a drag taking the gesture over
+never focuses. -/
+def focusOnPress (fm : FocusManager) (path : Array HitTarget) : IO Unit := do
+  match ← focusCandidate path with
+  | some n => fm.requestFocus (some n)
+  | none => fm.clearFocus
 
 /-- A modal overlay opened: save the current focus (to restore on close) and
 clear it, so nothing under the scrim stays focused and Tab starts fresh inside

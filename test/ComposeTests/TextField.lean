@@ -99,6 +99,18 @@ private def TRig.click (r : TRig) (x y : Float32) (clicks : UInt8 := 1) : IO Uni
 private def TRig.move (r : TRig) (x y : Float32) : IO Unit :=
   r.send (.mouseMotion ⟨0, ⟨0⟩, ⟨0⟩, .none, x, y, 0, 0⟩)
 
+/-! Finger events (normalized coordinates over the 240×160 test window;
+translated to pointer id `fingerId + 1` — the touch pointer pipeline). -/
+
+private def TRig.fingerDown (r : TRig) (x y : Float32) : IO Unit :=
+  r.send (.fingerDown ⟨0, ⟨1⟩, ⟨0⟩, x / 240, y / 160, 0, 0, 1, ⟨0⟩⟩)
+
+private def TRig.fingerMove (r : TRig) (x y : Float32) : IO Unit :=
+  r.send (.fingerMotion ⟨0, ⟨1⟩, ⟨0⟩, x / 240, y / 160, 0, 0, 1, ⟨0⟩⟩)
+
+private def TRig.fingerUp (r : TRig) (x y : Float32) : IO Unit :=
+  r.send (.fingerUp ⟨0, ⟨1⟩, ⟨0⟩, x / 240, y / 160, 0, 0, 1, ⟨0⟩⟩)
+
 private def TRig.key (r : TRig) (k : Sdl.Keycode) (mods : Sdl.Keymod := .none) : IO Unit :=
   r.send (.keyDown ⟨0, ⟨0⟩, ⟨0⟩, .unknown, k, mods, 0, true, false⟩)
 
@@ -144,6 +156,50 @@ private def fieldRig (initial : TextFieldValue := {}) (w : Dp := 240)
       (modifier := m) (enabled := enabled) (isError := isError)
       (placeholder := placeholder) (label := label)
   return (r, value, calls)
+
+/-- Android touch on a field inside a scrollable: a finger flick starting
+on the field belongs to the scroll container (moves pass through
+unconsumed, the drag-scroll steals past slop, the field neither edits nor
+places a caret — and the router's tap-gated focus never fires, so no
+keyboard pop); a finger *tap* places the caret at the release. -/
+private def touchFieldGesture : IO Unit := do
+  let text := "hello world"
+  let value ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let calls ← IO.mkRef (#[] : Array TextFieldValue)
+  let st ← ScrollState.create
+  let r ← tboot <| Tests.restartable 1 do
+    Box (modifier := Modifier.size 240 100 |>.verticalScroll st) do
+      Column do
+        let v ← value.get
+        ValueTextField v (fun v' => do calls.modify (·.push v'); value.set v')
+        Box (modifier := Modifier.size 240 300) do pure ()
+  -- A tap places the caret at the release (byte boundary 3, like the
+  -- mouse click).
+  let x3 ← caretScreenX r text 3
+  r.fingerDown (x3 + 1) 20
+  r.fingerUp (x3 + 1) 20
+  r.pump
+  checkEq "touch field: a tap places the caret at the up" (← value.get)
+    (⟨text, .caret 3, none⟩)
+  -- Flick up starting on the field (y 30 is inside the ~40 dp field box):
+  -- the scroll steals past slop and the content scrolls.
+  r.fingerDown 100 30
+  r.fingerMove 100 16
+  r.fingerMove 100 2
+  r.fingerUp 100 2
+  r.pump
+  check s!"touch field: the flick scrolls the container ({← st.value})"
+    ((← st.value) > 10)
+  checkEq "touch field: the flick never edits or moves the caret"
+    ((← calls.get).size) 1
+  -- The field's gesture handler survives the steal: a tap after the flick
+  -- (y corrected for the scrolled content) still places a caret.
+  let x8 ← caretScreenX r text 8
+  r.fingerDown (x8 + 1) (20 - (← st.value))
+  r.fingerUp (x8 + 1) (20 - (← st.value))
+  r.pump
+  checkEq "touch field: a tap after the flick still works" (← value.get)
+    (⟨text, .caret 8, none⟩)
 
 /-! ## End-to-end typing (controlled loop, MT framework) -/
 
@@ -661,6 +717,7 @@ def run : IO Unit := do
   macKeys
   multiByteEditing
   mouseSelection
+  touchFieldGesture
   clipboardOps
   imeComposition
   imeGreedyCommitRepair

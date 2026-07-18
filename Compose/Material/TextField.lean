@@ -184,9 +184,15 @@ private structure FieldGestureParams where
   hitCaret : Offset → IO Nat
   /-- Apply an edit and report it (see `TextField`'s controlled contract). -/
   edit : EditCommand → IO Unit
+  /-- A finger tap landed on the field while it was *already* focused:
+  re-show the soft keyboard the user may have dismissed. Focus-gain taps
+  start text input through the focus hook instead — `SDL_StartTextInput`
+  is a no-op while text input is active, so this bounces it. -/
+  reshowKeyboard : IO Unit
 
 private instance : Nonempty FieldGestureParams :=
-  ⟨{ enabled := false, hitCaret := fun _ => pure 0, edit := fun _ => pure () }⟩
+  ⟨{ enabled := false, hitCaret := fun _ => pure 0, edit := fun _ => pure ()
+     reshowKeyboard := pure () }⟩
 
 /-- The caret/selection gesture.
 
@@ -236,6 +242,7 @@ where
       ev.consume
       let p ← params.get
       p.edit (.setSelection (.caret (← p.hitCaret ev.position)))
+      p.reshowKeyboard
     | .exit => pure ()
     | _ => fingerTap pid
   /-- Follow the press: anchor fixed at the press offset. -/
@@ -515,8 +522,18 @@ composable def ValueTextField (value : TextFieldValue)
       let off ← layout.hitToByteOffset ⟨tx, tsz.height.toFloat32 / 2⟩
       let r ← layout.byteOffsetToRect off
       return if tx > (r.left + r.right) / 2 then Utf8.next v.text off else off
+    -- `focused` here is the pre-tap composition snapshot: on the tap that
+    -- GAINS focus the router's commit precedes this handler but the
+    -- recomposition has not run yet, so this stays false and the focus
+    -- hook's own StartTextInput is not disturbed (bouncing it would
+    -- restart the fresh IME session).
+    let reshowKeyboard : IO Unit := do
+      if focused && enabled then
+        if let some w := window? then
+          w.window.stopTextInput
+          w.window.startTextInput
     let gestureParams ← rememberUpdatedRef
-      ({ enabled, hitCaret, edit := doEdit } : FieldGestureParams)
+      ({ enabled, hitCaret, edit := doEdit, reshowKeyboard } : FieldGestureParams)
     -- Caret blink: composed only while focused, so an idle field schedules
     -- no frame work.
     let caretOn ← if focused && enabled then do

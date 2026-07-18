@@ -44,6 +44,11 @@ the velocity is zero, not the stale pre-pause slope (Android's
 "assume pointer stopped" rule). -/
 def restGapNs : UInt64 := 40_000_000
 
+/-- Segments shorter than this contribute no slope: no digitizer samples
+faster than 1 kHz, so a sub-ms dt is a stamping artifact whose division
+would dominate the impulse with a garbage velocity. -/
+def minSegmentNs : Float := 1e6
+
 /-- The empty tracker (start of a gesture). -/
 def empty : VelocityTracker := {}
 
@@ -67,8 +72,11 @@ newest count — Compose's impulse window (its `previousSample` stays pinned
 to the newest, so the 40 ms gap check measures age-from-newest; `horizonNs`
 remains the retention bound in `add`). Zero when fewer than two samples
 remain or the newest is `restGapNs` stale (the pointer was resting when
-released). Segments with equal timestamps are skipped, so bursts of
-same-stamped samples degrade gracefully instead of blowing up the slope. -/
+released). Segments shorter than `minSegmentNs` (equal-stamped bursts, or
+near-coincident stamps from delivery-jittered batched forwarding) are
+skipped, so they degrade gracefully instead of blowing up the slope —
+dividing one frame of finger travel by a microsecond dt reads as a
+hundreds-of-thousands px/s flick. -/
 def velocity (vt : VelocityTracker) (nowNs : UInt64) : Float32 := Id.run do
   let past := vt.samples.filter fun (t, _) => t ≤ nowNs
   let some (newest, _) := past.back? | return 0
@@ -83,7 +91,7 @@ def velocity (vt : VelocityTracker) (nowNs : UInt64) : Float32 := Id.run do
   for j in [1:pts.size] do
     let (tPrev, xPrev) := pts[j - 1]!
     let (tCur, xCur) := pts[j]!
-    if tCur == tPrev then continue
+    if (tCur - tPrev) * 1e9 < minSegmentNs then continue
     let vSeg := (xCur - xPrev) / (tCur - tPrev)
     work := work + (vSeg - kineticEnergyToVelocity work) * vSeg.abs
     if j == 1 then work := work * 0.5
@@ -131,6 +139,15 @@ def velocity (vt : VelocityTracker) (nowNs : UInt64) : Float32 := Id.run do
   ((VelocityTracker.empty
     |>.add 0 0 |>.add 16_000_000 32 |>.add 16_000_000 32 |>.add 32_000_000 64
     |>.velocity 32_000_000) - 2000).abs < 0.01
+-- Sub-ms segments are stamping artifacts, skipped the same way: 16 px in
+-- 50 µs would read as a 320k px/s flick and dominate the impulse
+-- (regression: delivery-jittered batched touch produced 400k px/s
+-- releases). Surviving segments: 2000 px/s (halved first), then
+-- 16/0.01595 ≈ 1003 px/s → v = √(2·(2e6 + (1003−2000)·1003)) ≈ 1414.
+#guard
+  ((VelocityTracker.empty
+    |>.add 0 0 |>.add 16_000_000 32 |>.add 16_050_000 48 |>.add 32_000_000 64
+    |>.velocity 32_000_000) - 1414.2).abs < 20
 #guard
   (VelocityTracker.empty
     |>.add 16_000_000 0 |>.add 16_000_000 32

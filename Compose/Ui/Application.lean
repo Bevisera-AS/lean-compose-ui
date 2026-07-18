@@ -284,6 +284,9 @@ def stepApplication (app : ApplicationScope)
     unless ← e.ctx.paused.get do anyLive := true
   if anyLive && (← app.scheduler.hasFrameWork) then
     app.scheduler.tickFrame now
+    for e in ← app.windows.get do
+      unless ← e.ctx.paused.get do
+        if let some probe ← e.ctx.frameProbe.get then probe now
   if ← app.dirty.get then
     app.dirty.set false
     (← app.composition).drain

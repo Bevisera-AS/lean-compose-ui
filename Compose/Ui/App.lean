@@ -270,7 +270,8 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       focusManager := ← IO.mkRef none
       modalFocusHook := ← IO.mkRef fun _ _ => pure ()
       bringIntoViewPending := ← IO.mkRef false
-      renderFailures := ← IO.mkRef 0 }
+      renderFailures := ← IO.mkRef 0
+      frameProbe := ← IO.mkRef none }
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame
@@ -605,6 +606,7 @@ where
         ctx.scheduler.runDue now
         if ← ctx.scheduler.hasFrameWork then
           ctx.scheduler.tickFrame now
+          if let some probe ← ctx.frameProbe.get then probe now
         if remeasure then ctx.root.markNeedsRemeasure
       if sizeChanged || (← ctx.needsFrame.get) then
         renderFrame ctx config
@@ -709,6 +711,7 @@ def step (ctx : WindowContext) (config : AppConfig := {})
   let paused ← ctx.paused.get
   if !paused && (← ctx.scheduler.hasFrameWork) then
     ctx.scheduler.tickFrame now
+    if let some probe ← ctx.frameProbe.get then probe now
   -- 4: render when dirty and visible (`needsFrame` stays set while paused,
   -- so the foreground transition repaints immediately). While the resume
   -- grace budget lasts, immediately re-arm the next frame (see

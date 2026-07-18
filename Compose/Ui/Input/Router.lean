@@ -4,6 +4,8 @@ public import Compose.Ui.Input.Focus
 public meta import Compose.Ui.Input.Focus
 public import Compose.Ui.Input.Hover
 public meta import Compose.Ui.Input.Hover
+public import Compose.Ui.Input.Record
+public meta import Compose.Ui.Input.Record
 public import Compose.Ui.Window
 public meta import Compose.Ui.Window
 public import Std.Data.HashMap.Basic
@@ -84,6 +86,10 @@ structure InputManager where
   `installInput`): capture handlers run before focused-node routing, the
   rest after it, innermost (last registered) first. -/
   overlayKeys : IO.Ref (Array OverlayKeyHandler)
+  /-- Observer of every event entering `pointerEvent`, before dispatch — the
+  `COMPOSE_INPUT_RECORD` capture tap (see `InputRecorder`); `none` when not
+  recording. -/
+  tap : Option (PointerEvent → IO Unit) := none
 
 namespace InputManager
 
@@ -137,9 +143,10 @@ sync. -/
 def create (root : LayoutNode) (cursor : CursorSetter)
     (onFocusTarget : Option LayoutNode → IO Unit := fun _ => pure ())
     (overlayKeys : Option (IO.Ref (Array OverlayKeyHandler)) := none)
-    (sched : Option Scheduler := none) : IO InputManager := do
+    (sched : Option Scheduler := none)
+    (tap : Option (PointerEvent → IO Unit) := none) : IO InputManager := do
   let im : InputManager :=
-    { root, sched
+    { root, sched, tap
       focus := ← FocusManager.create root onFocusTarget
       hover := ← HoverState.create cursor
       captures := ← IO.mkRef {}
@@ -192,6 +199,7 @@ coordinates; `buttons` is filled in from the tracked state, both keyed by
 entry point tests drive directly. Hover and the last-known cursor position
 are mouse concepts (pointer `0` only). -/
 def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
+  if let some t := im.tap then t ev
   let pid := ev.pointerId
   let isMouse := pid == 0
   match ev.eventType with
@@ -422,14 +430,26 @@ recording `CursorSetter` to observe cursor changes.
 `onTextClientFocused` is the documented M11 IME hook: called with `true` when
 focus lands on a text-input client (a node with `Modifier.onTextInput`) and
 `false` when it leaves one — M11 wires `Window.startTextInput`/`stopTextInput`
-here. -/
+here.
+
+`COMPOSE_INPUT_RECORD=<path>` installs an `InputRecorder` as the manager's
+`tap` (and as the window's `frameProbe`), dumping the translated event
+stream for headless replay — see `Compose.Ui.Input.Record`. -/
 def installInput (ctx : WindowContext) (cursor : Option CursorSetter := none)
     (onTextClientFocused : Bool → IO Unit := fun _ => pure ()) : IO InputManager := do
   let cursor ← match cursor with
     | some c => pure c
     | none => CursorSetter.sdl
+  let recorder ← match ← IO.getEnv "COMPOSE_INPUT_RECORD" with
+    | some path => do
+      let (pw, ph) ← ctx.window.getSizeInPixels
+      let density := (← ctx.densityState.get).density
+      some <$> InputRecorder.create path pw ph density
+    | none => pure none
+  ctx.frameProbe.set (recorder.map (·.frame))
   let isClient ← IO.mkRef false
   let im ← InputManager.create ctx.root cursor
+    (tap := recorder.map (·.event))
     (overlayKeys := some ctx.keyHandlers)
     (sched := some ctx.scheduler)
     (onFocusTarget := fun target => do

@@ -276,6 +276,10 @@ structure WindowContext where
   and rethrows once the streak shows the device is genuinely gone. Reset
   on every successful render. -/
   renderFailures : IO.Ref Nat
+  /-- Observer called with the clock value each time the loop ticks the
+  frame clock — the `COMPOSE_INPUT_RECORD` frame marks (`installInput` sets
+  it to the recorder's `frame`); `none` when not recording. -/
+  frameProbe : IO.Ref (Option (UInt64 → IO Unit))
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app

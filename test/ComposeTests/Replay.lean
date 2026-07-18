@@ -260,9 +260,26 @@ private def smokeDrag : IO Unit := do
   let (st, stats) ← replayScroll "assets/test/input/smoke-drag.jsonl"
   checkScrollInvariants "smoke" st stats 40
 
+/-- One real-Pixel fixture (Pixel 10 Pro, wireless-debug capture session,
+2026-07-17) through the scroll rig + the shared invariant block. -/
+private def pixelFixture (name : String) (minTravel : Float32) : IO Unit := do
+  let (st, stats) ← replayScroll s!"assets/test/input/{name}"
+  checkScrollInvariants name st stats minTravel
+
+/-- The recorded regression fixtures — real finger streams with the
+fractional coordinates and timing the synthetic tests can't fake.
+Verified must-fail-pre-fix: with the `motionDust` collapse (Scroll.lean)
+and the `minSegmentNs` guard (Velocity.lean) reverted, these replays fail
+their invariants (see the fixture commit message). -/
+private def pixelFixtures : IO Unit := do
+  pixelFixture "pixel-slow-drag.jsonl" 100
+  pixelFixture "pixel-flick.jsonl" 50
+  pixelFixture "pixel-fling-chain.jsonl" 200
+  pixelFixture "pixel-edge-stretch.jsonl" 50
+  pixelFixture "pixel-scroll-session.jsonl" 200
+
 /-- The Replay group. -/
 def run : IO Unit := do
   roundTrip
   smokeDrag
-  -- Real-device fixtures land here as `pixel-*.jsonl` after the capture
-  -- session (each must fail with the dust/velocity fixes reverted).
+  pixelFixtures

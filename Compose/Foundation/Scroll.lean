@@ -85,16 +85,35 @@ def bringIntoViewDelta (leading trailing viewport : Float32) : Float32 :=
 #guard bringIntoViewDelta 150 300 100 == 150    -- oversized, below: align top
 #guard bringIntoViewDelta 0 100 100 == 0        -- exactly filling
 
+/-- Sub-this remainders (px) are `Float32` rounding dust, not real leftover
+motion: at a scroll value of a few thousand px the ulp is ~2.4e-4, so a fully
+consumed move's `motion + moved` lands near ±1e-4 instead of exactly 0. Dust
+published as leftover latches the overscroll band open (`o ≠ 0` routes every
+same-direction move into the band, eating the gesture). Well below any real
+pull (a slow edge-drag still moves ≥ 0.1 px/frame). -/
+def motionDust : Float32 := 0.01
+
 /-- Pointer motion left over after a scroll consumed `moved` px of `motion`
 px of pointer travel — the signs are opposite (content moves against the
 pointer), so the remainder is their sum: `0` when fully consumed, all of
-`motion` at a hard end-stop. -/
-def unconsumedMotion (motion moved : Float32) : Float32 := motion + moved
+`motion` at a hard end-stop. Remainders under `motionDust` collapse to an
+exact `0`: at real-device scroll values the sum carries `Float32` rounding
+dust for *fully consumed* moves, and a nonzero leftover means "the range ran
+out" to every consumer downstream (band growth, nested follow). -/
+def unconsumedMotion (motion moved : Float32) : Float32 :=
+  let rem := motion + moved
+  if rem.abs < motionDust then 0 else rem
 
 #guard unconsumedMotion 10 (-10) == 0    -- fully consumed
 #guard unconsumedMotion 10 0 == 10       -- end-stopped
 #guard unconsumedMotion (-24) 24 == 0
 #guard unconsumedMotion 10 (-4) == 6     -- partial: the range ran out mid-move
+-- Float32 rounding dust from a fully consumed move is not leftover motion
+-- (regression: dust latched the stretch band open and ate the next drags).
+#guard unconsumedMotion 55.108765 (-55.108643) == 0
+#guard unconsumedMotion (-55.108765) 55.108643 == 0
+-- A real sub-pixel end-stop leftover survives.
+#guard unconsumedMotion 0.3 0 == 0.3
 
 /-- Scroll position state for `Modifier.verticalScroll`/`horizontalScroll`:
 the offset in px (`0` = start, grows toward the end), plus the observable

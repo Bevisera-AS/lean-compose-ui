@@ -37,6 +37,7 @@ import ComposeTests.Menu
 import ComposeTests.Navigation
 import ComposeTests.Chrome
 import ComposeTests.Files
+import ComposeTests.Replay
 
 /-!
 # Runtime test entry point
@@ -63,6 +64,7 @@ def main : IO UInt32 := do
   Harness.group "Animation" Animation.run
   Harness.group "App" App.run
   Harness.group "Input" Input.run
+  Harness.group "Replay" Replay.run
   Harness.group "Text" Text.run
   Harness.group "Material" Material.run
   Harness.group "Overlay" Overlay.run

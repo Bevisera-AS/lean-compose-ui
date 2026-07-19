@@ -594,10 +594,15 @@ private def touchSelectionToolbar : IO Unit := do
   checkEq "toolbar: deselect-after-copy in the above position"
     (← value2.get) (⟨text, .caret 5, none⟩)
 
-/-- The bundled monochrome Noto Emoji fallback renders astral glyphs with
-real ink (regression: platform emoji fonts either rasterize blank —
-Android's COLRv1 — or are absent, so an emoji drew as a space-width
-nothing). Probes the emoji's glyph box for any non-background pixel. -/
+/-- The bundled emoji fallbacks render astral glyphs with real ink
+(regression: platform emoji fonts either rasterize blank — Android's
+COLRv1 — or are absent, so an emoji drew as a space-width nothing) — and
+with *colored* ink where the stack can draw the COLRv0 Twemoji (😀 is
+saturated yellow). Stock SDL_ttf draws COLRv0 through its text engines as
+an invisible advance (`FontStore.emojiFontUsable` documents the bug; the
+LeAndroid Android build carries a fix), so the color assertion keys off
+the same metrics probe the store uses — on an incapable stack the store
+falls back to the monochrome Noto Emoji and only the ink check gates. -/
 private def emojiFallbackRenders : IO Unit := do
   let text := "a😀b"
   let (r, _, _) ← fieldRig { text, selection := .caret 0 }
@@ -607,12 +612,27 @@ private def emojiFallbackRenders : IO Unit := do
   check s!"emoji: the glyph advances ({box.left}..{box.right})"
     (box.right - box.left > 4)
   let mut ink := false
+  let mut colored := false
   for dx in [0 : (box.right - box.left).toUInt32.toNat] do
     for y in [12:28] do
-      unless near (← r.pixel (12 + box.left + dx.toFloat32).toInt32 y.toInt32)
-          Color.white do
+      let c ← r.pixel (12 + box.left + dx.toFloat32).toInt32 y.toInt32
+      unless near c Color.white do
         ink := true
+        -- Saturated pixel = real color glyph, not a tinted/gray mask.
+        let hi := max c.r (max c.g c.b)
+        let lo := min c.r (min c.g c.b)
+        if hi - lo > 60 then colored := true
   check "emoji: the bundled fallback renders ink" ink
+  let colorCapable ← do
+    try
+      let f ← Sdl.Ttf.openFont "assets/fonts/TwemojiMozilla.ttf" 16
+      let m ← f.glyphMetrics '😀'
+      pure (decide (m.maxx - m.minx > 0))
+    catch _ => pure false
+  if colorCapable then
+    check "emoji: the color fallback renders in color" colored
+  else
+    IO.println "note emoji: stack can't draw COLRv0 — color check skipped"
 
 /-- The app→IME sync hook: a focused field pushes its (text, selection) pair
 — selection in UTF-16 code units — through `WindowContext.imeSyncHook`

@@ -381,6 +381,11 @@ inductive FocusElem where
   is focusable iff it has a `focusable` element and none is disabled. Mirrors
   `Modifier.focusable(enabled)`. -/
   | focusable (enabled : Bool)
+  /-- Makes presses on this node focus-*neutral*: tapping it neither focuses
+  nor clears focus — the current focus stays put. For floating chrome that
+  serves the focused node (selection handles, their toolbar); the analog of
+  Android's `FLAG_NOT_FOCUSABLE` popup windows. -/
+  | neutral
   /-- Observes this node gaining/losing focus. Mirrors
   `Modifier.onFocusChanged`. -/
   | onFocusChanged (handler : Bool → IO Unit)
@@ -417,6 +422,7 @@ never compare equal (capturing-lambda behavior). -/
 instance : BEq FocusElem where
   beq
     | .focusable a, .focusable b => a == b
+    | .neutral, .neutral => true
     | .requester a, .requester b => a == b
     | .scope a, .scope b => a == b
     | .bringIntoView a _, .bringIntoView b _ => a == b
@@ -660,6 +666,13 @@ click-to-focus. Mirrors `Modifier.focusable(enabled)`. -/
 def focusable (enabled : Bool := true) (m : Modifier := {}) : Modifier :=
   m.append (.focus (.focusable enabled))
 
+/-- Make presses on this node focus-neutral: a tap or click landing here
+neither focuses nor clears focus — the current focus stays put. For
+floating chrome serving the focused node (selection handles, their
+toolbar); the analog of Android's `FLAG_NOT_FOCUSABLE` popup windows. -/
+def focusNeutral (m : Modifier := {}) : Modifier :=
+  m.append (.focus .neutral)
+
 /-- Mark this node as a focus-traversal scope root (a modal overlay). While
 present, Tab traversal is confined to the topmost such scope's subtree.
 Framework plumbing for `Dialog`; not general app API. -/
@@ -770,6 +783,11 @@ def focusEnabled (m : Modifier) : Bool :=
   m.elems.any (fun e => e matches .focus (.focusable true)) &&
   m.elems.all (fun e => !(e matches .focus (.focusable false)))
 
+/-- Whether the chain marks presses focus-neutral (`Modifier.focusNeutral`):
+a press landing on the node leaves the current focus untouched. -/
+def isFocusNeutral (m : Modifier) : Bool :=
+  m.elems.any (fun e => e matches .focus .neutral)
+
 /-- Whether the chain has an `onTextInput` handler (a *text-input client*,
 see the M11 IME hook in `Compose.Ui.Input.Keyboard`). -/
 def isTextInputClient (m : Modifier) : Bool :=
@@ -832,6 +850,9 @@ def semanticsProps (m : Modifier) : Option SemanticsProps :=
 #guard !(focusable false).focusEnabled
 #guard !(focusable |>.focusable false).focusEnabled
 #guard !(padding (all := 1)).focusEnabled
+#guard (focusNeutral).isFocusNeutral
+#guard !(focusable).isFocusNeutral && !(padding (all := 1)).isFocusNeutral
+#guard !(focusNeutral).focusEnabled
 #guard (onTextInput fun _ => pure true).isTextInputClient
 #guard !(focusable).isTextInputClient
 -- semantics: layout-inert, chain fold outer-wins, testTag shorthand

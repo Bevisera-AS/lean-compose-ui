@@ -220,7 +220,12 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       if isMouse then
         im.focus.focusOnPress path
       else
-        im.pendingFocus.modify (·.insert pid (← FocusManager.focusCandidate path))
+        -- Focus-neutral chrome (selection handles/toolbar) arms nothing:
+        -- the current focus must survive the tap.
+        match ← FocusManager.focusPress path with
+        | .focus n => im.pendingFocus.modify (·.insert pid (some n))
+        | .clear => im.pendingFocus.modify (·.insert pid none)
+        | .keep => pure ()
       dispatchToPath path { ev with buttons := held }
     else
       -- A second button mid-gesture stays with the captured path.

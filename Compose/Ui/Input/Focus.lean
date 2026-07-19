@@ -140,25 +140,37 @@ def moveFocus (fm : FocusManager) (backward : Bool := false) : IO Unit := do
     | some i => if backward then (i + fs.size - 1) % fs.size else (i + 1) % fs.size
   fm.requestFocus (some fs[next]!)
 
-/-- The deepest focus-enabled node on a press's hit path — what a
-click/tap-to-focus would focus (`none`: the press hit no focusable, so the
-commit clears focus). -/
-def focusCandidate (path : Array HitTarget) : IO (Option LayoutNode) := do
+/-- What a press does to focus: focus the deepest focusable on its hit
+path, clear focus when it hit none, or leave focus alone when it landed on
+focus-neutral chrome first (`Modifier.focusNeutral` — selection handles
+and their toolbar serve the focused node and must not steal or drop its
+focus, Android's `FLAG_NOT_FOCUSABLE` popup semantics). -/
+inductive FocusPress where
+  | focus (n : LayoutNode)
+  | clear
+  | keep
+
+/-- Resolve a press's focus action, walking the hit path deepest-first:
+the first focusable wins, a focus-neutral node seen before any focusable
+keeps the current focus, an exhausted path clears. -/
+def focusPress (path : Array HitTarget) : IO FocusPress := do
   for i in [0:path.size] do
     let t := path[path.size - 1 - i]!
-    if (← t.node.data).modifier.focusEnabled then
-      return some t.node
-  return none
+    let m := (← t.node.data).modifier
+    if m.focusEnabled then return .focus t.node
+    if m.isFocusNeutral then return .keep
+  return .clear
 
 /-- Click-to-focus on a press: focus the deepest focusable node on the hit
-path, or clear when the press hit none. Mouse presses only — a finger's
-press *arms* this instead and the router commits it on the tap's release
-(see `InputManager.pointerEvent`), so a drag taking the gesture over
-never focuses. -/
+path, or clear when the press hit none (focus-neutral chrome keeps it).
+Mouse presses only — a finger's press *arms* this instead and the router
+commits it on the tap's release (see `InputManager.pointerEvent`), so a
+drag taking the gesture over never focuses. -/
 def focusOnPress (fm : FocusManager) (path : Array HitTarget) : IO Unit := do
-  match ← focusCandidate path with
-  | some n => fm.requestFocus (some n)
-  | none => fm.clearFocus
+  match ← focusPress path with
+  | .focus n => fm.requestFocus (some n)
+  | .clear => fm.clearFocus
+  | .keep => pure ()
 
 /-- A modal overlay opened: save the current focus (to restore on close) and
 clear it, so nothing under the scrim stays focused and Tab starts fresh inside

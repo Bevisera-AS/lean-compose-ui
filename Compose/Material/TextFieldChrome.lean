@@ -14,8 +14,8 @@ public import Compose.Material.Surface
 public meta import Compose.Material.Surface
 public import Compose.Material.Text
 public meta import Compose.Material.Text
-public import Compose.Foundation.Interaction
-public meta import Compose.Foundation.Interaction
+public import Compose.Foundation.Gestures
+public meta import Compose.Foundation.Gestures
 
 public section
 
@@ -314,12 +314,19 @@ composable def selectionHandle (h : SelectionHandle) (anchor : Rect)
     Layout m .leaf (policyInputs := some 0x73656c68)
 
 /-- One fixed-width toolbar text button (fixed so tap targets are
-computable in tests). -/
+computable in tests). Deliberately NOT `Modifier.clickable`: that bundles
+`focusable`, and a chrome button must never become the focus target — the
+tap has to leave the field's focus (and so its IME session) untouched. -/
 composable def toolbarButton (label : String) (action : IO Unit) :
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let actionRef ← rememberUpdatedRef action
+  let id ← remember freshId
   Box (modifier := Modifier.size chromeToolbarButtonWidth chromeToolbarHeight
-        |>.clickable action)
+        |>.focusNeutral
+        |>.pointerInput
+            (mixKeys (stringKey "Compose.TextFieldToolbar.button") id.toUInt64)
+            (detectTapGestures (onTap := some fun _ => do (← actionRef.get))))
       (contentAlignment := .center) do
     Text label (color := some colors.primary)
 

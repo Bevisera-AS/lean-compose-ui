@@ -365,6 +365,73 @@ private def touchSelectionHandles : IO Unit := do
     (!near (← r.pixel (x5 + 12).toInt32 42) L.primary
      && !near (← r.pixel 20 42) L.primary)
 
+/-- Touch selection chrome, edges: scrolling the enclosing container under
+shown chrome dismisses it (the field's window position moved with the
+selection unchanged — the selection itself persists); dragging a handle
+past a narrow field's edge rides the caret auto-scroll (the dragged end is
+`active`), extending the selection beyond the visible window while the
+scrolled-out start handle is suppressed. -/
+private def touchChromeEdges : IO Unit := do
+  let text := "hello world"
+  let value ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let st ← ScrollState.create
+  let r ← tboot <| Tests.restartable 1 do
+    Box (modifier := Modifier.size 240 100 |>.verticalScroll st) do
+      Column do
+        let v ← value.get
+        ValueTextField v value.set
+        Box (modifier := Modifier.size 240 300) do pure ()
+  -- Select "hello", settle: chrome up.
+  let x2 ← caretScreenX r text 2
+  let x5 ← caretScreenX r text 5
+  r.fingerDown (x2 + 1) 20
+  r.tick 600
+  r.fingerUp (x2 + 1) 20
+  r.pump
+  r.pump
+  check "chrome edges: chrome up before the scroll"
+    (near (← r.pixel (x5 + 12).toInt32 42) L.primary)
+  -- Finger-scroll the container from the filler below the field (x 220:
+  -- clear of the toolbar, which hangs at y 70–110 under the handle
+  -- clearance): the content scrolls and the chrome dismisses, selection
+  -- intact.
+  r.fingerDown 220 80
+  r.fingerMove 220 66
+  r.fingerMove 220 52
+  r.fingerUp 220 52
+  r.pump
+  r.pump
+  check s!"chrome edges: the container scrolled ({← st.value})" ((← st.value) > 10)
+  checkEq "chrome edges: the selection persists" (← value.get)
+    (⟨text, ⟨0, 5⟩, none⟩)
+  check "chrome edges: the scroll dismissed the chrome"
+    (!near (← r.pixel (x5 + 12).toInt32 (42 - (← st.value).toInt32)) L.primary
+     && !near (← r.pixel (x5 + 12).toInt32 42) L.primary)
+  -- Narrow field: dragging the end handle past the field edge auto-scrolls
+  -- the text under the selection (the dragged end is the caret) and the
+  -- start handle, scrolled out of the clip window, is suppressed.
+  let (r2, value2, _) ← fieldRig { text, selection := .caret 0 } (fieldWidth := some 80)
+  r2.fingerDown (x2 + 1) 20
+  r2.tick 600
+  r2.fingerUp (x2 + 1) 20
+  r2.pump
+  r2.pump
+  checkEq "chrome edges: narrow-field long-press selects" (← value2.get)
+    (⟨text, ⟨0, 5⟩, none⟩)
+  r2.fingerDown (x5 + 12) 42
+  r2.fingerMove 200 42
+  r2.fingerUp 200 42
+  r2.pump
+  r2.pump
+  checkEq "chrome edges: edge drag extends to the text end via auto-scroll"
+    (← value2.get) (⟨text, ⟨0, 11⟩, none⟩)
+  -- innerW = 80 − 24 = 56: the end handle sits pinned near the clip's
+  -- right edge (12 + 56 − caretW + 12 ≈ 78) and the start handle is gone.
+  check "chrome edges: the end handle pins to the field edge"
+    (near (← r2.pixel 78 42) L.primary)
+  check "chrome edges: the scrolled-out start handle is suppressed"
+    (!near (← r2.pixel 20 42) L.primary)
+
 /-- Touch selection chrome, toolbar half: the settling finger raises the
 Cut/Copy/Paste toolbar over the selection — *below* it when the field sits
 at the window top (the `preferAbove` fallback), above it otherwise (proved
@@ -415,6 +482,17 @@ private def touchSelectionToolbar : IO Unit := do
     (⟨"XY world", ⟨3, 8⟩, none⟩)
   let x3b ← caretScreenX r "XY world" 3
   check "premise: toolbar x unclamped" (x3b ≤ 48)
+  -- Pressing a button but releasing off it fires nothing and keeps chrome.
+  let x8b ← caretScreenX r "XY world" 8
+  r.fingerDown (x3b + 96) 90
+  r.fingerMove (x3b + 96) 130
+  r.fingerUp (x3b + 96) 130
+  r.pump
+  r.pump
+  checkEq "toolbar: a drag-off release fires nothing" (← value.get)
+    (⟨"XY world", ⟨3, 8⟩, none⟩)
+  check "toolbar: a drag-off release keeps the chrome"
+    (near (← r.pixel (x8b + 12).toInt32 42) L.primary)
   r.fingerDown (x3b + 96) 90
   r.fingerUp (x3b + 96) 90
   r.pump
@@ -1032,6 +1110,7 @@ def run : IO Unit := do
   touchLongPress
   touchSelectionHandles
   touchSelectionToolbar
+  touchChromeEdges
   imeSyncHook
   clipboardOps
   imeComposition

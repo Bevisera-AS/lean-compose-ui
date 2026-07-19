@@ -388,6 +388,9 @@ private structure FieldVisuals where
   composed next frame; `none` while chrome is down or the selection is
   collapsed. Writes dedup via the cell's structural-equality skip. -/
   chromeAnchors : MutableState (Option ChromeAnchors)
+  /-- The field's window position moved under shown chrome (an enclosing
+  container scrolled / relaid out): feed the reducer `.fieldMoved`. -/
+  chromeMoved : IO Unit
 
 /-- Draw the whole field: outline, selection, text/placeholder, composition
 underline, caret, label — and publish the IME caret area when it moved.
@@ -487,13 +490,27 @@ private def drawTextField (vis : FieldVisuals) : DrawM Unit := do
     let base := ctx.translation
     let x0 ← xAt sel.start
     let x1 ← xAt sel.«end»
-    vis.chromeAnchors.set (some
+    let a : ChromeAnchors :=
       { startX := base.x + pad - s + x0
         endX := base.x + pad - s + x1
         lineTop := base.y + textTop
         lineBottom := base.y + textTop + lineH
         clipLeft := base.x + pad
-        clipRight := base.x + pad + innerW })
+        clipRight := base.x + pad + innerW }
+    -- The field moved with the selection unchanged (container scroll /
+    -- relayout): dismiss the chrome instead of letting it trail the
+    -- content (the selection itself persists). The clip window is the
+    -- field-position signature — the field's own caret auto-scroll moves
+    -- only startX/endX. Untracked read: a tracked one would re-arm this
+    -- draw on its own write.
+    match ← vis.chromeAnchors.cell.get with
+    | some prev =>
+      if prev.clipLeft != a.clipLeft || prev.lineTop != a.lineTop then
+        vis.chromeAnchors.set none
+        vis.chromeMoved
+      else
+        vis.chromeAnchors.set (some a)
+    | none => vis.chromeAnchors.set (some a)
   else
     vis.chromeAnchors.set none
 
@@ -697,7 +714,8 @@ composable def ValueTextField (value : TextFieldValue)
         selectionColor := colors.primary.withAlpha 0.40
         textColor, shape, hasLabel := label.isSome
         scroll := scrollRef, window?, lastImeArea, lastImeSync
-        chromeOn := cs.shown, chromeAnchors }
+        chromeOn := cs.shown, chromeAnchors
+        chromeMoved := chromeStep .fieldMoved }
     let hasLabel := label.isSome
     let policy : MeasurePolicy := fun scope _ c => do
       let d := scope.density

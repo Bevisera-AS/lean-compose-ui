@@ -204,6 +204,8 @@ public import Compose.Material.MenuBar
 public meta import Compose.Material.MenuBar
 public import Compose.Material.Dialog
 public meta import Compose.Material.Dialog
+public import Compose.Material.TextFieldChrome
+public meta import Compose.Material.TextFieldChrome
 public import Compose.Material.TextField
 public meta import Compose.Material.TextField
 public import Compose.Test

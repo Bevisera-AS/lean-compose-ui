@@ -6,10 +6,16 @@ public import Compose.Core.Geometry
 public meta import Compose.Core.Geometry
 public import Compose.Core.Density
 public meta import Compose.Core.Density
+public import Compose.Ui.Overlay
+public meta import Compose.Ui.Overlay
+public import Compose.Ui.Layout
+public meta import Compose.Ui.Layout
 
 public section
 
 namespace Compose
+
+open Draw
 
 /-!
 # Text selection chrome (`Compose/Material/TextFieldChrome.lean`)
@@ -217,6 +223,79 @@ def chromeToolbarButtonWidth : Dp := 64
 
 /-- Gap between the selection line and the toolbar. -/
 def chromeToolbarGap : Dp := 8
+
+/-! ## The chrome composables -/
+
+/-- The teardrop handle glyph: a filled circle with the corner toward the
+anchored caret squared off — the end handle's tip is its top-left corner,
+the start handle's its top-right (Android's mirrored pair). Drawn flush to
+the top of the touch box, on the tip's side. -/
+private def drawHandleGlyph (h : SelectionHandle) (color : Color) : DrawM Unit := do
+  let ctx ← read
+  let sz ← DrawScope.size
+  let r := ctx.density.dpToPx chromeHandleSize / 2
+  match h with
+  | .«end» =>
+    DrawScope.drawRect (.solid color) ⟨0, 0⟩ ⟨r, r⟩
+    DrawScope.drawCircle (.solid color) ⟨r, r⟩ r
+  | .start =>
+    DrawScope.drawRect (.solid color) ⟨sz.width - r, 0⟩ ⟨r, r⟩
+    DrawScope.drawCircle (.solid color) ⟨sz.width - r, r⟩ r
+
+/-- The handle drag gesture: the press is consumed immediately (the popup
+is hit-tested before the app content, and capture then routes every move
+here — an enclosing scrollable can never steal a handle drag), each move
+reports the finger's window x, release or cancel settles. Callbacks live
+in a ref so the long-lived coroutine always sees the latest composition's
+closures (the `fieldGesture` idiom). -/
+private partial def handleDragLoop
+    (cb : IO.Ref (IO Unit × (Float32 → IO Unit) × IO Unit))
+    (box : IO.Ref Rect) (scope : PointerInputScope) : UiTask Unit := do
+  let ev ← scope.awaitEvent
+  if ev.eventType == .press then
+    ev.consume
+    (← cb.get).1
+    drag ev.pointerId
+  handleDragLoop cb box scope
+where
+  drag (pid : UInt64) : UiTask Unit := do
+    let ev ← scope.awaitEvent
+    if ev.pointerId != pid then drag pid else
+    match ev.eventType with
+    | .move =>
+      ev.consume
+      (← cb.get).2.1 ((← box.get).left + ev.position.x)
+      drag pid
+    | .release => ev.consume; (← cb.get).2.2
+    | .exit => (← cb.get).2.2
+    | _ => drag pid
+
+/-- One floating selection handle: a non-dismissable popup hanging from
+`anchor` (the caret point on the text line's bottom — see
+`ChromeAnchors.handleAnchor`), hosting the teardrop glyph in a
+`chromeHandleTouch` touch box whose tip corner aligns with the anchor.
+`grab` fires on press, `dragTo` per move with the finger's window x,
+`release` when the drag ends. -/
+composable def selectionHandle (h : SelectionHandle) (anchor : Rect)
+    (color : Color) (grab : IO Unit) (dragTo : Float32 → IO Unit)
+    (release : IO Unit) : Composable Unit := do
+  let density ← LocalDensity.current
+  let cb ← rememberUpdatedRef (grab, dragTo, release)
+  let box ← remember (IO.mkRef Rect.zero)
+  let id ← remember freshId
+  -- Align the tip corner with the anchor point: the end handle's tip is the
+  -- box's top-left (no offset), the start handle's its top-right.
+  let offX : Int32 := match h with
+    | .start => -(density.dpRoundToPx chromeHandleTouch)
+    | .«end» => 0
+  Popup (anchor := some anchor) (offset := ⟨offX, 0⟩) do
+    let m := Modifier.size chromeHandleTouch chromeHandleTouch
+      |>.focusNeutral
+      |>.onGloballyPositioned box.set
+      |>.pointerInput (mixKeys (stringKey "Compose.SelectionHandle") id.toUInt64)
+          (handleDragLoop cb box)
+      |>.drawBehind (drawHandleGlyph h color)
+    Layout m .leaf (policyInputs := some 0x73656c68)
 
 end Compose
 

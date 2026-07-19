@@ -249,6 +249,13 @@ private def touchLongPress : IO Unit := do
     (⟨text, ⟨11, 2⟩, none⟩)
   r.fingerUp (x2b + 1) 20
   r.pump
+  -- Dismiss the selection chrome first (a tap collapses the selection and
+  -- hides the handles) — the flick below starts where the end handle's
+  -- touch box would otherwise sit, and flicking a handle drags it.
+  let x7b ← caretScreenX r text 7
+  r.fingerDown (x7b + 1) 20
+  r.fingerUp (x7b + 1) 20
+  r.pump
   -- A flick that crosses slop before the timeout scrolls and cancels the
   -- pending long-press: the raced-out timer must not select late.
   let before ← value.get
@@ -260,6 +267,103 @@ private def touchLongPress : IO Unit := do
   check s!"long-press: pre-timeout flick scrolls ({← st.value})" ((← st.value) > 10)
   r.tick 600
   checkEq "long-press: the raced-out timer never fires" (← value.get) before
+
+/-- Touch selection chrome, handles half: a finger long-press raises the
+floating handles once the finger settles (mouse selection never does);
+dragging a handle moves the selection with character granularity (not
+word-anchored), the grabbed end crossing the fixed end swaps roles, an
+enclosing scroll never steals the drag (the handle popup consumes from
+the press), the field keeps focus through handle interaction
+(`Modifier.focusNeutral`), and a caret tap dismisses the chrome.
+
+Geometry (density 1, field at the origin): text line spans y 10–30, so
+handle touch boxes hang at y 30–62 with the teardrop circle centered
+12 px below the line (y 42). The end handle's tip is its box's top-left
+corner (circle center x = anchor + 12); the start handle's box is
+left-of-anchor and window-clamped at the left edge, putting its circle
+center at x 20 for a selection starting at offset 0. -/
+private def touchSelectionHandles : IO Unit := do
+  let text := "hello world"
+  let value ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let st ← ScrollState.create
+  let r ← tboot <| Tests.restartable 1 do
+    Box (modifier := Modifier.size 240 100 |>.verticalScroll st) do
+      Column do
+        let v ← value.get
+        ValueTextField v value.set
+        Box (modifier := Modifier.size 240 300) do pure ()
+  -- Long-press "hello", release: handles appear at both selection ends.
+  let x2 ← caretScreenX r text 2
+  r.fingerDown (x2 + 1) 20
+  r.tick 600
+  r.fingerUp (x2 + 1) 20
+  r.pump
+  r.pump
+  let x5 ← caretScreenX r text 5
+  check "handles: end handle at the selection end"
+    (near (← r.pixel (x5 + 12).toInt32 42) L.primary)
+  check "handles: start handle at the selection start (edge-clamped box)"
+    (near (← r.pixel 20 42) L.primary)
+  -- Drag the end handle back inside the word: character granularity (the
+  -- word-anchored selDrag would keep (0, 5)); y is ignored and the
+  -- consumed drag keeps the enclosing scroll parked.
+  let x3 ← caretScreenX r text 3
+  r.fingerDown (x5 + 12) 42
+  r.fingerMove (x3 + 1) 42
+  checkEq "handles: end-handle drag is char-granular" (← value.get)
+    (⟨text, ⟨0, 3⟩, none⟩)
+  r.fingerMove (x3 + 1) 100
+  checkEq "handles: handle drag never scrolls" (← st.value) 0
+  r.fingerUp (x3 + 1) 100
+  r.pump
+  r.pump
+  -- Chrome survives the handle interaction (focus-neutral press): the end
+  -- handle now sits at the new selection end.
+  check "handles: chrome tracks the selection after the drag"
+    (near (← r.pixel (x3 + 12).toInt32 42) L.primary)
+  -- Crossing: select "world", grab its END handle, drag left past the
+  -- start (roles swap to the start handle), then right past the fixed end
+  -- (they swap back).
+  let x7 ← caretScreenX r text 7
+  r.fingerDown (x7 + 1) 20
+  r.fingerUp (x7 + 1) 20
+  r.pump
+  r.fingerDown (x7 + 1) 20
+  r.tick 600
+  r.fingerUp (x7 + 1) 20
+  r.pump
+  r.pump
+  checkEq "handles: long-press selects the second word" (← value.get)
+    (⟨text, ⟨6, 11⟩, none⟩)
+  let x11 ← caretScreenX r text 11
+  let x8 ← caretScreenX r text 8
+  r.fingerDown (x11 + 12) 42
+  r.fingerMove (x3 + 1) 42
+  checkEq "handles: crossing the fixed end swaps the grabbed role"
+    (← value.get) (⟨text, ⟨6, 3⟩, none⟩)
+  r.fingerMove (x8 + 1) 42
+  checkEq "handles: crossing back swaps again" (← value.get)
+    (⟨text, ⟨6, 8⟩, none⟩)
+  r.fingerUp (x8 + 1) 42
+  r.pump
+  -- A caret tap collapses the selection and dismisses the chrome.
+  r.fingerDown (x2 + 1) 20
+  r.fingerUp (x2 + 1) 20
+  r.pump
+  r.pump
+  checkEq "handles: a tap collapses the selection" (← value.get)
+    (⟨text, .caret 2, none⟩)
+  check "handles: the tap dismissed the chrome"
+    (!near (← r.pixel 20 42) L.primary)
+  -- Mouse selection never raises chrome (touch-only invariant).
+  r.click (x2 + 1) 20 (clicks := 2)
+  r.pump
+  r.pump
+  checkEq "handles: mouse double-click still selects" (← value.get)
+    (⟨text, ⟨0, 5⟩, none⟩)
+  check "handles: no chrome for mouse selection"
+    (!near (← r.pixel (x5 + 12).toInt32 42) L.primary
+     && !near (← r.pixel 20 42) L.primary)
 
 /-- The app→IME sync hook: a focused field pushes its (text, selection) pair
 — selection in UTF-16 code units — through `WindowContext.imeSyncHook`
@@ -812,6 +916,7 @@ def run : IO Unit := do
   mouseSelection
   touchFieldGesture
   touchLongPress
+  touchSelectionHandles
   imeSyncHook
   clipboardOps
   imeComposition

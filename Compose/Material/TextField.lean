@@ -8,6 +8,8 @@ public import Compose.Animation.Transition
 public meta import Compose.Animation.Transition
 public import Compose.Ui.Layout
 public meta import Compose.Ui.Layout
+public import Compose.Material.TextFieldChrome
+public meta import Compose.Material.TextFieldChrome
 
 public section
 
@@ -193,10 +195,16 @@ private structure FieldGestureParams where
   selection — the finger long-press entry, returning the word range the
   selection drag anchors to. -/
   selectWord : Offset → IO TextRange
+  /-- A finger long-press selected a word: show the selection chrome. -/
+  chromeShow : IO Unit
+  /-- The selecting finger lifted (or the gesture was cancelled): the
+  selection settled — the chrome's toolbar may appear. -/
+  chromeSettle : IO Unit
 
 private instance : Nonempty FieldGestureParams :=
   ⟨{ enabled := false, hitCaret := fun _ => pure 0, edit := fun _ => pure ()
-     reshowKeyboard := pure (), selectWord := fun _ => pure {} }⟩
+     reshowKeyboard := pure (), selectWord := fun _ => pure {}
+     chromeShow := pure (), chromeSettle := pure () }⟩
 
 /-- Finger long-press timeout, ms (Android's `LONG_PRESS_TIMEOUT`; matches
 `detectTapGestures`' default). -/
@@ -225,8 +233,9 @@ outer clickable must not also fire). A *long-press* (the finger holds
 stolen) selects the word under the press and switches to a selection drag:
 from there moves are consumed and extend the selection word-to-caret
 (Android's word-anchored extension), which also parks the enclosing scroll
-— its tracker stands off from a consumed gesture. No handles or toolbar
-yet. -/
+— its tracker stands off from a consumed gesture. The long-press also
+raises the selection chrome (floating handles, then the toolbar when the
+finger settles — see `TextFieldChrome`); mouse selection never does. -/
 private partial def fieldGesture (params : IO.Ref FieldGestureParams)
     (scope : PointerInputScope) : UiTask Unit := do
   let ev ← scope.awaitEvent
@@ -258,7 +267,9 @@ private partial def fieldGesture (params : IO.Ref FieldGestureParams)
         | .ended => pure ()
         | .longPressed =>
           let p ← params.get
-          selDrag pid (← p.selectWord pressPos)
+          let word ← p.selectWord pressPos
+          p.chromeShow
+          selDrag pid word
   fieldGesture params scope
 where
   /-- Await the finger tap's release: place the caret there. Moves pass
@@ -296,8 +307,10 @@ where
         else if off > hi then ⟨lo, off⟩
         else ⟨lo, hi⟩)
       selDrag pid word
-    | .release => ev.consume
-    | .exit => pure ()
+    | .release =>
+      ev.consume
+      (← params.get).chromeSettle
+    | .exit => (← params.get).chromeSettle
     | _ => selDrag pid word
   /-- Follow the press: anchor fixed at the press offset. -/
   dragLoop (anchor : Nat) : UiTask Unit := do
@@ -368,6 +381,13 @@ private structure FieldVisuals where
   /-- Last `(text, selection)` pushed through the window's app→IME sync hook
   (dedup — the pair changes far less often than the draw pass runs). -/
   lastImeSync : IO.Ref (Option (String × TextRange))
+  /-- Whether the touch selection chrome is up — when so, the draw pass
+  publishes this frame's anchor geometry into `chromeAnchors`. -/
+  chromeOn : Bool
+  /-- The chrome anchor geometry cell (window px), read by the chrome popups
+  composed next frame; `none` while chrome is down or the selection is
+  collapsed. Writes dedup via the cell's structural-equality skip. -/
+  chromeAnchors : MutableState (Option ChromeAnchors)
 
 /-- Draw the whole field: outline, selection, text/placeholder, composition
 underline, caret, label — and publish the IME caret area when it moved.
@@ -459,6 +479,23 @@ private def drawTextField (vis : FieldVisuals) : DrawM Unit := do
           let t := vis.value.text
           h.sync t (Utf8.utf16Offset t vis.value.selection.start).toUInt32
             (Utf8.utf16Offset t vis.value.selection.«end»).toUInt32
+  -- Selection chrome: publish this frame's anchor geometry (window px) for
+  -- the chrome popups composed next frame — the `onGloballyPositioned`
+  -- contract. The cell's equality skip makes the steady state free.
+  let sel := vis.value.selection
+  if vis.chromeOn && vis.focused && vis.enabled && !sel.collapsed then
+    let base := ctx.translation
+    let x0 ← xAt sel.start
+    let x1 ← xAt sel.«end»
+    vis.chromeAnchors.set (some
+      { startX := base.x + pad - s + x0
+        endX := base.x + pad - s + x1
+        lineTop := base.y + textTop
+        lineBottom := base.y + textTop + lineH
+        clipLeft := base.x + pad
+        clipRight := base.x + pad + innerW })
+  else
+    vis.chromeAnchors.set none
 
 /-! ## The composable -/
 
@@ -511,6 +548,13 @@ composable def ValueTextField (value : TextFieldValue)
       (IO.mkRef (none : Option (Int32 × Int32 × Int32 × Int32 × Int32)))
     let lastImeSync ← remember
       (IO.mkRef (none : Option (String × TextRange)))
+    -- Touch selection chrome: visibility reducer state, the draw-pass anchor
+    -- cell, and the grabbed-handle role (crossing swaps it mid-drag).
+    let chrome ← remember (mutableStateOf ({} : ChromeState))
+    let chromeAnchors ← remember (mutableStateOf (none : Option ChromeAnchors))
+    let dragHandleRef ← remember (IO.mkRef SelectionHandle.start)
+    let chromeStep (ev : ChromeEvent) : IO Unit := chrome.modify (·.step ev)
+    let cs ← chrome.get
     let cellText ← remember (IO.mkRef (none : Option TextLayout))
     let cellPlaceholder ← remember (IO.mkRef (none : Option TextLayout))
     let cellLabel ← remember (IO.mkRef (none : Option TextLayout))
@@ -556,6 +600,9 @@ composable def ValueTextField (value : TextFieldValue)
       let v' := v.apply cmd
       unless v' == v do
         valueRef.set v'
+        chromeStep (if v'.text == v.text
+                    then .selectionChanged v'.selection.collapsed
+                    else .textEdited)
         (← onChangeRef.get) v'
     let doCopy : IO Unit := do
       let t := (← valueRef.get).selectedText
@@ -565,6 +612,13 @@ composable def ValueTextField (value : TextFieldValue)
       unless t.isEmpty do doEdit (.insert t)
     let onKey (ke : KeyEvent) : IO Bool := do
       if !enabled then return false
+      -- Esc / the platform back action dismiss the selection chrome —
+      -- consumed only while chrome is up, so both keys keep their normal
+      -- routing otherwise.
+      if ke.down && !ke.isRepeat && (ke.key == .escape || ke.key == .acBack) then
+        if (← chrome.get).shown then
+          chromeStep .dismissKey
+          return true
       match textFieldKeyAction ke with
       | none => return false
       | some (.edit cmd) => doEdit cmd; return true
@@ -606,8 +660,26 @@ composable def ValueTextField (value : TextFieldValue)
     let selectWord (pos : Offset) : IO TextRange := do
       doEdit (.selectWord (← hitCaret pos))
       return (← valueRef.get).selection
+    -- Handle drag: map the finger's window x back into the element (the
+    -- anchors carry the inner clip's window x; `hitCaret` re-adds pad and
+    -- scroll), run the pure drag math, keep the grabbed role across
+    -- crossings. The dragged end is `active`, so the field's caret
+    -- auto-scroll follows the finger for free.
+    let handleGrab (h : SelectionHandle) : IO Unit := do
+      dragHandleRef.set h
+      chromeStep (.handleGrab h)
+    let handleDragTo (winX : Float32) : IO Unit := do
+      if let some a ← chromeAnchors.get then
+        let off ← hitCaret ⟨winX - (a.clipLeft - density.dpToPx contentPadDp), 0⟩
+        let v ← valueRef.get
+        let (sel', h') := (← dragHandleRef.get).dragSelection v.text v.selection off
+        dragHandleRef.set h'
+        doEdit (.setSelection sel')
+    let handleRelease : IO Unit := chromeStep .handleRelease
     let gestureParams ← rememberUpdatedRef
-      ({ enabled, hitCaret, edit := doEdit, reshowKeyboard, selectWord }
+      ({ enabled, hitCaret, edit := doEdit, reshowKeyboard, selectWord
+         chromeShow := chromeStep .touchSelected
+         chromeSettle := chromeStep .settled }
         : FieldGestureParams)
     -- Caret blink: composed only while focused, so an idle field schedules
     -- no frame work.
@@ -624,7 +696,8 @@ composable def ValueTextField (value : TextFieldValue)
         outlineColor, outlineWidth, caretColor
         selectionColor := colors.primary.withAlpha 0.40
         textColor, shape, hasLabel := label.isSome
-        scroll := scrollRef, window?, lastImeArea, lastImeSync }
+        scroll := scrollRef, window?, lastImeArea, lastImeSync
+        chromeOn := cs.shown, chromeAnchors }
     let hasLabel := label.isSome
     let policy : MeasurePolicy := fun scope _ c => do
       let d := scope.density
@@ -640,7 +713,9 @@ composable def ValueTextField (value : TextFieldValue)
     let m := modifier
       |>.then (if enabled then Modifier.pointerHoverIcon .text else {})
       |>.focusable enabled
-      |>.onFocusChanged focusedState.set
+      |>.onFocusChanged (fun f => do
+          focusedState.set f
+          unless f do chromeStep .focusLost)
       |>.onKeyEvent onKey
       |>.onTextInput onText
       |>.onTextEditing onEditing
@@ -656,6 +731,19 @@ composable def ValueTextField (value : TextFieldValue)
                       | none => 0
                       | some sp => mixKeys 0x11 sp.value.toBits.toUInt64)
               (mixKeys density.density.toBits.toUInt64 (if hasLabel then 1 else 0))))))
+    -- Touch selection chrome: the handles, as non-dismissable popups over
+    -- the geometry the draw pass published (one frame behind the pixels —
+    -- the `onGloballyPositioned` contract, imperceptible at device rates).
+    -- A handle scrolled outside the inner clip window gets no anchor and is
+    -- not composed.
+    if cs.shown && focused && enabled then
+      if let some a ← chromeAnchors.get then
+        if let some r := a.handleAnchor .start then
+          selectionHandle .start r colors.primary
+            (handleGrab .start) handleDragTo handleRelease
+        if let some r := a.handleAnchor .«end» then
+          selectionHandle .«end» r colors.primary
+            (handleGrab .«end») handleDragTo handleRelease
 
 /-- The Material-outlined single-line text field over plain `String` state:
 remembers selection/composition internally and reports plain strings — what

@@ -4,9 +4,7 @@
 
 A [Jetpack Compose](https://github.com/jetbrains/compose-multiplatform)-style
 declarative UI framework for [Lean 4](https://lean-lang.org), rendered with
-SDL3 via [lean-sdl3](https://github.com/philnguyen/lean-sdl3). You write
-composable functions; a positional-memoization runtime recomposes exactly the
-scopes whose state changed, remeasures the affected layout, and redraws. It
+SDL3 via [lean-sdl3](https://github.com/philnguyen/lean-sdl3). It
 ships a full animation system, a Material-lite widget set, a UI-test
 framework, and all seven [7GUIs tasks](https://eugenkiss.github.io/7guis/tasks)
 as demos.
@@ -24,11 +22,6 @@ as demos.
 
 ## Highlights
 
-- **Positional-memoization runtime** — a slot-tree composer with `remember`,
-  `keyed`, `CompositionLocal`, and effects; state writes invalidate only the
-  reading scopes, layout dirties only the affected nodes.
-- **`composable` macro** — auto group keys for `if`/`match`/`for`,
-  skippability via structural equality, restartable scopes.
 - **Full animation system** — easing, tween/spring/keyframes/repeat specs,
   `Animatable` (velocity-preserving interruption), `animate*AsState`,
   `Transition`, `AnimatedVisibility`.
@@ -49,9 +42,10 @@ as demos.
 - **MT UI-test framework** (`Compose.Test`) — a headless
   `androidx.compose.ui.test` analog: a semantics tree, matcher-first finders,
   and actions synthesized through the *real* input router, with a fake clock.
-- **7GUIs demos** — Counter, Temperature Converter, Flight Booker, Timer,
+- **Demos**
+  + **7GUIs demos** — Counter, Temperature Converter, Flight Booker, Timer,
   CRUD, Circle Drawer, and Cells (a virtualized formula spreadsheet).
-- **File manager** — breadcrumb navigation, a dirs-first sorted listing
+  + **File manager** — breadcrumb navigation, a dirs-first sorted listing
   (`LazyColumn` + scrollbar), and a file info panel over an injected `FsSource`.
 
 ## Quick start

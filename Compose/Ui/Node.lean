@@ -105,8 +105,9 @@ structure MeshCacheEntry where
   elemIdx : Nat
   /-- The tessellation inputs `mesh` was built from (validity check). -/
   key : Draw.ShapeSpec
-  /-- The cached mesh, in the wrapper's local coordinates. -/
-  mesh : Draw.Mesh
+  /-- The cached mesh, in the wrapper's local coordinates, with its index
+  buffer pre-packed for `Renderer.geometryPacked` (`Mesh.packed`). -/
+  mesh : Draw.PackedMesh
   deriving Inhabited
 
 /-- The mutable payload of one `LayoutNode`. -/

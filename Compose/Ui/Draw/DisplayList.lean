@@ -156,9 +156,11 @@ inductive Prim where
   the exact float extents through. -/
   | rect (st : PrimState) (color : Color) (topLeft : Offset) (size : Size)
   /-- An anti-aliased shape: the SDL backend rasterizes `cached` (tessellating
-  the spec on `none` — the draw walk attaches its per-node cached mesh here);
-  a GPU backend renders `spec` directly and ignores `cached`. -/
-  | shape (st : PrimState) (spec : ShapeSpec) (cached : Option Mesh)
+  and packing the spec on `none` — the draw walk attaches its per-node cached
+  mesh, indices pre-packed, here); a GPU backend renders `spec` analytically
+  where it can, reusing `cached`'s mesh (not its packed indices — it rebases
+  its own) for the shapes it lowers to the mesh pipeline. -/
+  | shape (st : PrimState) (spec : ShapeSpec) (cached : Option PackedMesh)
   /-- A pre-tessellated triangle mesh (no shape-level description — e.g. a
   `drawMesh` call from a `drawBehind` block). -/
   | mesh (st : PrimState) (m : Mesh)

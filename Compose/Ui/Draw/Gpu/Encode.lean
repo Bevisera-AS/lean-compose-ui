@@ -180,7 +180,7 @@ private def pushShadow (st : EncodeResult) (sh : ShadowInstance)
 
 /-- Append a tessellated mesh (the SDL-parity fallback path), folding the
 primitive's translation and alpha into the vertices exactly like
-`SdlBackend.meshToGeometry`; indices are rebased to absolute so consecutive
+`SdlBackend.meshVertices`; indices are rebased to absolute so consecutive
 meshes merge into one indexed draw. -/
 private def pushMesh (st : EncodeResult) (m : Mesh) (origin : Offset)
     (alpha : Float32) (scissor : Option Sdl.Rect) : EncodeResult := Id.run do
@@ -482,11 +482,11 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
             radiusTL := radius, radiusTR := radius
             radiusBR := radius, radiusBL := radius }
         pushQuad st (maskQuadRR (placeQuad q origin alpha) (rr.translate origin)) scissor
-      | none => pushMesh st (cached.getD spec.tessellate) origin alpha scissor
+      | none => pushMesh st ((cached.map (·.mesh)).getD spec.tessellate) origin alpha scissor
     | _ =>
       match lowerShape spec with
       | some q => pushQuad st (maskQuad (placeQuad q origin alpha) s.rounded shift) scissor
-      | none => pushMesh st (cached.getD spec.tessellate) origin alpha scissor
+      | none => pushMesh st ((cached.map (·.mesh)).getD spec.tessellate) origin alpha scissor
   | .mesh s m => pushMesh st m (s.origin + shift) (s.alpha * extraAlpha) (scissorAt s.clip shift)
   | .text s run =>
     let runIdx := st.textsConsumed

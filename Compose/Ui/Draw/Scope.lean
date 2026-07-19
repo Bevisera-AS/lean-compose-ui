@@ -177,11 +177,11 @@ def drawMesh (m : Mesh) : DrawM Unit := do
   if m.isEmpty then return
   emit (.mesh · m)
 
-/-- Record an anti-aliased shape with an optional pre-tessellated mesh (the
-draw walk's per-node cache attaches one; `none` lets the SDL backend
-tessellate at execute time). Immediate-mode shape draws below funnel through
-here with `cached := none`. -/
-def drawShape (spec : ShapeSpec) (cached : Option Mesh := none) : DrawM Unit :=
+/-- Record an anti-aliased shape with an optional pre-tessellated,
+index-packed mesh (the draw walk's per-node cache attaches one; `none` lets
+the SDL backend tessellate at execute time). Immediate-mode shape draws below
+funnel through here with `cached := none`. -/
+def drawShape (spec : ShapeSpec) (cached : Option PackedMesh := none) : DrawM Unit :=
   emit (.shape · spec cached)
 
 /-- Record a shaped text run with its top-left at `topLeft` (local

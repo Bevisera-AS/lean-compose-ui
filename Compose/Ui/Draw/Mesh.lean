@@ -86,6 +86,19 @@ alpha multiplier into vertex colors). -/
 def scaleAlpha (m : Mesh) (a : Float32) : Mesh :=
   { m with vertices := m.vertices.map fun v => { v with color := v.color.withAlpha (v.color.a * a) } }
 
+/-- Pack the index buffer as 4 little-endian bytes per index — the exact
+`int[]` layout `Renderer.geometryPacked` consumes (byte-identical to
+`Sdl.packIndices`, but pure and SDL-free). Computed once per cached mesh
+(`Mesh.packed`) so emitting a cached shape re-packs no indices; all supported
+targets are little-endian. -/
+def packIndices (m : Mesh) : ByteArray := Id.run do
+  let mut bytes := ByteArray.emptyWithCapacity (m.indices.size * 4)
+  for i in m.indices do
+    let u := i.toUInt32
+    bytes := bytes.push u.toUInt8 |>.push (u >>> 8).toUInt8
+      |>.push (u >>> 16).toUInt8 |>.push (u >>> 24).toUInt8
+  return bytes
+
 /-- Bounding rect of the mesh's vertices (`none` when there are no vertices).
 Feather-ring vertices are included, so this bounds everything the mesh can
 touch. -/
@@ -118,7 +131,27 @@ private def tri (o : Offset) (c : Color) : Mesh :=
 #guard (tri ⟨2, 3⟩ .red).bounds == some ⟨2, 3, 3, 4⟩
 #guard (append (tri ⟨0, 0⟩ .red) (tri ⟨5, 5⟩ .blue)).bounds == some ⟨0, 0, 6, 6⟩
 
+#guard (empty : Mesh).packIndices.isEmpty
+#guard (tri ⟨0, 0⟩ .red).packIndices == ⟨#[0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0]⟩
+#guard (append (tri ⟨0, 0⟩ .red) (tri ⟨5, 5⟩ .blue)).packIndices
+  == ⟨#[0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0]⟩
+
 end Mesh
+
+/-- A mesh paired with its index buffer pre-packed by `Mesh.packIndices`.
+Vertices vary per emit (the backend folds the frame's origin/alpha into them),
+but indices do not — so the draw walk's mesh cache stores this pair
+(`LayoutNode.cachedMesh` via `Mesh.packed`) and a cached shape reaches
+`Renderer.geometryPacked` with zero per-emit index work. -/
+structure PackedMesh where
+  /-- The tessellated mesh, in local coordinates. -/
+  mesh : Mesh
+  /-- `mesh.packIndices`, computed once at cache-store time. -/
+  idxBytes : ByteArray
+  deriving Inhabited
+
+/-- Pair `m` with its packed index buffer (see `PackedMesh`). -/
+def Mesh.packed (m : Mesh) : PackedMesh := ⟨m, m.packIndices⟩
 
 end Compose.Draw
 

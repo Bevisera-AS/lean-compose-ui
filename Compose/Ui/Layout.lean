@@ -66,20 +66,21 @@ private def rrInset (rr : RoundRect) (d : Float32) : RoundRect :=
 #guard rrInset (RoundRect.circular ⟨0, 0, 10, 10⟩ 1) 2 == RoundRect.circular ⟨2, 2, 8, 8⟩ 0
 
 /-- The tessellated mesh for draw element `elemIdx` of `n`, reused from the
-node's `meshCache` while `key` is unchanged; a miss tessellates, bumps
-`Draw.tessellationCount`, and stores the entry. Because the key holds the
+node's `meshCache` while `key` is unchanged; a miss tessellates (packing the
+index buffer once, `Mesh.packed`), bumps `Draw.tessellationCount`, and stores
+the entry. Because the key holds the
 tessellation's *fully resolved* inputs (shape × size px × density fold into
 the `RoundRect`, the paint into the color, a border's `Dp` width × density
 into the pixel width), any size, shape, brush, or density change misses and
 re-tessellates — and nothing else does. Compose analog:
 `Modifier.background`/`Modifier.border` caching their `Outline`/`Path` in
 `drawWithCache` until size or shape changes. -/
-def cachedMesh (n : LayoutNode) (elemIdx : Nat) (key : Draw.ShapeSpec) : IO Draw.Mesh := do
+def cachedMesh (n : LayoutNode) (elemIdx : Nat) (key : Draw.ShapeSpec) : IO Draw.PackedMesh := do
   let d ← n.data
   if let some e := d.meshCache.find? (·.elemIdx == elemIdx) then
     if e.key == key then
       return e.mesh
-  let mesh := key.tessellate
+  let mesh := key.tessellate.packed
   Draw.tessellationCount.modify (· + 1)
   n.modifyData fun x =>
     { x with meshCache :=

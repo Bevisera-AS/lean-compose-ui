@@ -120,7 +120,8 @@ private def wellFormedness : IO Unit := do
     (0 ≤ st.alpha && st.alpha ≤ 1)
     && (match st.clip with | some c => c.left ≤ c.right && c.top ≤ c.bottom | none => true)
     && (match q with
-        | .shape _ spec cached => (cached.getD spec.tessellate).indicesInRange
+        | .shape _ spec cached => ((cached.map (·.mesh)).getD spec.tessellate).indicesInRange
+            && cached.all fun pm => pm.idxBytes == pm.mesh.packIndices
         | .mesh _ m => m.indicesInRange
         | _ => true)
   check "recorded prims are well-formed (alpha in range, clips normalized, indices in range)" ok

@@ -15,8 +15,8 @@ public section
 Executes a recorded `DisplayList` against an `SDL_Renderer` — the direct-SDL
 emission that used to live inside `DrawScope`, byte-for-byte: solid rects take
 the crisp `fillRect` fast path, shapes rasterize their cached mesh (tessellating
-on a cache miss) through `Renderer.geometry` with translation/alpha folded into
-the vertices, text runs draw through the renderer text engine at the shared
+on a cache miss) through `Renderer.geometryPacked` with translation/alpha folded
+into the vertices and the index buffer pre-packed at cache time, text runs draw through the renderer text engine at the shared
 snapped run origin (`snapTextOrigin` — byte-identical to the GPU backend at
 any origin, no fractional-origin shimmer), images draw
 through per-backend cached textures (`createTextureFromSurface` on first use of
@@ -57,10 +57,10 @@ private def toSdlRect (r : Rect) : Sdl.Rect :=
   let bt := r.bottom.ceil.toInt32
   ⟨l, t, max 0 (rt - l), max 0 (bt - t)⟩
 
-/-- Convert a `Mesh` (local coordinates) to SDL geometry, folding in the
-primitive's `origin` translation and `alpha`. Feather vertices keep alpha `0`
-after scaling; the index buffer is already `Int32`-encoded and passes through
-untouched.
+/-- Convert a `Mesh`'s vertices (local coordinates) to SDL geometry vertices,
+folding in the primitive's `origin` translation and `alpha`. Feather vertices
+keep alpha `0` after scaling; the index buffer is not touched here — it
+travels pre-packed (`Mesh.packIndices`).
 
 Positions are rounded to whole pixels: SDL's software rasterizer truncates
 geometry vertices to integer coordinates internally (`SW_QueueGeometry`'s
@@ -71,14 +71,13 @@ Rounding first is the closest integer approximation of true pixel-center
 coverage (a quad snapped to `[y0, y1]` rasterizes exactly rows
 `[round y0, round y1)`), so abutting bands stay gap-free and the result
 tracks the GPU backend's exact fractional rasterization within half a pixel. -/
-private def meshToGeometry (m : Mesh) (translation : Offset) (alpha : Float32) :
-    Array Sdl.Vertex × Array Int32 :=
+private def meshVertices (m : Mesh) (translation : Offset) (alpha : Float32) :
+    Array Sdl.Vertex :=
   let snap (x : Float32) : Float32 := (x + 0.5).floor
-  let verts := m.vertices.map fun v =>
+  m.vertices.map fun v =>
     ({ position := ⟨snap (v.pos.x + translation.x), snap (v.pos.y + translation.y)⟩
        color := ⟨v.color.r, v.color.g, v.color.b, v.color.a * alpha⟩
        texCoord := ⟨0, 0⟩ } : Sdl.Vertex)
-  (verts, m.indices)
 
 /-- One pooled render-target texture for offscreen layers (64 px-quantized
 dimensions, like the GPU backend's layer pool). -/
@@ -181,12 +180,15 @@ private def applyClip (r : Renderer) (applied : IO.Ref (Option Rect))
     r.setClipRect (clip.map toSdlRect)
     applied.set clip
 
-/-- Rasterize a mesh through `Renderer.geometry` (no-op when empty). -/
-private def emitMesh (r : Renderer) (m : Mesh) (origin : Offset) (alpha : Float32) : IO Unit := do
+/-- Rasterize a mesh through `Renderer.geometryPacked` (no-op when empty).
+Vertices transform and pack per emit — origin/alpha vary with the frame —
+while `idxBytes` arrives pre-packed (`Mesh.packed` for cached shapes, packed
+on the spot for immediate meshes). -/
+private def emitMesh (r : Renderer) (m : Mesh) (idxBytes : ByteArray)
+    (origin : Offset) (alpha : Float32) : IO Unit := do
   if m.isEmpty then return
-  let (verts, idx) := meshToGeometry m origin alpha
   r.setDrawBlendMode .blend
-  r.geometry none verts idx
+  r.geometryPacked none (packVertices (meshVertices m origin alpha)) idxBytes
 
 /-- Execute one primitive. `extraAlpha` is the flattened alpha of enclosing
 untransformed `layer`s; `shift` displaces record-time coordinates into the
@@ -205,10 +207,11 @@ private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
     r.fillRect (some ⟨tl.x, tl.y, size.width, size.height⟩)
   | .shape st spec cached => do
     applyClip r applied (st.clip.map (·.translate shift))
-    emitMesh r (cached.getD spec.tessellate) (st.origin + shift) (st.alpha * extraAlpha)
+    let pm := cached.getD spec.tessellate.packed
+    emitMesh r pm.mesh pm.idxBytes (st.origin + shift) (st.alpha * extraAlpha)
   | .mesh st m => do
     applyClip r applied (st.clip.map (·.translate shift))
-    emitMesh r m (st.origin + shift) (st.alpha * extraAlpha)
+    emitMesh r m m.packIndices (st.origin + shift) (st.alpha * extraAlpha)
   | .text st run => do
     applyClip r applied (st.clip.map (·.translate shift))
     let c := run.color

@@ -365,6 +365,120 @@ private def touchSelectionHandles : IO Unit := do
     (!near (← r.pixel (x5 + 12).toInt32 42) L.primary
      && !near (← r.pixel 20 42) L.primary)
 
+/-- Touch selection chrome, toolbar half: the settling finger raises the
+Cut/Copy/Paste toolbar over the selection — *below* it when the field sits
+at the window top (the `preferAbove` fallback), above it otherwise (proved
+by tapping buttons at the resolver-predicted coordinates: the action only
+fires if the toolbar is really there). Paste replaces the selection, Copy
+copies and collapses to the selection end (deselect-after-copy), Cut
+removes the selected text; every action dismisses the chrome; Paste is
+present only while the clipboard has text.
+
+Toolbar geometry (density 1): content = fixed 64×40 buttons in Cut, Copy,
+Paste order (192 px wide with Paste, 128 without); popup x = the visible
+selection start (12 px for a selection at offset 0), y = line bottom + 8
+when falling back below (top-rig: 30 + 8 = 38, button centers y 58), or
+line top − 40 − 8 when above (spacer rig: 90 − 48 = 42, centers y 62). -/
+private def touchSelectionToolbar : IO Unit := do
+  let text := "hello world"
+  let value ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let st ← ScrollState.create
+  let r ← tboot <| Tests.restartable 1 do
+    Box (modifier := Modifier.size 240 100 |>.verticalScroll st) do
+      Column do
+        let v ← value.get
+        ValueTextField v value.set
+        Box (modifier := Modifier.size 240 300) do pure ()
+  Sdl.setClipboardText "XY"
+  -- Long-press "hello", settle: toolbar falls back below the line (no room
+  -- above), x at the selection start (12).
+  let x2 ← caretScreenX r text 2
+  r.fingerDown (x2 + 1) 20
+  r.tick 600
+  r.fingerUp (x2 + 1) 20
+  r.pump
+  r.pump
+  -- Paste replaces the selection and dismisses the chrome.
+  r.fingerDown 172 90
+  r.fingerUp 172 90
+  r.pump
+  checkEq "toolbar: Paste replaces the selection" (← value.get)
+    (⟨"XY world", .caret 2, none⟩)
+  -- Copy: fresh selection on "world", tap Copy at its slot.
+  let x5b ← caretScreenX r "XY world" 5
+  r.fingerDown (x5b + 1) 20
+  r.tick 600
+  r.fingerUp (x5b + 1) 20
+  r.pump
+  r.pump
+  checkEq "toolbar: long-press selects the word" (← value.get)
+    (⟨"XY world", ⟨3, 8⟩, none⟩)
+  let x3b ← caretScreenX r "XY world" 3
+  check "premise: toolbar x unclamped" (x3b ≤ 48)
+  r.fingerDown (x3b + 96) 90
+  r.fingerUp (x3b + 96) 90
+  r.pump
+  checkEq "toolbar: Copy fills the clipboard" (← Sdl.getClipboardText) "world"
+  checkEq "toolbar: Copy collapses to the selection end (chrome hides)"
+    (← value.get) (⟨"XY world", .caret 8, none⟩)
+  -- Cut: fresh selection again, tap Cut.
+  r.fingerDown (x5b + 1) 20
+  r.tick 600
+  r.fingerUp (x5b + 1) 20
+  r.pump
+  r.pump
+  r.fingerDown (x3b + 32) 90
+  r.fingerUp (x3b + 32) 90
+  r.pump
+  checkEq "toolbar: Cut removes the selected text" (← value.get)
+    (⟨"XY ", .caret 3, none⟩)
+  checkEq "toolbar: Cut recopied the selection" (← Sdl.getClipboardText) "world"
+  -- Empty clipboard: no Paste button — a tap at its slot misses the
+  -- narrower toolbar and lands outside (clearing focus, hiding chrome,
+  -- editing nothing).
+  Sdl.setClipboardText ""
+  check "premise: the clipboard reads empty" (!(← Sdl.hasClipboardText))
+  let x1c ← caretScreenX r "XY " 1
+  r.fingerDown (x1c + 1) 20
+  r.tick 600
+  r.fingerUp (x1c + 1) 20
+  r.pump
+  r.pump
+  checkEq "toolbar: long-press selects with an empty clipboard"
+    (← value.get) (⟨"XY ", ⟨0, 2⟩, none⟩)
+  r.fingerDown 172 90
+  r.fingerUp 172 90
+  r.pump
+  r.pump
+  checkEq "toolbar: no Paste button when the clipboard is empty"
+    (← value.get) (⟨"XY ", ⟨0, 2⟩, none⟩)
+  check "toolbar: the outside tap dismissed the chrome"
+    (!near (← r.pixel 20 42) L.primary)
+  -- Above-preference: with room over the field (80 px spacer) the toolbar
+  -- sits above the selection line — Copy only works at the *above* slot.
+  let value2 ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let r2 ← tboot <| Tests.restartable 1 do
+    Column do
+      Box (modifier := Modifier.size 240 80) do pure ()
+      let v ← value2.get
+      ValueTextField v value2.set
+  Sdl.setClipboardText "Z"
+  let y2 := 100
+  r2.fingerDown (x2 + 1) y2
+  r2.tick 600
+  r2.fingerUp (x2 + 1) y2
+  r2.pump
+  r2.pump
+  checkEq "toolbar: spacer-rig long-press selects" (← value2.get)
+    (⟨text, ⟨0, 5⟩, none⟩)
+  r2.fingerDown 108 62
+  r2.fingerUp 108 62
+  r2.pump
+  checkEq "toolbar: prefers the space above the selection"
+    (← Sdl.getClipboardText) "hello"
+  checkEq "toolbar: deselect-after-copy in the above position"
+    (← value2.get) (⟨text, .caret 5, none⟩)
+
 /-- The app→IME sync hook: a focused field pushes its (text, selection) pair
 — selection in UTF-16 code units — through `WindowContext.imeSyncHook`
 exactly once per change (caret taps and edits alike); an unfocused field
@@ -917,6 +1031,7 @@ def run : IO Unit := do
   touchFieldGesture
   touchLongPress
   touchSelectionHandles
+  touchSelectionToolbar
   imeSyncHook
   clipboardOps
   imeComposition

@@ -744,6 +744,19 @@ composable def ValueTextField (value : TextFieldValue)
         if let some r := a.handleAnchor .«end» then
           selectionHandle .«end» r colors.primary
             (handleGrab .«end») handleDragTo handleRelease
+        -- The toolbar (hidden while a handle drag is in flight; composed
+        -- after the handles so it hit-tests first where they overlap).
+        -- Copy collapses the selection (Android's deselect-after-copy);
+        -- every action hides the chrome through the reducer.
+        if cs.toolbar && cs.dragging.isNone then
+          let canPaste ← liftM (m := IO) Sdl.hasClipboardText
+          TextFieldToolbar (a.toolbarAnchor (density.dpToPx chromeHandleTouch))
+            canPaste
+            (onCut := do doCopy; doEdit .deleteSelection)
+            (onCopy := do
+              doCopy
+              doEdit (.setSelection (.caret (← valueRef.get).selection.«end»)))
+            (onPaste := doPaste)
 
 /-- The Material-outlined single-line text field over plain `String` state:
 remembers selection/composition internally and reports plain strings — what

@@ -10,6 +10,12 @@ public import Compose.Ui.Overlay
 public meta import Compose.Ui.Overlay
 public import Compose.Ui.Layout
 public meta import Compose.Ui.Layout
+public import Compose.Material.Surface
+public meta import Compose.Material.Surface
+public import Compose.Material.Text
+public meta import Compose.Material.Text
+public import Compose.Foundation.Interaction
+public meta import Compose.Foundation.Interaction
 
 public section
 
@@ -201,12 +207,19 @@ def ChromeAnchors.handleAnchor (a : ChromeAnchors) (h : SelectionHandle) :
         == some ⟨20, 30, 20, 30⟩
 
 /-- The toolbar's anchor: the visible part of the selection's line-span
-rect (ends clamped into the clip window). The toolbar popup hangs above it
-(`Popup (preferAbove := true)`), falling back below when out of room. -/
-def ChromeAnchors.toolbarAnchor (a : ChromeAnchors) : Rect :=
-  ⟨max a.startX a.clipLeft, a.lineTop, min a.endX a.clipRight, a.lineBottom⟩
+rect (ends clamped into the clip window), its bottom pushed down by
+`handleClearance` (the handle touch-box height) so the below-fallback
+placement clears the handles hanging off the line. The toolbar popup
+prefers the space above it (`Popup (preferAbove := true)`, from the
+unmoved line top), falling back below when out of room. -/
+def ChromeAnchors.toolbarAnchor (a : ChromeAnchors)
+    (handleClearance : Float32 := 0) : Rect :=
+  ⟨max a.startX a.clipLeft, a.lineTop, min a.endX a.clipRight,
+   a.lineBottom + handleClearance⟩
 
 #guard ChromeAnchors.toolbarAnchor ⟨40, 90, 10, 30, 20, 100⟩ == ⟨40, 10, 90, 30⟩
+-- the handle clearance drops only the bottom (the below-fallback edge)
+#guard ChromeAnchors.toolbarAnchor ⟨40, 90, 10, 30, 20, 100⟩ 32 == ⟨40, 10, 90, 62⟩
 -- both ends scrolled out: clamped to the visible span
 #guard ChromeAnchors.toolbarAnchor ⟨10, 120, 10, 30, 20, 100⟩ == ⟨20, 10, 100, 30⟩
 
@@ -220,6 +233,9 @@ def chromeHandleTouch : Dp := 32
 
 /-- Fixed toolbar button width — fixed so tests can compute tap targets. -/
 def chromeToolbarButtonWidth : Dp := 64
+
+/-- Toolbar button (and so toolbar) height. -/
+def chromeToolbarHeight : Dp := 40
 
 /-- Gap between the selection line and the toolbar. -/
 def chromeToolbarGap : Dp := 8
@@ -296,6 +312,38 @@ composable def selectionHandle (h : SelectionHandle) (anchor : Rect)
           (handleDragLoop cb box)
       |>.drawBehind (drawHandleGlyph h color)
     Layout m .leaf (policyInputs := some 0x73656c68)
+
+/-- One fixed-width toolbar text button (fixed so tap targets are
+computable in tests). -/
+composable def toolbarButton (label : String) (action : IO Unit) :
+    Composable Unit := do
+  let colors ← MaterialTheme.colorScheme
+  Box (modifier := Modifier.size chromeToolbarButtonWidth chromeToolbarHeight
+        |>.clickable action)
+      (contentAlignment := .center) do
+    Text label (color := some colors.primary)
+
+/-- The floating Cut/Copy/Paste toolbar over a touch selection: a
+focus-neutral, non-dismissable popup preferring the space *above* the
+selection rect (`Popup (preferAbove := true)`), falling back below it near
+the window top. Paste appears only when the clipboard has text. Dismissal
+is the field's reducer's job — every action edits or collapses, and the
+chrome hides through that. -/
+composable def TextFieldToolbar (anchor : Rect) (canPaste : Bool)
+    (onCut onCopy onPaste : IO Unit) (modifier : Modifier := {}) :
+    Composable Unit := do
+  let colors ← MaterialTheme.colorScheme
+  let shapes ← MaterialTheme.shapes
+  let density ← LocalDensity.current
+  Popup (anchor := some anchor) (preferAbove := true)
+      (offset := ⟨0, density.dpRoundToPx chromeToolbarGap⟩) do
+    Surface (modifier := modifier.focusNeutral) (shape := shapes.small)
+        (border := some { width := 1, color := colors.outline })
+        (elevation := 3) do
+      Row do
+        toolbarButton "Cut" onCut
+        toolbarButton "Copy" onCopy
+        if canPaste then toolbarButton "Paste" onPaste
 
 end Compose
 

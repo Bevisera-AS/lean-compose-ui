@@ -34,6 +34,13 @@ Resolves and caches `Ttf.Font` handles for the bundled Roboto family, keyed by
   `Ttf.Font.addFallbackFont` for glyphs Roboto lacks. SDL_ttf does **not**
   retain fallbacks, so their handles are kept alive in the store. Missing
   system fonts are skipped (best effort).
+- **Emoji**: a bundled monochrome Noto Emoji (`NotoEmoji-Regular.ttf`,
+  optional — skipped when absent) is attached *first* and opened **per
+  size** (emoji are body content and must scale with the text, unlike the
+  shared fixed-size system fallbacks). It must precede the system list:
+  Android's `NotoColorEmoji.ttf` is COLRv1, which FreeType cannot
+  rasterize through the plain glyph path — its cmap wins coverage and
+  every emoji renders as a blank advance.
 -/
 
 /-- Round a device-px size to the nearest `0.5`px cache step, as a positive
@@ -65,6 +72,10 @@ private def resolveFontDir : IO System.FilePath := do
     s!"({FontWeight.normal.fileName}); looked in: " ++
     String.intercalate ", " (candidates.map (·.toString)).toList
 
+/-- The bundled monochrome emoji fallback, shipped alongside the Roboto
+family (optional — a build without it just has no emoji glyphs). -/
+private def emojiFileName : String := "NotoEmoji-Regular.ttf"
+
 /-- Platform system fonts to append as fallbacks, in preference order (best
 effort; missing files are skipped). -/
 private def systemFallbackPaths : Array System.FilePath :=
@@ -86,6 +97,12 @@ structure FontStore where
   /-- Loaded system fallback fonts, held so SDL's non-retaining
   `addFallbackFont` references stay valid. -/
   fallbacks : Array Font
+  /-- The bundled emoji fallback file, when shipped (see the module
+  docstring — attached first, opened per size). -/
+  emojiPath : Option System.FilePath
+  /-- Sized emoji fallback fonts keyed by the half-pixel step, kept alive
+  like `fallbacks`. -/
+  emojiCache : IO.Ref (Std.HashMap Int32 Font)
 
 namespace FontStore
 
@@ -114,7 +131,11 @@ def create (dir : Option System.FilePath := none) : IO FontStore := do
       match ← (try some <$> Sdl.Ttf.openFont p.toString fallbackPtSize catch _ => pure none) with
       | some f => fallbacks := fallbacks.push f
       | none => pure ()
-  return { dir, cache := ← IO.mkRef ∅, fallbacks }
+  let emojiPath ← do
+    let p := dir / emojiFileName
+    if ← p.pathExists then pure (some p) else pure none
+  return { dir, cache := ← IO.mkRef ∅, fallbacks
+           emojiPath, emojiCache := ← IO.mkRef ∅ }
 
 /-- The cache key for a `(weight, half-pixel size)` pair. -/
 private def key (weight : FontWeight) (stepHalf : Int32) : UInt64 :=
@@ -130,6 +151,19 @@ def resolve (store : FontStore) (style : TextStyle) (density : Density) : IO Fon
   if let some f := (← store.cache.get).get? k then
     return f
   let font ← Sdl.Ttf.openFont (store.dir / style.weight.fileName).toString (stepHalf.toFloat32 / 2)
+  -- The bundled emoji fallback first (sized with the text), then the shared
+  -- fixed-size system fallbacks — see the module docstring for why order
+  -- matters (Android's COLRv1 emoji font rasterizes blank).
+  if let some p := store.emojiPath then
+    try
+      let ef ← match (← store.emojiCache.get).get? stepHalf with
+        | some ef => pure ef
+        | none => do
+          let ef ← Sdl.Ttf.openFont p.toString (stepHalf.toFloat32 / 2)
+          store.emojiCache.modify (·.insert stepHalf ef)
+          pure ef
+      font.addFallbackFont ef
+    catch _ => pure ()
   for fb in store.fallbacks do
     try font.addFallbackFont fb catch _ => pure ()
   store.cache.modify (·.insert k font)

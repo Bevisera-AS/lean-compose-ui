@@ -594,6 +594,26 @@ private def touchSelectionToolbar : IO Unit := do
   checkEq "toolbar: deselect-after-copy in the above position"
     (← value2.get) (⟨text, .caret 5, none⟩)
 
+/-- The bundled monochrome Noto Emoji fallback renders astral glyphs with
+real ink (regression: platform emoji fonts either rasterize blank —
+Android's COLRv1 — or are absent, so an emoji drew as a space-width
+nothing). Probes the emoji's glyph box for any non-background pixel. -/
+private def emojiFallbackRenders : IO Unit := do
+  let text := "a😀b"
+  let (r, _, _) ← fieldRig { text, selection := .caret 0 }
+  r.pump
+  let l ← probeLayout r text
+  let box ← l.byteOffsetToRect 1   -- the emoji occupies bytes 1..5
+  check s!"emoji: the glyph advances ({box.left}..{box.right})"
+    (box.right - box.left > 4)
+  let mut ink := false
+  for dx in [0 : (box.right - box.left).toUInt32.toNat] do
+    for y in [12:28] do
+      unless near (← r.pixel (12 + box.left + dx.toFloat32).toInt32 y.toInt32)
+          Color.white do
+        ink := true
+  check "emoji: the bundled fallback renders ink" ink
+
 /-- The app→IME sync hook: a focused field pushes its (text, selection) pair
 — selection in UTF-16 code units — through `WindowContext.imeSyncHook`
 exactly once per change (caret taps and edits alike); an unfocused field
@@ -1148,6 +1168,7 @@ def run : IO Unit := do
   touchSelectionHandles
   touchSelectionToolbar
   touchChromeEdges
+  emojiFallbackRenders
   imeSyncHook
   clipboardOps
   imeComposition

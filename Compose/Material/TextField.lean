@@ -59,7 +59,9 @@ The M11 outlined single-line text field, mirroring
   toolbar above the selection (`TextFieldChrome` — focus-neutral popups
   anchored off draw-pass geometry). Touch-only: mouse/keyboard selection
   never shows chrome. Chrome hides on edit, selection collapse, focus
-  loss, container scroll, and Esc/back — the selection itself persists.
+  loss, and Esc/back — the selection itself persists. An enclosing scroll
+  moves the handles with the text (the toolbar sits the motion out and
+  returns); chrome scrolled out of the viewport is suppressed.
 - **Keyboard**: arrows/Home/End with Shift extension, ctrl/alt word variants,
   gui (⌘) line variants (⌘-Left/Right = Home/End, ⌘-Backspace/Delete =
   delete-to-line-start/end — macOS habits, accepted on every platform),
@@ -394,9 +396,12 @@ private structure FieldVisuals where
   composed next frame; `none` while chrome is down or the selection is
   collapsed. Writes dedup via the cell's structural-equality skip. -/
   chromeAnchors : MutableState (Option ChromeAnchors)
-  /-- The field's window position moved under shown chrome (an enclosing
-  container scrolled / relaid out): feed the reducer `.fieldMoved`. -/
-  chromeMoved : IO Unit
+  /-- Whether the field's window position moved this frame (an enclosing
+  container scrolling under shown chrome): the handles keep tracking, the
+  toolbar sits the movement out. -/
+  chromeMoving : MutableState Bool
+  /-- Last frame's field window position, the movement detector's memory. -/
+  chromePos : IO.Ref (Option (Float32 × Float32))
 
 /-- Draw the whole field: outline, selection, text/placeholder, composition
 underline, caret, label — and publish the IME caret area when it moved.
@@ -496,29 +501,34 @@ private def drawTextField (vis : FieldVisuals) : DrawM Unit := do
     let base := ctx.translation
     let x0 ← xAt sel.start
     let x1 ← xAt sel.«end»
-    let a : ChromeAnchors :=
+    -- The visible clip = the field's inner text span ∩ the ambient draw
+    -- clip (an enclosing scroll viewport) — chrome scrolled out of view is
+    -- suppressed instead of floating over neighboring content.
+    let (acL, acT, acR, acB) := match ctx.clip with
+      | some c => (c.left, c.top, c.right, c.bottom)
+      | none => (-1e30, -1e30, 1e30, 1e30)
+    vis.chromeAnchors.set (some
       { startX := base.x + pad - s + x0
         endX := base.x + pad - s + x1
         lineTop := base.y + textTop
         lineBottom := base.y + textTop + lineH
-        clipLeft := base.x + pad
-        clipRight := base.x + pad + innerW }
-    -- The field moved with the selection unchanged (container scroll /
-    -- relayout): dismiss the chrome instead of letting it trail the
-    -- content (the selection itself persists). The clip window is the
-    -- field-position signature — the field's own caret auto-scroll moves
-    -- only startX/endX. Untracked read: a tracked one would re-arm this
-    -- draw on its own write.
-    match ← vis.chromeAnchors.cell.get with
-    | some prev =>
-      if prev.clipLeft != a.clipLeft || prev.lineTop != a.lineTop then
-        vis.chromeAnchors.set none
-        vis.chromeMoved
-      else
-        vis.chromeAnchors.set (some a)
-    | none => vis.chromeAnchors.set (some a)
+        clipLeft := max (base.x + pad) acL
+        clipRight := min (base.x + pad + innerW) acR
+        clipTop := acT
+        clipBottom := acB })
+    -- Movement flag: the handles track a scrolling field per frame
+    -- (Android's native behavior); only the toolbar sits the motion out,
+    -- returning when the position holds still for a frame.
+    let pos := (base.x, base.y)
+    let moved := match ← vis.chromePos.get with
+      | some p => p != pos
+      | none => false
+    vis.chromeMoving.set moved
+    vis.chromePos.set (some pos)
   else
     vis.chromeAnchors.set none
+    vis.chromeMoving.set false
+    vis.chromePos.set none
 
 /-! ## The composable -/
 
@@ -575,6 +585,8 @@ composable def ValueTextField (value : TextFieldValue)
     -- cell, and the grabbed-handle role (crossing swaps it mid-drag).
     let chrome ← remember (mutableStateOf ({} : ChromeState))
     let chromeAnchors ← remember (mutableStateOf (none : Option ChromeAnchors))
+    let chromeMoving ← remember (mutableStateOf false)
+    let chromePos ← remember (IO.mkRef (none : Option (Float32 × Float32)))
     let dragHandleRef ← remember (IO.mkRef SelectionHandle.start)
     let chromeStep (ev : ChromeEvent) : IO Unit := chrome.modify (·.step ev)
     let cs ← chrome.get
@@ -720,8 +732,7 @@ composable def ValueTextField (value : TextFieldValue)
         selectionColor := colors.primary.withAlpha 0.40
         textColor, shape, hasLabel := label.isSome
         scroll := scrollRef, window?, lastImeArea, lastImeSync
-        chromeOn := cs.shown, chromeAnchors
-        chromeMoved := chromeStep .fieldMoved }
+        chromeOn := cs.shown, chromeAnchors, chromeMoving, chromePos }
     let hasLabel := label.isSome
     let policy : MeasurePolicy := fun scope _ c => do
       let d := scope.density
@@ -768,11 +779,14 @@ composable def ValueTextField (value : TextFieldValue)
         if let some r := a.handleAnchor .«end» then
           selectionHandle .«end» r colors.primary
             (handleGrab .«end») handleDragTo handleRelease
-        -- The toolbar (hidden while a handle drag is in flight; composed
-        -- after the handles so it hit-tests first where they overlap).
-        -- Copy collapses the selection (Android's deselect-after-copy);
-        -- every action hides the chrome through the reducer.
-        if cs.toolbar && cs.dragging.isNone then
+        -- The toolbar (hidden while a handle drag is in flight, while the
+        -- field is moving under an enclosing scroll, and while the line is
+        -- out of the viewport; composed after the handles so it hit-tests
+        -- first where they overlap). Copy collapses the selection
+        -- (Android's deselect-after-copy); every action hides the chrome
+        -- through the reducer.
+        if cs.toolbar && cs.dragging.isNone && !(← chromeMoving.get)
+            && a.lineVisible then
           let canPaste ← liftM (m := IO) Sdl.hasClipboardText
           TextFieldToolbar (a.toolbarAnchor (density.dpToPx chromeHandleTouch))
             canPaste

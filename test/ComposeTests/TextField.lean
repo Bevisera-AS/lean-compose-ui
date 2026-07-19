@@ -366,11 +366,13 @@ private def touchSelectionHandles : IO Unit := do
      && !near (← r.pixel 20 42) L.primary)
 
 /-- Touch selection chrome, edges: scrolling the enclosing container under
-shown chrome dismisses it (the field's window position moved with the
-selection unchanged — the selection itself persists); dragging a handle
-past a narrow field's edge rides the caret auto-scroll (the dragged end is
-`active`), extending the selection beyond the visible window while the
-scrolled-out start handle is suppressed. -/
+shown chrome moves the handles WITH the text (Android's native behavior —
+the toolbar sits the motion out and returns, repositioned, when it
+settles); a selection scrolled fully out of the viewport suppresses the
+chrome instead of leaving it floating over neighboring content; and
+dragging a handle past a narrow field's edge rides the caret auto-scroll
+(the dragged end is `active`), extending the selection beyond the visible
+window while the scrolled-out start handle is suppressed. -/
 private def touchChromeEdges : IO Unit := do
   let text := "hello world"
   let value ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
@@ -392,21 +394,56 @@ private def touchChromeEdges : IO Unit := do
   check "chrome edges: chrome up before the scroll"
     (near (← r.pixel (x5 + 12).toInt32 42) L.primary)
   -- Finger-scroll the container from the filler below the field (x 220:
-  -- clear of the toolbar, which hangs at y 70–110 under the handle
-  -- clearance): the content scrolls and the chrome dismisses, selection
-  -- intact.
+  -- clear of the toolbar at y 70–110 and the handles): the handles track
+  -- the moving text, the selection persists, and the settled toolbar
+  -- returns at its shifted position (Copy there proves both).
+  Sdl.setClipboardText "reset"
   r.fingerDown 220 80
   r.fingerMove 220 66
   r.fingerMove 220 52
   r.fingerUp 220 52
+  r.tick 600
   r.pump
-  r.pump
-  check s!"chrome edges: the container scrolled ({← st.value})" ((← st.value) > 10)
+  let sv ← st.value
+  check s!"chrome edges: the container scrolled ({sv})" (sv > 10)
   checkEq "chrome edges: the selection persists" (← value.get)
     (⟨text, ⟨0, 5⟩, none⟩)
-  check "chrome edges: the scroll dismissed the chrome"
-    (!near (← r.pixel (x5 + 12).toInt32 (42 - (← st.value).toInt32)) L.primary
-     && !near (← r.pixel (x5 + 12).toInt32 42) L.primary)
+  check "chrome edges: the handles track the scrolled field"
+    (near (← r.pixel (x5 + 12).toInt32 (42 - sv).toInt32) L.primary)
+  r.fingerDown 108 (90 - sv)
+  r.fingerUp 108 (90 - sv)
+  r.pump
+  checkEq "chrome edges: the settled toolbar works at its shifted position"
+    (← Sdl.getClipboardText) "hello"
+  -- Scrolled fully out of the viewport: chrome is suppressed, not left
+  -- floating (or edge-clamped) over the neighboring content.
+  let value3 ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let st3 ← ScrollState.create
+  let r3 ← tboot <| Tests.restartable 1 do
+    Box (modifier := Modifier.size 240 100 |>.verticalScroll st3) do
+      Column do
+        let v ← value3.get
+        ValueTextField v value3.set
+        Box (modifier := Modifier.size 240 300) do pure ()
+  r3.fingerDown (x2 + 1) 20
+  r3.tick 600
+  r3.fingerUp (x2 + 1) 20
+  r3.pump
+  r3.pump
+  for _ in [0:2] do
+    r3.fingerDown 220 90
+    r3.fingerMove 220 60
+    r3.fingerMove 220 30
+    r3.fingerMove 220 5
+    r3.fingerUp 220 5
+    r3.tick 700
+  r3.pump
+  check s!"premise: scrolled past the field ({← st3.value})" ((← st3.value) > 72)
+  checkEq "chrome edges: the off-viewport selection persists" (← value3.get)
+    (⟨text, ⟨0, 5⟩, none⟩)
+  check "chrome edges: off-viewport chrome is suppressed"
+    (!near (← r3.pixel (x5 + 12).toInt32 12) L.primary
+     && !near (← r3.pixel 20 12) L.primary)
   -- Narrow field: dragging the end handle past the field edge auto-scrolls
   -- the text under the selection (the dragged end is the caret) and the
   -- start handle, scrolled out of the clip window, is suppressed.

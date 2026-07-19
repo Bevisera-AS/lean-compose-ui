@@ -111,7 +111,11 @@ structure ChromeState where
   dragging : Option SelectionHandle := none
   deriving BEq, Repr, Inhabited
 
-/-- What happened, as far as chrome visibility is concerned. -/
+/-- What happened, as far as chrome visibility is concerned. Container
+scroll is deliberately NOT an event: chrome *tracks* a moving field
+(Android's native handles follow the text through a scroll) — the draw
+pass republishes anchors per frame and flags motion separately so only
+the toolbar sits out the movement. -/
 inductive ChromeEvent where
   /-- A finger long-press selected a word (the selection drag may follow). -/
   | touchSelected
@@ -127,16 +131,13 @@ inductive ChromeEvent where
   | textEdited
   /-- The field lost focus. -/
   | focusLost
-  /-- The field's window rect moved with the selection unchanged (an
-  enclosing container scrolled). -/
-  | fieldMoved
   /-- Esc / the platform back action. -/
   | dismissKey
 
 /-- The chrome visibility reducer: long-press shows handles, the settling
 release adds the toolbar, a handle grab hides the toolbar for the duration
-of the drag, and every editing/focus/movement/dismiss event hides the
-whole chrome (selection untouched). -/
+of the drag, and every editing/focus/dismiss event hides the whole chrome
+(selection untouched). -/
 def ChromeState.step (s : ChromeState) : ChromeEvent → ChromeState
   | .touchSelected => { shown := true }
   | .settled => if s.shown then { shown := true, toolbar := true } else s
@@ -145,7 +146,6 @@ def ChromeState.step (s : ChromeState) : ChromeEvent → ChromeState
   | .selectionChanged collapsed => if collapsed then {} else s
   | .textEdited => {}
   | .focusLost => {}
-  | .fieldMoved => {}
   | .dismissKey => {}
 
 -- the long-press → settle → grab → release lifecycle
@@ -160,7 +160,6 @@ def ChromeState.step (s : ChromeState) : ChromeEvent → ChromeState
 -- hide paths (selection persists — chrome only)
 #guard ChromeState.step { shown := true, toolbar := true } .textEdited == {}
 #guard ChromeState.step { shown := true, toolbar := true } .focusLost == {}
-#guard ChromeState.step { shown := true, toolbar := true } .fieldMoved == {}
 #guard ChromeState.step { shown := true, toolbar := true } .dismissKey == {}
 #guard ChromeState.step { shown := true, toolbar := true } (.selectionChanged true)
         == {}
@@ -169,8 +168,10 @@ def ChromeState.step (s : ChromeState) : ChromeEvent → ChromeState
 
 /-- Chrome geometry for one frame, published by the field's draw pass, all
 in window px: the caret x of both selection ends, the text line's vertical
-extent, and the inner clip window (the visible text span — offsets outside
-it are horizontally scrolled out of view). -/
+extent, and the visible clip — the field's inner text span intersected
+with the ambient draw clip (an enclosing scroll viewport), so chrome
+scrolled out of view is suppressed rather than floating over neighboring
+content. -/
 structure ChromeAnchors where
   /-- Window-px caret x at `selection.start`. -/
   startX : Float32
@@ -180,31 +181,52 @@ structure ChromeAnchors where
   lineTop : Float32
   /-- Window-px bottom of the text line (handles hang from here). -/
   lineBottom : Float32
-  /-- Window-px left edge of the visible text span. -/
+  /-- Window-px left edge of the visible text span (∩ ambient clip). -/
   clipLeft : Float32
-  /-- Window-px right edge of the visible text span. -/
+  /-- Window-px right edge of the visible text span (∩ ambient clip). -/
   clipRight : Float32
+  /-- Window-px top of the ambient clip (enclosing scroll viewport). -/
+  clipTop : Float32 := -1e30
+  /-- Window-px bottom of the ambient clip. -/
+  clipBottom : Float32 := 1e30
   deriving Repr, BEq, Inhabited
 
 /-- The popup anchor for handle `h`: a point rect at its caret x on the
-line bottom, or `none` when that end is horizontally scrolled outside the
-visible text span (the handle is not composed). -/
+line bottom, or `none` when that end is scrolled outside the visible clip
+— horizontally out of the text span, or vertically out of the enclosing
+viewport (the handle is not composed). -/
 def ChromeAnchors.handleAnchor (a : ChromeAnchors) (h : SelectionHandle) :
     Option Rect :=
   let x := match h with | .start => a.startX | .«end» => a.endX
-  if x < a.clipLeft || x > a.clipRight then none
+  if x < a.clipLeft || x > a.clipRight
+     || a.lineBottom < a.clipTop || a.lineBottom > a.clipBottom then none
   else some ⟨x, a.lineBottom, x, a.lineBottom⟩
 
-#guard ChromeAnchors.handleAnchor ⟨40, 90, 10, 30, 20, 100⟩ .start
+/-- Whether any of the selection's line is inside the visible clip — the
+toolbar's composition gate (an off-viewport selection shows no toolbar). -/
+def ChromeAnchors.lineVisible (a : ChromeAnchors) : Bool :=
+  a.clipLeft ≤ a.clipRight
+    && a.lineBottom ≥ a.clipTop && a.lineTop ≤ a.clipBottom
+
+#guard ChromeAnchors.handleAnchor ⟨40, 90, 10, 30, 20, 100, 0, 160⟩ .start
         == some ⟨40, 30, 40, 30⟩
-#guard ChromeAnchors.handleAnchor ⟨40, 90, 10, 30, 20, 100⟩ .«end»
+#guard ChromeAnchors.handleAnchor ⟨40, 90, 10, 30, 20, 100, 0, 160⟩ .«end»
         == some ⟨90, 30, 90, 30⟩
 -- scrolled out of the clip window: no anchor
-#guard ChromeAnchors.handleAnchor ⟨10, 90, 10, 30, 20, 100⟩ .start == none
-#guard ChromeAnchors.handleAnchor ⟨40, 120, 10, 30, 20, 100⟩ .«end» == none
+#guard ChromeAnchors.handleAnchor ⟨10, 90, 10, 30, 20, 100, 0, 160⟩ .start == none
+#guard ChromeAnchors.handleAnchor ⟨40, 120, 10, 30, 20, 100, 0, 160⟩ .«end» == none
 -- exactly on the clip edge still shows
-#guard ChromeAnchors.handleAnchor ⟨20, 100, 10, 30, 20, 100⟩ .start
+#guard ChromeAnchors.handleAnchor ⟨20, 100, 10, 30, 20, 100, 0, 160⟩ .start
         == some ⟨20, 30, 20, 30⟩
+-- the line scrolled above / below the viewport: no anchor
+#guard ChromeAnchors.handleAnchor ⟨40, 90, -30, -10, 20, 100, 0, 160⟩ .start == none
+#guard ChromeAnchors.handleAnchor ⟨40, 90, 170, 190, 20, 100, 0, 160⟩ .«end» == none
+-- line visibility (the toolbar gate)
+#guard ChromeAnchors.lineVisible ⟨40, 90, 10, 30, 20, 100, 0, 160⟩
+#guard !ChromeAnchors.lineVisible ⟨40, 90, -30, -10, 20, 100, 0, 160⟩
+#guard !ChromeAnchors.lineVisible ⟨40, 90, 170, 190, 20, 100, 0, 160⟩
+-- horizontally empty visible span (field scrolled out sideways)
+#guard !ChromeAnchors.lineVisible ⟨40, 90, 10, 30, 120, 100, 0, 160⟩
 
 /-- The toolbar's anchor: the visible part of the selection's line-span
 rect (ends clamped into the clip window), its bottom pushed down by
@@ -217,11 +239,14 @@ def ChromeAnchors.toolbarAnchor (a : ChromeAnchors)
   ⟨max a.startX a.clipLeft, a.lineTop, min a.endX a.clipRight,
    a.lineBottom + handleClearance⟩
 
-#guard ChromeAnchors.toolbarAnchor ⟨40, 90, 10, 30, 20, 100⟩ == ⟨40, 10, 90, 30⟩
+#guard ChromeAnchors.toolbarAnchor ⟨40, 90, 10, 30, 20, 100, 0, 160⟩
+        == ⟨40, 10, 90, 30⟩
 -- the handle clearance drops only the bottom (the below-fallback edge)
-#guard ChromeAnchors.toolbarAnchor ⟨40, 90, 10, 30, 20, 100⟩ 32 == ⟨40, 10, 90, 62⟩
+#guard ChromeAnchors.toolbarAnchor ⟨40, 90, 10, 30, 20, 100, 0, 160⟩ 32
+        == ⟨40, 10, 90, 62⟩
 -- both ends scrolled out: clamped to the visible span
-#guard ChromeAnchors.toolbarAnchor ⟨10, 120, 10, 30, 20, 100⟩ == ⟨20, 10, 100, 30⟩
+#guard ChromeAnchors.toolbarAnchor ⟨10, 120, 10, 30, 20, 100, 0, 160⟩
+        == ⟨20, 10, 100, 30⟩
 
 /-! ## Chrome metrics (dp) -/
 

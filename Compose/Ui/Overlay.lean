@@ -52,16 +52,21 @@ def dialogScrimColor : Color := Color.black.withAlpha 0.32
 /-- Resolve a popup's content position inside the window: below the anchor
 (offset applied), flipped above it when there is no room below but room
 above, else window-`alignment` + offset — always clamped into the window.
+`preferAbove` inverts the vertical preference (above the anchor first,
+falling back below when out of room — the selection-toolbar flavor).
 Mirrors `PopupPositionProvider.calculatePosition` (dropdown flavor). -/
 def resolvePopupPosition (window contentSize : IntSize) (anchor : Option Rect)
-    (alignment : Alignment) (offset : IntOffset) : IntOffset :=
+    (alignment : Alignment) (offset : IntOffset)
+    (preferAbove : Bool := false) : IntOffset :=
   let (x, y) :=
     match anchor with
     | some a =>
       let below := roundHalfUp a.bottom + offset.y
+      let above := roundHalfUp a.top - contentSize.height - offset.y
       let y :=
-        if below + contentSize.height > window.height then
-          let above := roundHalfUp a.top - contentSize.height - offset.y
+        if preferAbove then
+          if above ≥ 0 then above else below
+        else if below + contentSize.height > window.height then
           if above ≥ 0 then above else below
         else below
       (roundHalfUp a.left + offset.x, y)
@@ -88,16 +93,30 @@ def resolvePopupPosition (window contentSize : IntSize) (anchor : Option Rect)
 #guard resolvePopupPosition ⟨200, 100⟩ ⟨50, 40⟩ none .bottomEnd ⟨0, 0⟩ == ⟨150, 60⟩
 -- Oversized content clamps to the origin instead of going negative.
 #guard resolvePopupPosition ⟨100, 100⟩ ⟨120, 40⟩ none .center ⟨0, 0⟩ == ⟨0, 30⟩
+-- preferAbove: above the anchor first (gap offset subtracted).
+#guard resolvePopupPosition ⟨200, 200⟩ ⟨50, 40⟩ (some ⟨10, 100, 60, 120⟩) .topStart ⟨0, 4⟩
+        (preferAbove := true) == ⟨10, 56⟩
+-- preferAbove with no room above (anchor near the top): falls back below.
+#guard resolvePopupPosition ⟨200, 200⟩ ⟨50, 40⟩ (some ⟨10, 10, 60, 30⟩) .topStart ⟨0, 0⟩
+        (preferAbove := true) == ⟨10, 30⟩
+-- preferAbove with room nowhere: below, clamped into the window.
+#guard resolvePopupPosition ⟨200, 60⟩ ⟨50, 40⟩ (some ⟨10, 10, 60, 50⟩) .topStart ⟨0, 0⟩
+        (preferAbove := true) == ⟨10, 20⟩
+-- preferAbove := false is byte-identical to the dropdown default.
+#guard resolvePopupPosition ⟨200, 200⟩ ⟨50, 40⟩ (some ⟨10, 20, 60, 40⟩) .topStart ⟨0, 4⟩
+        (preferAbove := false) == ⟨10, 44⟩
 
 /-- Identity of the position inputs, for the layer policy's `policyInputs`. -/
-private def positionKey (anchor : Option Rect) (a : Alignment) (o : IntOffset) : UInt64 :=
+private def positionKey (anchor : Option Rect) (a : Alignment) (o : IntOffset)
+    (preferAbove : Bool) : UInt64 :=
   let anchorK := match anchor with
     | none => 1
     | some r => mixKeys r.left.toBits.toUInt64 <| mixKeys r.top.toBits.toUInt64 <|
         mixKeys r.right.toBits.toUInt64 r.bottom.toBits.toUInt64
-  mixKeys anchorK <| mixKeys a.horizontalBias.toBits.toUInt64 <|
-    mixKeys a.verticalBias.toBits.toUInt64 <|
-      mixKeys o.x.toFloat32.toBits.toUInt64 o.y.toFloat32.toBits.toUInt64
+  mixKeys (if preferAbove then 2 else 3) <| mixKeys anchorK <|
+    mixKeys a.horizontalBias.toBits.toUInt64 <|
+      mixKeys a.verticalBias.toBits.toUInt64 <|
+        mixKeys o.x.toFloat32.toBits.toUInt64 o.y.toFloat32.toBits.toUInt64
 
 /-! ## Layer input coroutines (self-contained — `Ui` cannot use foundation's
 gesture detectors) -/
@@ -131,7 +150,7 @@ optional scrim child (present when the children count is 2) fills it too;
 the content child measures loose within the window and is placed by
 `resolvePopupPosition`. -/
 private def layerPolicy (anchor : Option Rect) (alignment : Alignment)
-    (offset : IntOffset) : MeasurePolicy := fun _ ms c => do
+    (offset : IntOffset) (preferAbove : Bool) : MeasurePolicy := fun _ ms c => do
   let win : IntSize :=
     ⟨if c.hasBoundedWidth then c.maxWidth else c.minWidth,
      if c.hasBoundedHeight then c.maxHeight else c.minHeight⟩
@@ -141,6 +160,7 @@ private def layerPolicy (anchor : Option Rect) (alignment : Alignment)
     else pure none
   let content ← ms[ms.size - 1]!.measure { maxWidth := win.width, maxHeight := win.height }
   let pos := resolvePopupPosition win ⟨content.width, content.height⟩ anchor alignment offset
+    preferAbove
   return { size := win
            placement := do
              if let some s := scrim? then s.placeAt .zero
@@ -156,9 +176,10 @@ private def overlayLayerContent (id : Nat) (anchor : Option Rect)
     (alignment : Alignment) (offset : IntOffset)
     (dismiss : IO.Ref (Option (IO Unit))) (dismissable : Bool)
     (scrimColor : Option Color) (modal : Bool) (interactive : Bool)
-    (content : Composable Unit) : Composable Unit :=
-  Layout {} (layerPolicy anchor alignment offset)
-    (policyInputs := some (mixKeys 0x6f766c79 (positionKey anchor alignment offset)))
+    (content : Composable Unit) (preferAbove : Bool := false) : Composable Unit :=
+  Layout {} (layerPolicy anchor alignment offset preferAbove)
+    (policyInputs := some
+      (mixKeys 0x6f766c79 (positionKey anchor alignment offset preferAbove)))
     (hitTestable := interactive) do
     if interactive && (dismissable || modal) then
       withGroup 0x736372 do
@@ -242,7 +263,7 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     (offset : IntOffset) (onDismissRequest : Option (IO Unit)) (focusable : Bool)
     (onKeyEvent : KeyEvent → IO Bool) (scrimColor : Option Color) (modal : Bool)
     (interactive : Bool) (content : Composable Unit)
-    (blurBehind : Dp := 0) : Composable Unit := do
+    (blurBehind : Dp := 0) (preferAbove : Bool := false) : Composable Unit := do
   let ctx? ← LocalWindowContext.current
   match ctx? with
   | none =>
@@ -265,7 +286,8 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     -- backdrop request follows interactivity — an exiting overlay unblurs.
     entry.locals.set locals
     entry.content.set (overlayLayerContent entry.id anchor alignment offset
-      dismissRef onDismissRequest.isSome scrimColor modal interactive content)
+      dismissRef onDismissRequest.isSome scrimColor modal interactive content
+      (preferAbove := preferAbove))
     entry.revision.modify (· + 1)
     entry.blurBehind.set (if interactive then max 0 blurBehind.value else 0)
     ctx.recomputeBackdropBlur
@@ -295,7 +317,8 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
 
 /-- Compose `content` into an overlay above the window's main content,
 positioned below `anchor` (flipping above it when out of room, always
-clamped to the window) or by window `alignment` when no anchor is given.
+clamped to the window; `preferAbove` inverts the vertical preference)
+or by window `alignment` when no anchor is given.
 When `onDismissRequest` is set, a click landing outside the content and Esc
 call it (innermost overlay first). `focusable` popups grab key routing while
 open (`onKeyEvent` sees every key before the focused node). `interactive :=
@@ -308,10 +331,11 @@ def Popup (content : Composable Unit := pure ())
     (anchor : Option Rect := none) (alignment : Alignment := .topStart)
     (offset : IntOffset := ⟨0, 0⟩) (onDismissRequest : Option (IO Unit) := none)
     (focusable : Bool := false) (onKeyEvent : KeyEvent → IO Bool := fun _ => pure false)
-    (interactive : Bool := true) (blurBehind : Dp := 0) : Composable Unit :=
+    (interactive : Bool := true) (blurBehind : Dp := 0)
+    (preferAbove : Bool := false) : Composable Unit :=
   overlayImpl anchor alignment offset onDismissRequest focusable onKeyEvent
     (scrimColor := none) (modal := false) interactive content
-    (blurBehind := blurBehind)
+    (blurBehind := blurBehind) (preferAbove := preferAbove)
 
 /-- A modal overlay: a full-window scrim (black at 32 %) swallows every
 pointer event below it, `content` is centered, and Esc or a scrim click

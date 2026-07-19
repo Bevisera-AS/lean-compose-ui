@@ -54,6 +54,12 @@ The M11 outlined single-line text field, mirroring
 - **Mouse**: click places the caret (nearest boundary), drag selects from
   the press anchor, double-click selects the word, triple-click selects all;
   I-beam hover cursor.
+- **Touch selection chrome**: a finger long-press selects the word and
+  raises floating drag handles; the settling finger adds a Cut/Copy/Paste
+  toolbar above the selection (`TextFieldChrome` — focus-neutral popups
+  anchored off draw-pass geometry). Touch-only: mouse/keyboard selection
+  never shows chrome. Chrome hides on edit, selection collapse, focus
+  loss, container scroll, and Esc/back — the selection itself persists.
 - **Keyboard**: arrows/Home/End with Shift extension, ctrl/alt word variants,
   gui (⌘) line variants (⌘-Left/Right = Home/End, ⌘-Backspace/Delete =
   delete-to-line-start/end — macOS habits, accepted on every platform),

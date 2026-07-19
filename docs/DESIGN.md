@@ -730,7 +730,9 @@ clock only while subscribers exist, so an idle UI consumes no CPU.
   `CircularProgressIndicator` (arc), `TextField` (single-line, outlined:
   caret blink via frame clock, selection with mouse drag/shift-arrows/
   double-click word select, clipboard shortcuts, IME composition underline,
-  horizontal auto-scroll, `isError` state), `DropdownMenu` +
+  horizontal auto-scroll, `isError` state; touch: long-press word selection
+  with floating drag handles + a Cut/Copy/Paste toolbar — focus-neutral
+  popups, touch-only, LTR single-line like the field), `DropdownMenu` +
   `ExposedDropdownMenuBox` (Flight Booker), `AlertDialog`, `Divider`,
   `Scrollbar` (desktop-style, draggable thumb, auto-hide).
 - Foundation scroll: `Modifier.verticalScroll (rememberScrollState())` +

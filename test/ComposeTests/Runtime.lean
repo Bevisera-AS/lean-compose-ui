@@ -762,6 +762,53 @@ def keyChangeAbortInCompletedChild : IO Unit := do
   checkEq "keyNested: dispose balanced" (← events.get)
     #["start a", "stop a", "start b", "stop b"]
 
+/-- An aborted pass leaves the open spine's node counts stale; they must be
+refreshed so later standalone re-runs compute correct applier indices (the
+silent Nat clamp in `propagateNodeDelta` previously ate the delta). -/
+def staleSpineCountsAfterAbort : IO Unit := do
+  let t ← TestTree.create
+  let flagB ← MutableState.create false
+  let flagC ← MutableState.create false
+  let flagW ← MutableState.create false
+  let boom ← MutableState.create false
+  let content : Composable Unit := do
+    withGroup 11 do
+      restartable 2 do
+        if ← flagB.get then
+          withGroup 21 do
+            emitLabeled t "b1"
+            emitLabeled t "b2"
+        else
+          withGroup 22 (pure ())
+      restartable 3 do
+        if ← flagC.get then
+          withGroup 31 (emitLabeled t "c1")
+        else
+          withGroup 32 (pure ())
+      if ← boom.get then
+        withGroup 41 (throw (IO.userError "boom"))
+      else
+        withGroup 42 (pure ())
+    restartable 4 do
+      if ← flagW.get then
+        withGroup 51 (emitLabeled t "w")
+      else
+        withGroup 52 (pure ())
+    emitLabeled t "z"
+  let comp ← Composition.create t.applier content
+  checkEq "stale: initial tree" (← t.render) "(root z)"
+  flagB.set true
+  flagC.set true
+  boom.set true
+  checkThrows "stale: recompose throw propagates" (comp.setContent content)
+  checkEq "stale: completed children stay applied" (← t.render) "(root b1 b2 c1 z)"
+  flagB.set false
+  comp.drain
+  checkEq "stale: standalone removal applied" (← t.render) "(root c1 z)"
+  flagW.set true
+  comp.drain
+  checkEq "stale: later insert lands at the true index" (← t.render) "(root c1 w z)"
+
 /-- All Runtime suites. -/
 def run : IO Unit := do
   rememberSame
@@ -795,5 +842,6 @@ def run : IO Unit := do
   keyChangeAbortRetry
   keyChangeAbortKeyReverts
   keyChangeAbortInCompletedChild
+  staleSpineCountsAfterAbort
 
 end Tests.Runtime

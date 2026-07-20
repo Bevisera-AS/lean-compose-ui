@@ -21,7 +21,8 @@ dispose. Mirrors `androidx.compose.runtime.Recomposer`/`Composition`.
 
 **Exception safety.** A throw inside composable content propagates to the
 caller (`Composition.create`/`setContent`/`drain`) and never corrupts the
-runtime: open groups unwind (`Composer.abortTo`), so the applier
+runtime: open groups unwind (`Composer.abortTo`, which also refreshes the
+aborted spine's node counts to the applier's live contents), so the applier
 and the group tree agree; in-place slot replacements (`rememberObservedKeyed`
 key changes) are undone — the previous observer restored, its queued forget
 retracted, the enclosing scope re-invalidated — so a retry re-runs the
@@ -107,12 +108,16 @@ def rerunScope (r : Recomposer) (s : RecomposeScope) : IO Unit := do
     (← s.rerun.get)
     c.commitSlotReplacements replacementsMark
   catch e =>
-    -- Failed re-run: unwind to a consistent tree, undo in-place slot
+    -- Failed re-run: unwind to a consistent tree (refreshing the aborted
+    -- spine's node counts), patch the scope's ancestors with the delta of
+    -- the pass's surviving applier changes, undo in-place slot
     -- replacements, abandon this pass's remembers/side effects (their slots
     -- never applied; collected forgets stay — those removals did apply),
     -- and leave the scope invalid and queued so a later drain retries once
     -- the offending state changes.
+    let preAbortNodes := (← s.group.data).nodes
     c.abortTo 0
+    Composer.propagateNodeDelta s.group preAbortNodes (← s.group.data).nodes
     c.pendingEnter.set none
     c.rollbackSlotReplacements replacementsMark
     c.pendingRemembers.set remembersMark

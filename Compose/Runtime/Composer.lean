@@ -34,8 +34,10 @@ current node parent, which is exactly the applier index for the next
 insert/remove/move.
 
 A throw escaping composable content unwinds the open groups (`abortTo`):
-freshly inserted groups are undone and severed, surviving open scopes are
-invalidated for retry, so the applier and the group tree always agree.
+freshly inserted groups are undone and severed, surviving open groups get
+their node counts refreshed to the applier's live contents, and surviving
+open scopes are invalidated for retry, so the applier and the group tree
+always agree.
 Pass-level rollback (pending effects, slot replacements, `composed`) lives in
 `Compose.Runtime.Recomposer` — see its module docstring for the contract.
 -/
@@ -434,6 +436,14 @@ partial def propagateNodeDelta (g : Group) (oldN newN : Nat) : IO Unit := do
   | some p =>
     let pd ← p.data
     if pd.isNode then return
+    if pd.nodes + newN < oldN then
+      -- Nat subtraction would silently clamp here, eating the delta and
+      -- desynchronizing every ancestor from the applier — fail loudly
+      -- instead (`abortTo` refreshing spine counts keeps this unreachable).
+      throw <| IO.userError
+        "Compose: node-count invariant violated while propagating a subtree \
+         delta (ancestor count smaller than the removed range) — corrupt \
+         group tree"
     let pNew := pd.nodes + newN - oldN
     p.modifyData fun d => { d with nodes := pNew }
     propagateNodeDelta p pd.nodes pNew
@@ -562,8 +572,16 @@ def abortTo (c : Composer) (depth : Nat) : IO Unit := do
         if let some j ← childIndexOf p gd.gid then
           p.modifyData fun d => { d with children := d.children.eraseIdx! j }
       severSubtree f.group
-    else if let some s := gd.scope then
-      s.valid.set false
+    else
+      -- Surviving group: refresh its node count to what is really in the
+      -- applier — children the failed pass completed carry updated counts
+      -- while the open spine still carries pre-pass ones, so later passes
+      -- and standalone re-runs would otherwise mix stale and fresh counts
+      -- (see `propagateNodeDelta`'s invariant).
+      let live ← liveNodeCount f.group
+      f.group.modifyData fun d => { d with nodes := live }
+      if let some s := gd.scope then
+        s.valid.set false
 
 private def advanceSlot (c : Composer) : IO Unit :=
   c.modifyTopFrame fun fr => { fr with slotCursor := fr.slotCursor + 1 }

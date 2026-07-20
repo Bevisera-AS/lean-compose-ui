@@ -119,10 +119,13 @@ def fillPolygon (pts : Array Offset) (color : Color) : Mesh := Id.run do
 
 /-! ## Stroke of a silhouette with feathered edges -/
 
-/-- Stroke a silhouette given as `(point, outward unit normal)` samples with the
-given `width`, centered on the boundary, feathered 1 px on both sides. `closed`
-wraps the last sample back to the first (rings); otherwise the polyline is
-stroked with butt caps. Returns `Mesh.empty` for `width ≤ 0` or fewer than two
+/-- Stroke a silhouette given as `(point, outward offset direction)` samples
+with the given `width`, centered on the boundary, feathered 1 px on both
+sides. Offset directions are unit normals along smooth boundaries; a sharp
+corner passes a miter-scaled diagonal (`roundRectSilhouette`'s `⟨±1, ±1⟩`) so
+its single sample lands on both adjacent edges' offset lines. `closed` wraps
+the last sample back to the first (rings); otherwise the polyline is stroked
+with butt caps. Returns `Mesh.empty` for `width ≤ 0` or fewer than two
 samples.
 
 Per sample: `inner = p − n·w/2`, `outer = p + n·w/2`, each with an alpha-`0`
@@ -161,18 +164,24 @@ def strokeSilhouette (samples : Array (Offset × Offset)) (width : Float32)
 /-! ## Silhouette generators -/
 
 /-- The clockwise silhouette of `rr` (already assumed normalized) as
-`(point, outward unit normal)` samples. Each rounded corner contributes an arc
-of `cornerSegments`-many samples with exact radial normals; a zero-radius corner
-contributes its single corner point with the diagonal (mitered) normal. -/
+`(point, outward offset direction)` samples. Each rounded corner contributes
+an arc of `cornerSegments`-many samples with exact (unit) radial normals; a
+zero-radius corner contributes its single corner point with the **mitered**
+diagonal offset `⟨±1, ±1⟩` — magnitude `√2 = 1/cos 45°`, so an offset of
+`±d` along it lands exactly on both adjacent edges' lines offset by `d`
+(`strokeSilhouette`'s `±n·w/2` then produces full-width edges and sharp
+mitered corners, matching the GPU backend's SDF rect stroke). Consumers that
+need positions only (`roundRectFill`) are unaffected — the sample *points*
+are the exact corners either way. -/
 def roundRectSilhouette (rr : RoundRect) : Array (Offset × Offset) := Id.run do
   let r := rr.rect
   let mut out : Array (Offset × Offset) := #[]
-  -- (centerx, centery, rx, ry, startAngle, diagonal normal for the zero case)
+  -- (centerx, centery, rx, ry, startAngle, mitered offset for the zero case)
   let corners : Array (Float32 × Float32 × Float32 × Float32 × Float32 × Offset) := #[
-    (r.left + rr.topLeft.x,     r.top + rr.topLeft.y,        rr.topLeft.x,     rr.topLeft.y,     piF,            norm ⟨-1, -1⟩),
-    (r.right - rr.topRight.x,   r.top + rr.topRight.y,       rr.topRight.x,    rr.topRight.y,    piF * 1.5,      norm ⟨ 1, -1⟩),
-    (r.right - rr.bottomRight.x, r.bottom - rr.bottomRight.y, rr.bottomRight.x, rr.bottomRight.y, 0,             norm ⟨ 1,  1⟩),
-    (r.left + rr.bottomLeft.x,  r.bottom - rr.bottomLeft.y,  rr.bottomLeft.x,  rr.bottomLeft.y,  piF * 0.5,      norm ⟨-1,  1⟩)]
+    (r.left + rr.topLeft.x,     r.top + rr.topLeft.y,        rr.topLeft.x,     rr.topLeft.y,     piF,            ⟨-1, -1⟩),
+    (r.right - rr.topRight.x,   r.top + rr.topRight.y,       rr.topRight.x,    rr.topRight.y,    piF * 1.5,      ⟨ 1, -1⟩),
+    (r.right - rr.bottomRight.x, r.bottom - rr.bottomRight.y, rr.bottomRight.x, rr.bottomRight.y, 0,             ⟨ 1,  1⟩),
+    (r.left + rr.bottomLeft.x,  r.bottom - rr.bottomLeft.y,  rr.bottomLeft.x,  rr.bottomLeft.y,  piF * 0.5,     ⟨-1,  1⟩)]
   for (cx, cy, rx, ry, a0, diag) in corners do
     if rx <= 1e-4 && ry <= 1e-4 then
       out := out.push (⟨cx, cy⟩, diag)
@@ -595,6 +604,25 @@ private def approxOff (a b : Offset) (tol : Float32 := 0.05) : Bool :=
   let n := s.size
   (circleStroke ⟨0, 0⟩ 10 2 .red).vertexCount == 4 * n
 
+-- Sharp-corner stroke thickness: a zero-radius rect stroke of width 4 keeps
+-- the full perpendicular thickness (opaque band spans ±w/2 = [8, 12] across
+-- the y = 10 top edge) and reaches the mitered outer corner — matching the
+-- GPU backend's SDF rect stroke. (All older stroke guards use radius 8, which
+-- is why the diagonal-normal thinning survived.)
+#guard
+  let m := roundRectStroke (RoundRect.ofRect ⟨10, 10, 50, 50⟩) 4 .red
+  meshContains m ⟨30, 8.2⟩ (opaqueOnly := true)          -- outer half present
+    && meshContains m ⟨30, 11.8⟩ (opaqueOnly := true)    -- inner half present
+    && !meshContains m ⟨30, 7.4⟩ (opaqueOnly := true)    -- past ±w/2: feather…
+    && meshContains m ⟨30, 7.4⟩                          -- …but still feathered
+    && meshContains m ⟨8.3, 8.3⟩ (opaqueOnly := true)    -- mitered outer corner
+    && meshContains m ⟨11.7, 11.7⟩ (opaqueOnly := true)  -- mitered inner corner
+-- The fill silhouette is untouched by the mitered corner offsets (positions
+-- are the exact corners; only the offset direction's magnitude changed).
+#guard
+  let s := roundRectSilhouette (RoundRect.ofRect ⟨10, 10, 50, 50⟩)
+  s.map (·.1) == #[(⟨10, 10⟩ : Offset), ⟨50, 10⟩, ⟨50, 50⟩, ⟨10, 50⟩]
+
 -- Degenerate inputs never panic; they produce the empty mesh.
 #guard (roundRectFill (RoundRect.ofRect ⟨0, 0, 0, 0⟩) .red).isEmpty
 #guard (circleFill ⟨0, 0⟩ 0 .red).isEmpty
@@ -614,7 +642,8 @@ private def approxOff (a b : Offset) (tol : Float32 := 0.05) : Bool :=
   (m.vertices[0]!.color.a - 1).abs < 0.01
 #guard
   let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 100, 100⟩) ⟨0, 0⟩ 4 Color.black
-  -- vertex 1 is a corner sample pushed diagonally inward (≈ 2.1σ per axis)
+  -- vertex 1 is a corner sample pushed inward along the mitered diagonal
+  -- (3σ per axis)
   (m.vertices[1]!.color.a - 1).abs < 0.05
 #guard
   let m := roundRectShadow (RoundRect.ofRect ⟨0, 0, 100, 100⟩) ⟨0, 0⟩ 4 Color.black

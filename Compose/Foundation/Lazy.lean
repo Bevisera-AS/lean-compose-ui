@@ -106,8 +106,10 @@ composable def LazyColumn (state : ScrollState) (itemHeight : Dp) (count : Nat)
   let itemPx := density.dpRoundToPx itemHeight
   -- The window derives from scroll value + viewport; readers (this scope)
   -- are invalidated only when the (first, lastEx) pair actually changes.
+  -- Keyed on the state identity too (like the scroll modifiers): a caller
+  -- swapping in a fresh ScrollState must re-derive from the new state.
   let windowState ← rememberDerivedKeyed (α := Nat × Nat)
-    (mixKeys itemPx.toFloat32.toBits.toUInt64 count.toUInt64) do
+    (mixKeys state.id (mixKeys itemPx.toFloat32.toBits.toUInt64 count.toUInt64)) do
       return lazyWindow (← state.value) (← state.viewportSize) itemPx count
   let (first, lastEx) ← windowState.get
   Layout (modifier.verticalScroll state) (lazyPolicy first count itemPx)
@@ -142,8 +144,9 @@ composable def LazyRow (state : ScrollState) (itemWidth : Dp) (count : Nat)
     Composable Unit := do
   let density ← LocalDensity.current
   let itemPx := density.dpRoundToPx itemWidth
+  -- State identity in the key: see LazyColumn.
   let windowState ← rememberDerivedKeyed (α := Nat × Nat)
-    (mixKeys itemPx.toFloat32.toBits.toUInt64 count.toUInt64) do
+    (mixKeys state.id (mixKeys itemPx.toFloat32.toBits.toUInt64 count.toUInt64)) do
       return lazyWindow (← state.value) (← state.viewportSize) itemPx count
   let (first, lastEx) ← windowState.get
   Layout (modifier.horizontalScroll state) (lazyRowPolicy first count itemPx)
@@ -197,7 +200,11 @@ composable def LazyGrid (columns rows : Nat) (cellWidth cellHeight : Dp)
   let density ← LocalDensity.current
   let cw := density.dpRoundToPx cellWidth
   let ch := density.dpRoundToPx cellHeight
-  let sizeKey := mixKeys cw.toFloat32.toBits.toUInt64 ch.toFloat32.toBits.toUInt64
+  -- Cell geometry + per-axis state identity (`0` = pinned axis): swapping a
+  -- fresh ScrollState into either axis must re-derive that axis's window.
+  let sizeKey := mixKeys ((hState.map (·.id)).getD 0) <|
+    mixKeys ((vState.map (·.id)).getD 0) <|
+      mixKeys cw.toFloat32.toBits.toUInt64 ch.toFloat32.toBits.toUInt64
   -- Per-axis window: lazily derived on a scrolling axis, the full range on a
   -- pinned one. Readers wake only when a window pair actually changes.
   let win ← rememberDerivedKeyed (α := (Nat × Nat) × Nat × Nat) sizeKey do

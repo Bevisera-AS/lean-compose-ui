@@ -340,6 +340,34 @@ private def lazyVirtualization : IO Unit := do
     | throw (IO.userError "item 0 state missing")
   checkEq "lazy: re-entering item re-initialized" (← s0.cell.get) 0
 
+/-- Swapping in a fresh `ScrollState` (same item size and count) must
+re-derive the window from the NEW state: the derived-window key mixes in the
+state identity, so the swap discards the old derivation instead of leaving
+the window latched to the defunct state's reads. -/
+private def lazyStateSwap : IO Unit := do
+  let stA ← ScrollState.create
+  let stB ← ScrollState.create
+  let useB ← MutableState.create false
+  let composed ← IO.mkRef (#[] : Array Nat)
+  let item (i : Nat) : Composable Unit := do
+    composed.modify (·.push i)
+    Spacer (Modifier.size 100 20)
+  let r ← oboot <| Box (modifier := Modifier.size 100 100)
+    (Tests.restartable 1 do
+      let st := if ← useB.get then stB else stA
+      LazyColumn st (itemHeight := 20) (count := 100) item
+        (modifier := Modifier.fillMaxWidth))
+  r.settle
+  useB.set true
+  r.settle
+  composed.set #[]
+  stB.scrollTo 400   -- window with the new state: items 19..26
+  r.settle
+  check s!"lazy swap: scrolling the swapped-in state shifts the window ({← composed.get})"
+    ((← composed.get).contains 20)
+  checkEq "lazy swap: the new state's metrics are the live ones"
+    (← stB.viewportSize).toFloat 100.0
+
 /-- The lazy list scrolls with the wheel and draws the right items. -/
 private def lazyWheelPixels : IO Unit := do
   let st ← ScrollState.create
@@ -734,6 +762,7 @@ def run : IO Unit := do
   scrollbarDrag
   scrollbarAutoHide
   lazyVirtualization
+  lazyStateSwap
   lazyWheelPixels
   popupBasics
   popupFlip

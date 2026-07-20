@@ -627,11 +627,21 @@ def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
   if trace then
     Sdl.logInfo (msg := s!"Compose GPU: first render — prepare (mayBlock {mayBlock})")
   let cb ← r.dev.acquireCommandBuffer
-  let (enc, atlases, layerTexs, imageTexs) ← r.prepare cb list
+  -- An abandoned command buffer leaks (its finalizer only drops the device
+  -- ref — submit/cancel are unsafe from finalizers): if preparing throws
+  -- (e.g. texture/buffer creation under memory pressure), cancel before
+  -- rethrowing so a retried frame doesn't leak one buffer per attempt.
+  -- Canceling is legal here — no swapchain texture has been acquired yet.
+  let (enc, atlases, layerTexs, imageTexs) ←
+    try r.prepare cb list
+    catch e => cb.cancel; throw e
   if trace then
     Sdl.logInfo (msg := "Compose GPU: first render — acquiring swapchain texture")
-  let sc? ← if mayBlock then cb.waitAndAcquireSwapchainTexture r.window
-            else cb.acquireSwapchainTexture r.window
+  let sc? ←
+    try
+      if mayBlock then cb.waitAndAcquireSwapchainTexture r.window
+      else cb.acquireSwapchainTexture r.window
+    catch e => cb.cancel; throw e
   match sc? with
   | none =>
     if trace then
@@ -657,13 +667,21 @@ def GpuRenderer.renderOffscreen (r : GpuRenderer) (clear : Color)
       width := UInt32.ofNat w, height := UInt32.ofNat h }
   let dl ← r.dev.createTransferBuffer .download (UInt32.ofNat (w * h * 4))
   let cb ← r.dev.acquireCommandBuffer
-  let (enc, atlases, layerTexs, imageTexs) ← r.prepare cb list
-  r.passes cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases layerTexs imageTexs
-  let cp ← cb.beginCopyPass
-  cp.downloadFromTexture
-    { texture := tex, w := UInt32.ofNat w, h := UInt32.ofNat h }
-    { buffer := dl }
-  cp.finish
+  -- Same leak guard as `render`: cancel the un-submitted command buffer (and
+  -- release this call's private textures) if recording throws.
+  try
+    let (enc, atlases, layerTexs, imageTexs) ← r.prepare cb list
+    r.passes cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases layerTexs imageTexs
+    let cp ← cb.beginCopyPass
+    cp.downloadFromTexture
+      { texture := tex, w := UInt32.ofNat w, h := UInt32.ofNat h }
+      { buffer := dl }
+    cp.finish
+  catch e =>
+    cb.cancel
+    tex.release
+    dl.release
+    throw e
   let fence ← cb.submitAndAcquireFence
   r.dev.waitForFences true #[fence]
   let bytes ← dl.read

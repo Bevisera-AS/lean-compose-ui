@@ -129,14 +129,17 @@ with butt caps. Returns `Mesh.empty` for `width ≤ 0` or fewer than two
 samples.
 
 Per sample: `inner = p − n·w/2`, `outer = p + n·w/2`, each with an alpha-`0`
-feather twin 1 px further out. -/
+feather twin 1 px further out. Open strokes also feather their butt ends: each
+end cross-section grows a 1-px apron along the outward tangent (plus two
+corner wedges tying it to the side aprons), so arc/line ends anti-alias like
+the sides. -/
 def strokeSilhouette (samples : Array (Offset × Offset)) (width : Float32)
     (color : Color) (closed : Bool) : Mesh := Id.run do
   let n := samples.size
   if width <= 0 || n < 2 then return .empty
   let w2 := width / 2
   let fc := color.withAlpha 0
-  let mut vs : Array DVertex := Array.emptyWithCapacity (4 * n)
+  let mut vs : Array DVertex := Array.emptyWithCapacity (4 * n + 4)
   -- rings: inner(0..n), outer(n..2n), innerFeather(2n..3n), outerFeather(3n..4n)
   for (p, nrm) in samples do
     vs := vs.push ⟨p - nrm * w2, color⟩
@@ -147,7 +150,7 @@ def strokeSilhouette (samples : Array (Offset × Offset)) (width : Float32)
   for (p, nrm) in samples do
     vs := vs.push ⟨p + nrm * (w2 + feather), fc⟩
   let edges := if closed then n else n - 1
-  let mut is : Array Int32 := Array.emptyWithCapacity (18 * edges)
+  let mut is : Array Int32 := Array.emptyWithCapacity (18 * edges + 24)
   let quad (a b c d : Nat) (acc : Array Int32) : Array Int32 :=
     pushTri (pushTri acc a b c) a c d
   for i in [0:edges] do
@@ -159,6 +162,18 @@ def strokeSilhouette (samples : Array (Offset × Offset)) (width : Float32)
     is := quad inI inJ outJ outI is           -- solid band
     is := quad inI inJ ifJ ifI is             -- inner feather
     is := quad outI outJ ofJ ofI is           -- outer feather
+  if !closed then
+    -- butt-end feather: an apron off each end cross-section pushed 1 px along
+    -- the outward tangent, plus corner wedges joining the side aprons.
+    for (i, adj) in #[(0, 1), (n - 1, n - 2)] do
+      let e := norm (samples[i]!.1 - samples[adj]!.1)
+      if e != (⟨0, 0⟩ : Offset) then
+        let base := vs.size
+        vs := vs.push ⟨vs[i]!.pos + e * feather, fc⟩         -- inner end twin
+        vs := vs.push ⟨vs[n + i]!.pos + e * feather, fc⟩     -- outer end twin
+        is := quad i (n + i) (base + 1) base is              -- end apron
+        is := pushTri is i base (2*n + i)                    -- inner corner
+        is := pushTri is (n + i) (base + 1) (3*n + i)        -- outer corner
   return { vertices := vs, indices := is }
 
 /-! ## Silhouette generators -/
@@ -622,6 +637,19 @@ private def approxOff (a b : Offset) (tol : Float32 := 0.05) : Bool :=
 #guard
   let s := roundRectSilhouette (RoundRect.ofRect ⟨10, 10, 50, 50⟩)
   s.map (·.1) == #[(⟨10, 10⟩ : Offset), ⟨50, 10⟩, ⟨50, 50⟩, ⟨10, 50⟩]
+
+-- Open strokes feather their butt ends too: just past the end lies the
+-- transparent end apron (and its corner wedges), past the apron nothing.
+#guard
+  let m := line ⟨0, 0⟩ ⟨10, 0⟩ 4 .red
+  meshContains m ⟨10.5, 0⟩ && !meshContains m ⟨10.5, 0⟩ (opaqueOnly := true)
+    && meshContains m ⟨-0.5, 0⟩ && !meshContains m ⟨-0.5, 0⟩ (opaqueOnly := true)
+    && meshContains m ⟨10.3, 2.3⟩ && meshContains m ⟨10.3, -2.3⟩  -- corner wedges
+    && !meshContains m ⟨11.5, 0⟩ && (line ⟨0, 0⟩ ⟨10, 0⟩ 4 .red).indicesInRange
+#guard
+  let m := arcStroke ⟨50, 50⟩ 20 0 (piF / 2) 4 .red   -- ends at (70,50) and (50,70)
+  -- 0.5 px past the (50,70) end along the outward tangent (−x): apron only
+  m.indicesInRange && meshContains m ⟨49.5, 70⟩ && !meshContains m ⟨49.5, 70⟩ (opaqueOnly := true)
 
 -- Degenerate inputs never panic; they produce the empty mesh.
 #guard (roundRectFill (RoundRect.ofRect ⟨0, 0, 0, 0⟩) .red).isEmpty

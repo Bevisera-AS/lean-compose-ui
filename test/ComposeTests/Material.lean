@@ -421,9 +421,8 @@ private def sliderInteraction : IO Unit := do
   r.key .right
   r.settle
   check "slider: Right steps up by 1%" (approx (← value.get) 0.76 0.001)
-  -- One step per settled frame: key handlers close over the latest *composed*
-  -- value, so a second press only sees the first once a recomposition landed
-  -- (real key repeat always has frames in between).
+  -- Settled presses: one step each (the batched-repeat case is asserted at
+  -- the end of this scenario).
   r.key .left
   r.settle
   r.key .left
@@ -436,6 +435,15 @@ private def sliderInteraction : IO Unit := do
   r.settle
   check "slider: End jumps to the range end" ((← value.get) == 1.0)
   checkEq "slider: each key fires onValueChangeFinished" (← finished.get) 7
+  -- Two key repeats in ONE frame drain (no settle between): each must step
+  -- from the previously reported value via the optimistic ref (the
+  -- TextField pattern) — 1.0 → 0.99 → 0.98 — not twice from the stale
+  -- composition capture.
+  r.key .left
+  r.key .left
+  r.settle
+  check s!"slider: batched key repeats each take a step ({← value.get})"
+    (approx (← value.get) 0.98 0.001)
 
 /-- Stepped slider over a custom range: seeks snap to the tick grid and the
 callback reports range-mapped values. -/

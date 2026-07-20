@@ -77,10 +77,15 @@ private structure SliderParams where
   range : Float32 × Float32
   steps : Nat
   density : Density
+  /-- Optimistic latest reported value (the TextField pattern): events
+  landing between two recompositions — key repeat, seek + key in one frame
+  drain — step from here instead of the stale composition capture;
+  recomposition re-syncs it with the authoritative `value` prop. -/
+  latest : IO.Ref Float32
 
 private instance : Nonempty SliderParams :=
   ⟨{ onChange := fun _ => pure (), onFinished := pure (), range := (0, 1)
-     steps := 0, density := {} }⟩
+     steps := 0, density := {}, latest := Classical.choice inferInstance }⟩
 
 /-- End inset of the track: the thumb radius plus a hair, in dp. -/
 private def trackPad : Dp := 12
@@ -103,7 +108,9 @@ where
     let sz ← scope.size
     let pad := p.density.dpToPx trackPad
     let f := sliderFractionAt sz.width.toFloat32 pad pos.x p.steps
-    p.onChange (lerpRange p.range f)
+    let v := lerpRange p.range f
+    p.latest.set v
+    p.onChange v
   /-- Follow the press until release/window-leave. -/
   dragLoop : UiTask Unit := do
     let ev ← scope.awaitEvent
@@ -165,27 +172,35 @@ composable def Slider (value : Float32) (onValueChange : Float32 → IO Unit)
   let colors ← MaterialTheme.colorScheme
   let density ← LocalDensity.current
   let source ← rememberInteractionSource
+  -- Optimistic latest-value ref (the TextField pattern): re-synced with the
+  -- authoritative prop every recomposition; all reported changes go through
+  -- it so back-to-back events in one frame drain compose.
+  let valueRef ← remember (IO.mkRef value)
+  valueRef.set value
   let params ← rememberUpdatedRef
     ({ onChange := onValueChange, onFinished := onValueChangeFinished
-       range := valueRange, steps, density } : SliderParams)
+       range := valueRange, steps, density, latest := valueRef } : SliderParams)
   let values ← rememberStateLayerValues source
   let span := valueRange.2 - valueRange.1
   let fraction := snapFraction (if span == 0 then 0 else (value - valueRange.1) / span) steps
-  -- Keyboard: fresh closure each composition (key handlers are re-read from
-  -- the chain per event), so capturing `value` directly is safe here.
+  -- Keyboard: step from the optimistic ref, not the composition-captured
+  -- `value` — two key repeats landing in one frame drain must each take a
+  -- step (the second would otherwise recompute from the stale capture).
   let keyStep : Float32 := if steps > 0 then span / (steps + 1).toFloat32 else span / 100
   let onKey (ke : KeyEvent) : IO Bool := do
     if !enabled || !ke.down then return false
+    let v ← valueRef.get
     let target : Option Float32 :=
-      if ke.key == .left then some (max valueRange.1 (value - keyStep))
-      else if ke.key == .right then some (min valueRange.2 (value + keyStep))
+      if ke.key == .left then some (max valueRange.1 (v - keyStep))
+      else if ke.key == .right then some (min valueRange.2 (v + keyStep))
       else if ke.key == .home then some valueRange.1
       else if ke.key == .«end» then some valueRange.2
       else none
     match target with
-    | some v =>
+    | some v' =>
+      valueRef.set v'
       let p ← params.get
-      p.onChange v
+      p.onChange v'
       p.onFinished
       return true
     | none => return false

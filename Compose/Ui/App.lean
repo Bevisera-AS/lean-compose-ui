@@ -207,6 +207,24 @@ Mirrors `androidx.compose.foundation.isSystemInDarkTheme`. -/
 def isSystemInDarkTheme : Composable Bool :=
   systemDarkState.get
 
+/-- The process-wide IME user-event type (see `WindowContext.imeEvent`),
+registered lazily by `imeEventType`. One per process, like the shared GPU
+device: SDL user-event types cannot be unregistered, so a per-window
+registration would permanently leak one of the ~32k types for every window a
+long-running application ever opens. -/
+private initialize imeEventTypeRef : IO.Ref (Option Sdl.EventType) ← IO.mkRef none
+
+/-- The shared IME user-event type, registered on first use. Platform IME
+bridges push it with `code` = the keyboard inset in window pixels and
+`windowId` = the target window — single-window dispatch matches on the type
+alone, `dispatchApplicationEvent` routes by the `windowId`. -/
+def imeEventType : IO Sdl.EventType := do
+  if let some t ← imeEventTypeRef.get then return t
+  let some t ← Sdl.registerEvents 1
+    | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
+  imeEventTypeRef.set (some t)
+  return t
+
 /-- Build the per-window half of `bootstrap` on an *existing* scheduler and
 wake event (`Compose.application` shares one pair across all its windows):
 SDL window/renderer, text stack, root node, composition for `content`, and
@@ -250,9 +268,10 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
   let safeAreaState ← MutableState.create ({} : WindowInsets)
   let imeInsetState ← MutableState.create (0 : Dp)
   -- The window's IME-inset channel: a platform bridge pushes this type with
-  -- code = keyboard inset px (see WindowContext.imeEvent).
-  let some imeEvent ← Sdl.registerEvents 1
-    | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
+  -- code = keyboard inset px and windowId = the target window (see
+  -- WindowContext.imeEvent). One process-wide type shared by all windows —
+  -- SDL has no unregister, so per-window types would leak.
+  let imeEvent ← imeEventType
   let ctx : WindowContext :=
     { window, backend, densityState, safeAreaState, imeInsetState, imeEvent
       scheduler, wakeEvent, textContext

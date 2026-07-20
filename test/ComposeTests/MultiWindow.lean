@@ -225,6 +225,21 @@ private def appLocalsFlowIntoWindows : IO Unit := do
   check "window content still sees its own WindowContext" (← hadWindowCtx.get)
   (← app.composition).dispose
 
+/-- Every window shares the one process-wide IME user-event type: SDL has no
+unregister, so a per-window registration would permanently leak one of the
+~32k user types per window a long-running application ever opens. Routing to
+the right window is by the event's `windowId` (`imeRoutesByWindowId`). -/
+private def imeEventTypeShared : IO Unit := do
+  let app ← bootstrapApplication do
+    Window "ime-a" 120 100 (config := cfg)
+    Window "ime-b" 120 100 (config := cfg)
+  let _ ← stepApplication app (idleCapMs := 5)
+  let a ← entryTitled! app "ime-a"
+  let b ← entryTitled! app "ime-b"
+  checkEq "windows share one process-wide IME event type"
+    a.ctx.imeEvent.val b.ctx.imeEvent.val
+  (← app.composition).dispose
+
 /-- Widgets composed at the app level (outside any `Window`) throw a clear
 error instead of silently vanishing. -/
 private def appLevelWidgetsThrow : IO Unit := do
@@ -306,6 +321,7 @@ def run : IO Unit := do
   dialogParentAndModal
   titleAndSizeFollowParams
   appLocalsFlowIntoWindows
+  imeEventTypeShared
   appLevelWidgetsThrow
   singlePacerElection
   idlePassBlocks

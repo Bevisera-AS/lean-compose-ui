@@ -210,10 +210,13 @@ structure WindowContext where
   closes. Written by `setImeInsetPx` (the `imeEvent` bridge) and zeroed on
   `screenKeyboardHidden`; stays 0 on desktop. -/
   imeInsetState : MutableState Dp
-  /-- The registered SDL user event a platform layer pushes with `code` =
-  the keyboard inset in window pixels (LeAndroid's IME bridge installs its
-  listener with this type — see `Leandroid.Platform.installImeBridge`);
-  dispatch turns it into `setImeInsetPx`. -/
+  /-- The **process-wide** registered SDL user event a platform layer pushes
+  with `code` = the keyboard inset in window pixels and `windowId` = the
+  target window (LeAndroid's IME bridge installs its listener with this
+  type — see `Leandroid.Platform.installImeBridge`); dispatch turns it into
+  `setImeInsetPx`. Shared by every window (`Compose.imeEventType` — SDL
+  user-event types cannot be unregistered): single-window dispatch matches
+  on the type alone, application dispatch routes by the event's `windowId`. -/
   imeEvent : Sdl.EventType
   /-- Root of the layout tree (the composition's applier root). -/
   root : LayoutNode

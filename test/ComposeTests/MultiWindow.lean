@@ -240,6 +240,56 @@ private def imeEventTypeShared : IO Unit := do
     a.ctx.imeEvent.val b.ctx.imeEvent.val
   (← app.composition).dispose
 
+/-- Application mode routes non-wake user events to the owning window like
+single-window dispatch does: the process-wide IME type updates the addressed
+window's inset (so `Modifier.imePadding` works under a keyboard), unknown
+user events reach that window's `inputSink` (test recorders, custom
+bridges), and an event naming no live window is offered to every sink in
+registry order (first consumer wins). -/
+private def userEventsRouteToWindows : IO Unit := do
+  let app ← bootstrapApplication do
+    Window "ur-a" 200 150 (config := cfg)
+    Window "ur-b" 200 150 (config := cfg)
+  let _ ← stepApplication app (idleCapMs := 5)
+  let a ← entryTitled! app "ur-a"
+  let b ← entryTitled! app "ur-b"
+  -- IME push addressed to B: only B's inset moves (dummy metrics are 1/1,
+  -- so 30 px = 30 dp).
+  dispatchApplicationEvent app (.user b.ctx.imeEvent.val ⟨0, b.id, 30⟩)
+  check "IME user event reaches the addressed window"
+    ((← b.ctx.imeInsetState.cell.get) == (30 : Dp))
+  check "IME user event leaves the other window alone"
+    ((← a.ctx.imeInsetState.cell.get) == (0 : Dp))
+  -- Unknown user events fall through to the addressed window's inputSink.
+  let some custom ← Sdl.registerEvents 1
+    | throw (IO.userError "no user event types left")
+  let seenA ← IO.mkRef (0 : Nat)
+  let seenB ← IO.mkRef (0 : Nat)
+  a.ctx.inputSink.set fun e => do
+    match e with
+    | .user t _ =>
+      if t == custom.val then
+        seenA.modify (· + 1)
+        return true
+      return false
+    | _ => return false
+  b.ctx.inputSink.set fun e => do
+    match e with
+    | .user t _ =>
+      if t == custom.val then
+        seenB.modify (· + 1)
+        return true
+      return false
+    | _ => return false
+  dispatchApplicationEvent app (.user custom.val ⟨0, a.id, 7⟩)
+  checkEq "custom user event reaches the addressed window's inputSink" (← seenA.get) 1
+  checkEq "custom user event does not reach the other sink" (← seenB.get) 0
+  -- windowId 0 (a bridge that doesn't stamp one): offered in registry order.
+  dispatchApplicationEvent app (.user custom.val ⟨0, ⟨0⟩, 7⟩)
+  checkEq "unaddressed user event is offered in registry order" (← seenA.get) 2
+  checkEq "the first consuming sink wins" (← seenB.get) 0
+  (← app.composition).dispose
+
 /-- Widgets composed at the app level (outside any `Window`) throw a clear
 error instead of silently vanishing. -/
 private def appLevelWidgetsThrow : IO Unit := do
@@ -322,6 +372,7 @@ def run : IO Unit := do
   titleAndSizeFollowParams
   appLocalsFlowIntoWindows
   imeEventTypeShared
+  userEventsRouteToWindows
   appLevelWidgetsThrow
   singlePacerElection
   idlePassBlocks

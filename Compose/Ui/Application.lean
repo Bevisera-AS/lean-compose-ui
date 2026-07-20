@@ -207,12 +207,28 @@ event just ends a wait, app-lifecycle events (which carry no window id)
 broadcast to every window, and everything else goes to the window
 `Sdl.Event.windowId` names — `windowCloseRequested` to that window's
 `onCloseRequest` (returning `true` closes it), the rest through the
-single-window `dispatchEvent`. Events for no/unknown windows are dropped. -/
+single-window `dispatchEvent`. Non-wake user events route the same way (the
+process-wide IME type lands in `setImeInsetPx`, anything unknown falls
+through to that window's `inputSink`); one naming no live window is offered
+to every window's `inputSink` in registry order (first consumer wins), so
+single-window bridges that leave `windowId` zero keep working. Every other
+event for no/unknown windows is dropped. -/
 def dispatchApplicationEvent (app : ApplicationScope) (event : Sdl.Event) : IO Unit := do
   match event with
   | .quit _ => app.exit
-  | .user t _ =>
-    if t == app.wakeEvent.val then pure () -- wake events exist only to end a wait
+  | .user t e =>
+    if t == app.wakeEvent.val then
+      pure () -- wake events exist only to end a wait
+    else
+      -- The owning window's dispatch — exactly the single-window user-event
+      -- path (IME inset, then the inputSink fallback). Platform bridges
+      -- stamp the target window in `windowId`.
+      match (← app.windows.get).find? (·.id == e.windowId) with
+      | some entry => dispatchEvent entry.ctx entry.config event
+      | none =>
+        for en in ← app.windows.get do
+          if ← (← en.ctx.inputSink.get) event then
+            return
   | .terminating _ | .lowMemory _
   | .willEnterBackground _ | .didEnterBackground _
   | .willEnterForeground _ | .didEnterForeground _ =>

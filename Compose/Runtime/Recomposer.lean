@@ -32,9 +32,11 @@ forgets (whose removals did apply) stay queued for the next successful apply;
 a failed *initial* composition rolls back to a clean slate (`composed` stays
 false, retry composes from scratch); a failed re-run leaves its scope invalid
 and queued — and re-queues every drained-but-not-yet-re-run scope of the same
-batch — so a later drain retries once the offending state changes.
-(Compose's `onAbandoned` protocol is not modeled: a `DisposableEffect` whose
-pass never applied simply never runs either end.)
+batch — so a later drain retries once the offending state changes; a `create`
+whose initial pass applied but whose trailing drain threw disposes itself
+before propagating (the caller never gets a handle). (Compose's `onAbandoned`
+protocol is not modeled: a `DisposableEffect` whose pass never applied simply
+never runs either end.)
 -/
 
 /-- Drives recomposition for one composition. Mirrors
@@ -221,6 +223,20 @@ private def composeRoot (comp : Composition) : IO Unit := do
     throw e
   comp.recomposer.drainRecompositions
 
+/-- Tear down the composition: every remembered observer is forgotten
+(depth-first), the whole group tree is severed (`severSubtree` — reference
+cycles broken so RC can free it), the applier is cleared, further
+recompositions are inert. Mirrors `Composition.dispose`. -/
+def dispose (comp : Composition) : IO Unit := do
+  if ← comp.disposed.get then return
+  comp.disposed.set true
+  let c := comp.composer
+  c.collectDisposals c.rootGroup
+  severSubtree c.rootGroup
+  c.invalidations.set #[]
+  c.applier.onClear
+  c.dispatchEffects
+
 /-- Create a composition over `applier` and compose `content` into it
 (including the initial effect dispatch). Mirrors
 `androidx.compose.runtime.Composition(applier, parent)` + `setContent`. -/
@@ -232,7 +248,19 @@ def create [Nonempty N] (applier : Applier N) (content : Composable Unit) :
       content := ← IO.mkRef content
       disposed := ← IO.mkRef false
       composed := ← IO.mkRef false }
-  comp.composeRoot
+  try
+    comp.composeRoot
+  catch e =>
+    -- The initial pass applied but the trailing drain threw: the caller
+    -- never gets a handle, so dispose here or the applied nodes and queued
+    -- observers leak. (A failed initial *pass* already rolled back to a
+    -- clean slate — nothing to dispose.) The failed drain's un-dispatched
+    -- remembers/side effects are abandoned (`onAbandoned` is not modeled).
+    if ← comp.composed.get then
+      composer.pendingRemembers.set #[]
+      composer.pendingSideEffects.set #[]
+      comp.dispose
+    throw e
   return comp
 
 /-- Replace the composition's content and recompose from the root (existing
@@ -251,20 +279,6 @@ needs-frame flag (Compose's `Recomposer` waking its apply loop on
 `invalidate`). -/
 def setOnInvalidate (comp : Composition) (f : IO Unit) : IO Unit :=
   comp.composer.onInvalidate.set f
-
-/-- Tear down the composition: every remembered observer is forgotten
-(depth-first), the whole group tree is severed (`severSubtree` — reference
-cycles broken so RC can free it), the applier is cleared, further
-recompositions are inert. Mirrors `Composition.dispose`. -/
-def dispose (comp : Composition) : IO Unit := do
-  if ← comp.disposed.get then return
-  comp.disposed.set true
-  let c := comp.composer
-  c.collectDisposals c.rootGroup
-  severSubtree c.rootGroup
-  c.invalidations.set #[]
-  c.applier.onClear
-  c.dispatchEffects
 
 end Composition
 

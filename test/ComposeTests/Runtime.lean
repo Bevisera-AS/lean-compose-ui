@@ -834,6 +834,26 @@ def drainRequeuesRemainingOnThrow : IO Unit := do
   comp.drain
   checkEq "drainKeep: stranded sibling recovered" (← bRuns.get) 2
 
+/-- If the initial pass applies but the trailing drain throws,
+`Composition.create` must dispose the partially-created composition before
+propagating (the caller never gets a handle to dispose). -/
+def createDrainThrowDisposes : IO Unit := do
+  let t ← TestTree.create
+  let events ← IO.mkRef (#[] : Array String)
+  let s ← MutableState.create (0 : Nat)
+  checkThrows "createDrain: drain throw propagates" <|
+    Composition.create t.applier <| restartable 1 do
+      let _ ← rememberObserved (logObserver events "x")
+      emitLabeled t "a"
+      let v ← s.get
+      if v == 0 then
+        withGroup 11 (s.set 1)
+      else
+        withGroup 12 (throw (IO.userError "boom"))
+  checkEq "createDrain: partial composition disposed" (← t.render) "root"
+  check "createDrain: applier cleared" ((← t.takeLog).contains "clear")
+  checkEq "createDrain: no unbalanced remembers" (← events.get) #["-x"]
+
 /-- All Runtime suites. -/
 def run : IO Unit := do
   rememberSame
@@ -869,5 +889,6 @@ def run : IO Unit := do
   keyChangeAbortInCompletedChild
   staleSpineCountsAfterAbort
   drainRequeuesRemainingOnThrow
+  createDrainThrowDisposes
 
 end Tests.Runtime

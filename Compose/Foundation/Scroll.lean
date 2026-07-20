@@ -456,6 +456,12 @@ pressed (`PointerEvent.pointerId`) — a second finger landing mid-gesture
 runs its own gesture elsewhere and must not corrupt this one's origin or
 velocity math.
 
+All motion — origin, slop, drag deltas, velocity samples — is measured in
+**root** coordinates (`PointerEvent.positionInRoot`): the localized
+`position` shifts whenever an ancestor scrolls this node mid-gesture (the
+nested-scroll `follow` below), which would under-count the finger and halve
+the handed-off fling velocity.
+
 Nested scroll: whichever container owns the gesture publishes its
 unconsumed remainder into the dispatch's leftover cell (see
 `PointerEvent.setLeftover`); an outer container whose `track` sees a
@@ -547,8 +553,8 @@ where
     let ev ← scope.awaitEvent
     if ev.eventType == .press && ev.button == some .left then
       let _ ← state.interrupt
-      track ev.pointerId ev.position
-        (VelocityTracker.empty.add ev.timestamp (axisOf ev.position))
+      track ev.pointerId ev.positionInRoot
+        (VelocityTracker.empty.add ev.timestamp (axisOf ev.positionInRoot))
     else
       idle
   /-- Pressed, still within the slop: decide between click (release first),
@@ -572,17 +578,17 @@ where
           follow pid
         | none => settleCaught; dead pid
       else
-        let vt := vt.add ev.timestamp (axisOf ev.position)
+        let vt := vt.add ev.timestamp (axisOf ev.positionInRoot)
         let slop := (← scope.density).dpToPx dragScrollSlop
-        let d := axisOf ev.position - axisOf origin
+        let d := axisOf ev.positionInRoot - axisOf origin
         if d.abs > slop then
           ev.steal
           ev.consume
           let _ ← state.interrupt
           -- Start from the slop edge, not with a jump over the dead zone.
           dragMove ev (d - (if d > 0 then slop else -slop)) 0
-          drag pid ev.position vt
-        else if (crossOf ev.position - crossOf origin).abs > slop then
+          drag pid ev.positionInRoot vt
+        else if (crossOf ev.positionInRoot - crossOf origin).abs > slop then
           settleCaught
           dead pid
         else
@@ -602,9 +608,9 @@ where
     match ev.eventType with
     | .move =>
       ev.consume
-      let a := axisOf ev.position
-      dragMove ev (a - axisOf last) (crossOf ev.position - crossOf last)
-      drag pid ev.position (vt.add ev.timestamp a)
+      let a := axisOf ev.positionInRoot
+      dragMove ev (a - axisOf last) (crossOf ev.positionInRoot - crossOf last)
+      drag pid ev.positionInRoot (vt.add ev.timestamp a)
     | .release =>
       if ev.button == some .left then
         ev.consume

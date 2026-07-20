@@ -61,6 +61,14 @@ sequence. -/
 structure PointerEvent where
   eventType : PointerEventType
   position : Offset
+  /-- The event position in **root** coordinates (render px) — the
+  un-localized twin of `position`, stamped by dispatch when it localizes.
+  Coordinate convention: hit/containment logic uses the localized `position`;
+  gesture *motion* (drag deltas, velocity samples) must difference this field
+  instead — localization subtracts the receiving node's live root origin, so
+  an ancestor scrolling between two events (a nested-scroll `follow`) would
+  fold its own movement into a local delta and under-count the finger. -/
+  positionInRoot : Offset := .zero
   /-- Which pointer this event belongs to: `0` is the mouse, touch fingers
   are `fingerId + 1`. The router keys capture and button state by this, so
   two fingers on two widgets run independent gestures. -/

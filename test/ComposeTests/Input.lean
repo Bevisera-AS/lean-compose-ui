@@ -1189,6 +1189,40 @@ private def threeLevelCascade : IO Unit := do
   checkEq "cascade: further motion all outer" (← outer.value) 22
   let _ ← r.im.pointerEvent (releaseAt 50 30)
 
+open Compose.Test in
+/-- MT scenario: nested handoff with real frames flowing between moves. Once
+the inner end-stops, the outer's `follow` scrolls between events — moving the
+inner node's root origin — so motion measured from *localized* positions
+under-counts (the outer tracks at ~half the finger rate and the handed-off
+fling velocity halves). Root-space deltas (`PointerEvent.positionInRoot`)
+keep the handoff 1:1. -/
+private def nestedDragOriginShift : IO Unit := do
+  let outer ← ScrollState.create
+  let inner ← ScrollState.create
+  runComposeTest (theme := false)
+    (Box do
+      Box (modifier := Modifier.size 200 200 |>.verticalScroll outer (overscroll := .none)) do
+        Column do
+          Box (modifier := Modifier.size 200 100 |>.verticalScroll inner (overscroll := .none)) do
+            Box (modifier := Modifier.size 200 150)
+          Box (modifier := Modifier.size 200 400)) do
+      check "origin-shift: inner range" ((← inner.maxValue) == 50)
+      check "origin-shift: outer range" ((← outer.maxValue) == 300)
+      mouseDown ⟨100, 90⟩
+      for i in [1:5] do
+        -- 4 × 40 px up; a frame renders between moves, so the outer's follow
+        -- re-lays out (shifting the inner's origin) before the next event.
+        mouseMove ⟨100, 90 - 40 * i.toFloat32⟩
+        awaitIdle
+      mouseUp ⟨100, -70⟩
+      awaitIdle
+      check s!"origin-shift: inner pinned at its end ({(← inner.value).toFloat})"
+        ((← inner.value) == 50)
+      -- 160 px of finger travel − 8 px slop = 152 consumed: inner 50, outer
+      -- the remaining 102 — exactly the finger rate, no origin-shift loss.
+      check s!"origin-shift: outer follows the finger 1:1 ({(← outer.value).toFloat})"
+        ((← outer.value) == 102)
+
 /-- `onDispatchEnd` runs after the whole leaf→root sweep with the surviving
 leftover: the inner (gesture-owner analog) registers on each move, the outer
 final-pass observer rewrites the published leftover afterwards — the
@@ -1771,6 +1805,7 @@ def run : IO Unit := do
   nestedFlingNotAtStop
   nestedCrossAxis
   threeLevelCascade
+  scenario "nested drag survives origin shift" nestedDragOriginShift
   dispatchEndFinalizer
   dragRubberBand
   bounceOvershootThenSettle

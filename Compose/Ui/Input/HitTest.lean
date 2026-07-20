@@ -147,7 +147,8 @@ def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset)
           | none => pure ev.steal
         for st in d.pointerInputs do
           if (← st.elemIdx.get) == idx then
-            st.offer { ev with position := localPos, scrollDelta := delta, steal }
+            st.offer { ev with position := localPos, positionInRoot := rootPos
+                               scrollDelta := delta, steal }
     | some (.pointer (.onScroll f)) =>
       if !consumed && ev.eventType == .scroll then
         match scrollRemaining with

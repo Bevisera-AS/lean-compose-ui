@@ -148,17 +148,19 @@ partial def detectTapGestures
   detectTapGestures onTap onDoubleTap onLongPress onSecondaryTap onPress
     longPressMillis scope
 
-/-- Detect drags: after a press moves beyond `touchSlop` px, `onDragStart`
-fires (then `onDrag position delta` per move, moves consumed), ending with
-`onDragEnd` on release or `onDragCancel` when the pointer leaves the window.
-A press released within the slop is not a drag (nothing fires). Mirrors
+/-- Detect drags: after a press moves beyond `touchSlop` (dp, resolved
+through the node's density — the 8 dp `ViewConfiguration` family shared with
+`dragScrollSlop`), `onDragStart` fires (then `onDrag position delta` per
+move, moves consumed), ending with `onDragEnd` on release or `onDragCancel`
+when the pointer leaves the window. A press released within the slop is not
+a drag (nothing fires). Mirrors
 `androidx.compose.foundation.gestures.detectDragGestures`. -/
 partial def detectDragGestures
     (onDrag : Offset → Offset → IO Unit)
     (onDragStart : Offset → IO Unit := fun _ => pure ())
     (onDragEnd : IO Unit := pure ())
     (onDragCancel : IO Unit := pure ())
-    (touchSlop : Float32 := 4)
+    (touchSlop : Dp := 8)
     (scope : PointerInputScope) : UiTask Unit := do
   let ev ← scope.awaitEvent
   if ev.eventType == .press then
@@ -178,7 +180,7 @@ where
         ev.consume
         onDrag ev.position (ev.position - last)
         track button pressPos started ev.position
-      else if pressPos.distance ev.position > touchSlop then
+      else if pressPos.distance ev.position > (← scope.density).dpToPx touchSlop then
         ev.consume
         onDragStart ev.position
         onDrag ev.position (ev.position - pressPos)

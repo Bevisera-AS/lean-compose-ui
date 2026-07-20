@@ -338,7 +338,7 @@ private def longPressGesture : IO Unit := do
   let _ ← r.im.pointerEvent (releaseAt 5 5)
   checkEq "long: detector loops back to taps" (← taps.get) 1
 
-/-- Drag: 4 px start threshold, per-move deltas, end on release, cancel on
+/-- Drag: 8 dp start threshold, per-move deltas, end on release, cancel on
 window leave. -/
 private def dragGesture : IO Unit := do
   let log ← IO.mkRef (#[] : Array String)
@@ -383,6 +383,34 @@ private def dragGesture : IO Unit := do
                               button := some .right, clicks := 1 }
   checkEq "drag: second button mid-drag keeps the capture" (← log.get)
     #["start@80,90", "drag@80,90Δ70,80", "drag@85,90Δ5,0", "end"]
+
+/-- `detectDragGestures`' start threshold is 8 dp resolved through the
+node's density (the `ViewConfiguration`/`dragScrollSlop` family): at
+density 2 the same physical wiggle needs twice the pixels — the detector
+must not win the slop race against enclosing scrollables on HiDPI. -/
+private def dragSlopDensityScaled : IO Unit := do
+  let log ← IO.mkRef (#[] : Array String)
+  let r ← rig <| Box do
+    leaf (Modifier.size 50 50 |>.pointerInput 1
+      (detectDragGestures
+        (onDrag := fun _ _ => log.modify (·.push "drag"))
+        (onDragStart := fun _ => log.modify (·.push "start"))))
+  -- Density 1: 8 dp = 8 px — 6 px is not a drag, 9 px is.
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  let _ ← r.im.pointerEvent (moveTo 16 10)
+  checkEq "drag slop: 6 px at density 1 stays under the 8 dp slop" (← log.get) #[]
+  let _ ← r.im.pointerEvent (moveTo 19 10)
+  checkEq "drag slop: 9 px at density 1 crosses it" (← log.get) #["start", "drag"]
+  let _ ← r.im.pointerEvent (releaseAt 19 10)
+  log.set #[]
+  -- Density 2: the same 8 dp is 16 px — 12 px must not start a drag.
+  let _ ← r.root.remeasure { maxWidth := 200, maxHeight := 200 } { density := 2 }
+  let _ ← r.im.pointerEvent (pressAt 20 20)
+  let _ ← r.im.pointerEvent (moveTo 32 20)
+  checkEq "drag slop: 12 px at density 2 stays under" (← log.get) #[]
+  let _ ← r.im.pointerEvent (moveTo 40 20)   -- 20 px > 16 px
+  checkEq "drag slop: 20 px at density 2 crosses" (← log.get) #["start", "drag"]
+  let _ ← r.im.pointerEvent (releaseAt 40 20)
 
 /-- A chorded second button during a held press: releases match the
 *initiating* button, so a right release mid-left-press neither taps nor
@@ -1176,7 +1204,7 @@ private def dragScrollInnerDragWins : IO Unit := do
       leaf (Modifier.size 100 300 |>.pointerInput 1
         (detectDragGestures (fun _ _ => drags.modify (· + 1))))
   let _ ← r.im.pointerEvent (pressAt 50 80)
-  let _ ← r.im.pointerEvent (moveTo 50 70)  -- past the inner 4px slop first
+  let _ ← r.im.pointerEvent (moveTo 50 70)  -- crosses the inner slop, which consumes first
   let _ ← r.im.pointerEvent (moveTo 50 40)
   let _ ← r.im.pointerEvent (releaseAt 50 40)
   check "inner drag: the inner detector dragged" ((← drags.get) ≥ 2)
@@ -1954,6 +1982,7 @@ def run : IO Unit := do
   dragGesture
   tapButtonChord
   dragButtonChord
+  dragSlopDensityScaled
   dragScrollSteals
   dragScrollFlingAndCatch
   dragScrollFlingEndStop

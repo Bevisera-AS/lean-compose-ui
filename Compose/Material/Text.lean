@@ -86,7 +86,18 @@ private def obtainLayout (cell : IO.Ref (Option TextLayout)) (tc : TextContext)
 the ambient `LocalTextStyle`. The node measures to the text's intrinsic size
 (wrapped when the incoming width is bounded), clamped to the constraints, and
 draws the glyphs aligned within its box per `style.align`. Mirrors
-`androidx.compose.material.Text`. -/
+`androidx.compose.material.Text`.
+
+**Wrapped-line alignment limitation**: `style.align` offsets the laid-out
+text *block* within the node box; the lines inside a wrapped block stay
+left-aligned (a centered multi-line paragraph is a centered ragged-left
+block, not line-centered text). SDL_ttf has no per-`TTF_Text` wrap
+alignment — it is a *font* property (`TTF_SetFontWrapAlignment`, bound in
+lean-sdl3 as `Ttf.Font.setWrapAlignment`) — and fonts are shared through
+the `FontStore` cache, so flipping it per node would re-layout every text
+sharing the font. Proper per-paragraph alignment needs per-alignment font
+handles plumbed through lean-sdl3/`FontStore` — tracked as a lean-sdl3
+fast-follow; not worked around here. -/
 composable def Text (text : String) (modifier : Modifier := {})
     (style : TextStyle := {}) (color : Option Color := none) : Composable Unit := do
   let ambient ← LocalTextStyle.current

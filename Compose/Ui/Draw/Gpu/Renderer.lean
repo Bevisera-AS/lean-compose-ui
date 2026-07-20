@@ -24,7 +24,7 @@ Gaussian passes bouncing through a second pooled texture) then the target
 pass, each replaying its command list → submit (present is implicit).
 
 Layer textures come from a per-window pool: dimensions quantized up to 64 px,
-first-fit ≥ the request, entries released after sitting idle for
+best-fit ≥ the request, entries released after sitting idle for
 `poolTrimAge` frames — steady-state animation reuses the same textures with
 `cycle := true` semantics from the render-pass clear.
 
@@ -176,7 +176,7 @@ private structure PoolEntry where
 private def poolTrimAge : Nat := 120
 
 /-- The pooled textures backing one encoded layer: the content texture the
-composite samples (with its pool dimensions — first-fit, so ≥ the request),
+composite samples (with its pool dimensions — best-fit, so ≥ the request),
 and, for blurred layers (`LayerEnc.sigma > 0`), a second pooled ping texture
 the separable passes bounce through (content → ping → content). -/
 private structure LayerTex where
@@ -253,25 +253,44 @@ private def quantize64 (x : Float32) : UInt32 :=
   let n := max 1 x.toUInt32
   (n + 63) / 64 * 64
 
-/-- First-fit one unused pooled texture ≥ the quantized request (creating on
-miss), marking it used. Returns the updated pool and the texture with its
-(pool) dimensions. -/
+/-- Best-fit chooser over `(w, h, used)` pool shapes: the smallest-area unused
+entry ≥ the request (ties → first). Pure so the policy is `#guard`-testable;
+first-fit would let a small layer claim the pooled full-screen texture and
+force a fresh full-screen allocation for the next big one. -/
+private def bestFitIdx (entries : Array (UInt32 × UInt32 × Bool)) (w h : UInt32) :
+    Option Nat := Id.run do
+  let mut best : Option (Nat × Nat) := none   -- (index, area)
+  for i in [0:entries.size] do
+    let (ew, eh, used) := entries[i]!
+    if !used && ew ≥ w && eh ≥ h then
+      let area := ew.toNat * eh.toNat
+      if best.all (area < ·.2) then
+        best := some (i, area)
+  return best.map (·.1)
+
+-- The small request takes the small entry even when a big one sits first.
+#guard bestFitIdx #[(1920, 1088, false), (64, 64, false)] 64 64 == some 1
+-- A too-small entry is skipped (both dimensions must fit).
+#guard bestFitIdx #[(64, 64, false), (128, 128, false)] 65 64 == some 1
+-- Used entries never match; an exhausted pool misses.
+#guard bestFitIdx #[(64, 64, true), (128, 128, false)] 64 64 == some 1
+#guard bestFitIdx #[(64, 64, true)] 64 64 == none
+-- Equal areas tie to the first entry.
+#guard bestFitIdx #[(128, 64, false), (64, 128, false)] 64 64 == some 0
+
+/-- Best-fit one unused pooled texture ≥ the quantized request (smallest area
+wins; creating on miss), marking it used. Returns the updated pool and the
+texture with its (pool) dimensions. -/
 private def poolAcquire (dev : Device) (fmt : TextureFormat) (pool : Array PoolEntry)
     (w h : UInt32) : IO (Array PoolEntry × Texture × UInt32 × UInt32) := do
-  let mut found : Option (Nat × PoolEntry) := none
-  let mut j := 0
-  for e in pool do
-    if found.isNone && !e.used && e.w ≥ w && e.h ≥ h then
-      found := some (j, e)
-    j := j + 1
-  match found with
-  | some (i, e) =>
-    return (pool.modify i ({ · with used := true, idle := 0 }), e.tex, e.w, e.h)
-  | none =>
-    let tex ← dev.createTexture
-      { format := fmt, usage := TextureUsageFlags.sampler ||| .colorTarget
-        width := w, height := h }
-    return (pool.push { tex, w, h, used := true }, tex, w, h)
+  if let some i := bestFitIdx (pool.map fun e => (e.w, e.h, e.used)) w h then
+    if h : i < pool.size then
+      let e := pool[i]
+      return (pool.modify i ({ · with used := true, idle := 0 }), e.tex, e.w, e.h)
+  let tex ← dev.createTexture
+    { format := fmt, usage := TextureUsageFlags.sampler ||| .colorTarget
+      width := w, height := h }
+  return (pool.push { tex, w, h, used := true }, tex, w, h)
 
 /-- Acquire the pooled textures of every encoded layer (blurred layers take a
 second, ping texture for the separable passes), then age and trim the pool:

@@ -535,7 +535,7 @@ has no dummy-video backend):
   the composite quad's corners, nearest when `snapComposite` else linear; a
   blur effect adds two separable Gaussian passes through a second pooled
   texture; a stretch effect swaps the composite draw onto the UV-warping
-  stretch pipeline), textures from a per-window pool (64 px-quantized, first-fit,
+  stretch pipeline), textures from a per-window pool (64 px-quantized, best-fit,
   trimmed after 120 idle frames). One shared `Gpu.Device` per process; MSL shaders compiled at
   runtime; premultiplied blending with non-premultiplied vertex colors
   (interpolation matches SDL's). Clips are per-command integer scissors with

@@ -44,6 +44,10 @@ private initialize deviceRef : IO.Ref (Option Device) ← IO.mkRef none
 `tessellationCount` counter (shared across windows, like it). -/
 initialize frameStats : IO.Ref FrameStats ← IO.mkRef {}
 
+/-- Whether `COMPOSE_GPU_DEBUG` is set: debug-mode device creation, and the
+encode/resolve walk-drift tripwire throws instead of warning. -/
+private initialize gpuDebug : Bool ← return (← IO.getEnv "COMPOSE_GPU_DEBUG").isSome
+
 /-- The shared device, created on first use. Throws where SDL_GPU has no
 backend (always under the dummy video driver — the GPU backend is real-driver
 only). The format mask offers MSL and SPIR-V — Metal picks MSL, Vulkan picks
@@ -54,9 +58,8 @@ Android port). -/
 def getDevice : IO Device := do
   if let some d := ← deviceRef.get then
     return d
-  let debug := (← IO.getEnv "COMPOSE_GPU_DEBUG").isSome
   let driver ← IO.getEnv "COMPOSE_GPU_DRIVER"
-  let d ← createDevice (ShaderFormat.msl ||| .spirv) (debugMode := debug) (name := driver)
+  let d ← createDevice (ShaderFormat.msl ||| .spirv) (debugMode := gpuDebug) (name := driver)
   d.setAllowedFramesInFlight 2
   deviceRef.set (some d)
   return d
@@ -490,6 +493,15 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
   let (texts, atlases) ← resolveTexts list
   let (imageIdxs, imageTexs) ← resolveImages r.dev cb list
   let enc := encode list texts imageIdxs
+  -- Walk-order tripwire: the encoder consumes text runs and image indices by
+  -- position, in exactly the order `resolveTexts`/`resolveImages` walked the
+  -- list — a count mismatch means the walks drifted and prims were silently
+  -- skipped. Loud on stderr always; fatal under `COMPOSE_GPU_DEBUG`.
+  if enc.textsConsumed != texts.size || enc.imagesConsumed != imageIdxs.size then
+    let msg := s!"Compose GPU: encode/resolve walk drift — \
+      text runs {enc.textsConsumed} encoded vs {texts.size} resolved, \
+      images {enc.imagesConsumed} encoded vs {imageIdxs.size} resolved"
+    if gpuDebug then throw (IO.userError msg) else IO.eprintln msg
   frameStats.set enc.stats
   let layerTexs ← acquireLayerTextures r
     (← r.dev.getSwapchainTextureFormat r.window) enc.layers

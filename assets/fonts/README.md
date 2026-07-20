@@ -7,7 +7,8 @@ licensed under the SIL Open Font License 1.1 (see `OFL.txt`).
 `TwemojiMozilla.ttf` is [Twemoji Mozilla v0.7.0](https://github.com/mozilla/twemoji-colr)
 (unchanged), the COLRv0 build of Twitter's Twemoji — artwork
 [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) © Twitter, Inc.
-and other contributors, font code MIT © Mozilla Foundation. It is the
+and other contributors, font code Apache-2.0 © Mozilla Foundation
+(see `LICENSE-TwemojiMozilla.md`). It is the
 primary sized emoji fallback (`Compose/Ui/Text/Fonts.lean`): COLR v0 is
 the one color-font format FreeType composites natively, so it renders in
 color everywhere we target (platform color-emoji fonts either aren't

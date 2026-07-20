@@ -152,5 +152,13 @@ comment.
 
 ## License
 
-Apache-2.0 ([`LICENSE`](LICENSE)). Bundled Roboto fonts are OFL-1.1
-(`assets/fonts/`).
+Apache-2.0 ([`LICENSE`](LICENSE)).
+
+API design and behavior are modeled on
+[Jetpack Compose](https://developer.android.com/jetpack/compose)
+(Copyright The Android Open Source Project) and
+[Compose Multiplatform](https://github.com/jetbrains/compose-multiplatform)
+(Copyright JetBrains s.r.o.), both licensed under Apache-2.0.
+
+Bundled fonts: Roboto and Noto Emoji are OFL-1.1, Twemoji Mozilla is
+Apache-2.0 (code) / CC-BY 4.0 (artwork) — see `assets/fonts/`.

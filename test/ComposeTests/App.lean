@@ -222,6 +222,49 @@ where
     ticks.modify (· + 1)
     tickForever ticks
 
+/-- Regression: the live-resize watch is armed only while the loop is parked
+*inside* a pump call (`waitEventTimeout`/`pollEvent`) — never during event
+dispatch. On real drivers an input handler calling `ctx.window.setSize`
+pushes resize events synchronously mid-drain (SDL runs watches during the
+push), so a dispatch-phase resize event reaching an armed watch would render
+from inside the half-finished handler. Emulated with an input sink that
+grows the window and hands the resulting pixel-size event to the installed
+watch's callback while `step` is dispatching the sink's trigger event. -/
+private def watchDisarmedDuringDispatch : IO Unit := do
+  let ctx ← boot (Box (modifier := Modifier.fillMaxSize |>.background .red))
+  let _ ← step ctx cfg
+  let wid ← ctx.window.id
+  let lookup : Sdl.WindowId → IO (Option (WindowContext × AppConfig)) := fun w =>
+    return if w == wid then some (ctx, cfg) else none
+  let watch ← installLiveResizeWatch lookup
+  -- The installed callback, reconstructed over the same refs (the closure
+  -- itself is not exposed by `installLiveResizeWatch`).
+  let watchEvent := liveResizeWatchEvent lookup watch.armed watch.busy watch.lastSize
+  let some trigger ← Sdl.registerEvents 1
+    | throw (IO.userError "no user event types left")
+  let duringDispatch ← IO.mkRef (none : Option (Bool × Nat))
+  ctx.inputSink.set fun e => do
+    match e with
+    | .user t _ =>
+      if t == trigger.val then
+        -- Mid-dispatch `setSize`: SDL would deliver the resize burst to the
+        -- watch synchronously, before this handler returns.
+        ctx.window.setSize 300 200
+        watchEvent (.windowPixelSizeChanged ⟨0, wid, 300, 200⟩)
+        duringDispatch.set (some (← watch.armed.get, ← ctx.framesRendered.get))
+        return true
+      return false
+    | _ => return false
+  let f0 ← ctx.framesRendered.get
+  let _ ← Sdl.pushUserEvent trigger
+  let _ ← step ctx cfg (idleCapMs := 5) (watch := some watch)
+  match ← duringDispatch.get with
+  | none => check "dispatch-arming: the trigger event reached the sink" false
+  | some (armedMid, framesMid) =>
+    check "dispatch-arming: watch is disarmed during dispatch" (!armedMid)
+    checkEq "dispatch-arming: a dispatch-phase resize event does not render" framesMid f0
+  watch.remove
+
 /-- An idle step (no dirty state, no timers, no frame work) blocks on the
 event wait until the cap instead of spinning. Coarse bounds: at least most
 of the timeout, well under ten times it. -/
@@ -431,6 +474,7 @@ def run : IO Unit := do
   windowSizeMatchesDensity
   quitHandling
   liveResizeWatchRenders
+  watchDisarmedDuringDispatch
   frameCapHonored
   idleStepBlocks
   timerWakesAndRenders

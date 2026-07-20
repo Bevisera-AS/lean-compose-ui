@@ -531,10 +531,12 @@ loop, which is exactly the main thread that owns the renderer. The watch below
 remeasures and renders the affected window right there, so content keeps
 reflowing while the user drags.
 
-Two flags keep this safe. `armed` is true only while the loop is parked in its
-wait/poll phase — the one place a synchronous render can't interleave with a
-recomposition drain or another render (our own `setSize` calls can push resize
-events mid-drain on real drivers; those must wait for the normal pass). `busy`
+Two flags keep this safe. `armed` is true only while the loop is parked inside
+an individual wait/poll pump call (`armedPump`) — the one place a synchronous
+render can't interleave with a recomposition drain, an event handler, or
+another render (our own `setSize` calls can push resize events mid-drain on
+real drivers; those must wait for the normal pass, so dispatch runs
+disarmed). `busy`
 bars re-entry while the callback itself renders (a drained effect calling
 `setSize` would otherwise recurse). Off the main thread the callback does
 nothing — watches run on whatever thread posts the event.
@@ -560,8 +562,9 @@ structure LiveResizeWatch where
   /-- The registration, for removal on shutdown (`LiveResizeWatch.remove`). -/
   id : Sdl.EventWatchId
   /-- True while the loop is parked in SDL's event pump — the only time the
-  callback may render. `step`/`stepApplication` set it around their
-  wait/poll phase. -/
+  callback may render. `step`/`stepApplication` set it around each
+  individual wait/poll call (`armedPump`), never across the dispatch of the
+  event that call returned. -/
   armed : IO.Ref Bool
   /-- True while the callback itself is rendering (re-entry barrier). -/
   busy : IO.Ref Bool
@@ -633,6 +636,21 @@ def installLiveResizeWatch
 def LiveResizeWatch.remove (w : LiveResizeWatch) : IO Unit := do
   let _ ← Sdl.removeEventWatch w.id
 
+/-- Run one event-pump call (`waitEventTimeout`/`pollEvent`) with the
+live-resize watch armed, disarming before the call's result is dispatched.
+This is the *entire* legal arming window (the invariant of the section
+above): while the loop is parked inside the pump the OS may run a modal
+resize loop and the watch must render; during dispatch it must not — an app
+handler's own `setSize` pushes resize events synchronously mid-drain, and a
+synchronous render there could dispose the very node whose coroutine is
+running. -/
+def armedPump (watch : Option LiveResizeWatch) (pump : IO α) : IO α :=
+  match watch with
+  | some w => do
+    w.armed.set true
+    try pump finally w.armed.set false
+  | none => pump
+
 /-- The `LifecycleEvent` of a watched SDL event — the six app events SDL
 delivers **only** through event watches (`SDL_SendAppEvent` never queues
 them); `none` for everything else. -/
@@ -689,20 +707,16 @@ def step (ctx : WindowContext) (config : AppConfig := {})
     (idleCapMs : UInt32 := idleWaitMs)
     (watch : Option LiveResizeWatch := none) : IO Bool := do
   -- 1+2: wait with deadline, then drain the whole queue. The live-resize
-  -- watch may render only while we're parked in here (see its section).
+  -- watch may render only while we're parked *inside* a pump call (see
+  -- `armedPump`): every dispatch runs disarmed.
   let timeout ← wakeTimeoutMs ctx idleCapMs
-  if let some w := watch then w.armed.set true
-  try
-    if timeout == 0 then
-      pure ()
-    else if let some e ← Sdl.waitEventTimeout timeout then
+  if timeout != 0 then
+    if let some e ← armedPump watch (Sdl.waitEventTimeout timeout) then
       dispatchEvent ctx config e
-    repeat
-      match ← Sdl.pollEvent with
-      | some e => dispatchEvent ctx config e
-      | none => break
-  finally
-    if let some w := watch then w.armed.set false
+  repeat
+    match ← armedPump watch Sdl.pollEvent with
+    | some e => dispatchEvent ctx config e
+    | none => break
   if ← ctx.quitRequested.get then return false
   -- 3: coroutines due now; frame clock while subscribed. Paused: timers
   -- still run (background work), the frame clock does not (animations

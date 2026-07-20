@@ -259,21 +259,17 @@ render every dirty window. Returns `true` iff any frame was presented. -/
 def stepApplication (app : ApplicationScope)
     (idleCapMs : UInt32 := idleWaitMs)
     (watch : Option LiveResizeWatch := none) : IO Bool := do
-  -- The live-resize watch may render only while we're parked in the
-  -- wait/poll phase (see its section in `Compose/Ui/App.lean`).
+  -- The live-resize watch may render only while we're parked *inside* a
+  -- pump call (see `armedPump` and its section in `Compose/Ui/App.lean`):
+  -- every dispatch runs disarmed.
   let timeout ← applicationWakeTimeoutMs app idleCapMs
-  if let some w := watch then w.armed.set true
-  try
-    if timeout == 0 then
-      pure ()
-    else if let some e ← Sdl.waitEventTimeout timeout then
+  if timeout != 0 then
+    if let some e ← armedPump watch (Sdl.waitEventTimeout timeout) then
       dispatchApplicationEvent app e
-    repeat
-      match ← Sdl.pollEvent with
-      | some e => dispatchApplicationEvent app e
-      | none => break
-  finally
-    if let some w := watch then w.armed.set false
+  repeat
+    match ← armedPump watch Sdl.pollEvent with
+    | some e => dispatchApplicationEvent app e
+    | none => break
   if ← app.exitRequested.get then return false
   let now ← Sdl.getTicksNS
   app.scheduler.runDue now

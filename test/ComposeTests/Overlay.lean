@@ -820,6 +820,76 @@ private def menuExitInert : IO Unit := do
   check "exit: re-open scrim dismiss fired" ((← expanded.cell.get) == false)
   r.settle
 
+/-- A popup whose `focusable` flips across recompositions reroutes keys
+immediately: while focusable its handler *captures* (runs before the focused
+node); flipped off, the focused node gets the key first — the mount-time
+latch must not stick until unmount. -/
+private def popupFocusableFlipsLive : IO Unit := do
+  let focusable ← MutableState.create true
+  let nodeKeys ← IO.mkRef (0 : Nat)
+  let popupKeys ← IO.mkRef (0 : Nat)
+  let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white) do
+    Box (modifier := Modifier.size 60 30
+      |>.focusable
+      |>.onKeyEvent fun ke => do
+          if ke.down && ke.key == .f1 then
+            nodeKeys.modify (· + 1)
+            return true
+          return false)
+    Tests.restartable 1 do
+      Popup (Box (modifier := Modifier.size 40 20 |>.background .red))
+        (anchor := some ⟨100, 100, 120, 120⟩)
+        (focusable := (← focusable.get))
+        (onKeyEvent := fun ke => do
+          if ke.down && ke.key == .f1 then
+            popupKeys.modify (· + 1)
+            return true
+          return false)
+  r.settle
+  r.key .tab -- focus the node
+  r.settle
+  -- While focusable, the popup's capture handler sees F1 before the node.
+  r.key .f1
+  checkEq "focusable popup captures keys before the focused node" (← popupKeys.get) 1
+  checkEq "focused node does not see the captured key" (← nodeKeys.get) 0
+  -- Flip focusable off: routing must follow the recomposition, not the
+  -- mount-time latch — the focused node now gets the key first.
+  focusable.set false
+  r.settle
+  r.key .f1
+  checkEq "flipping focusable off reroutes to the focused node" (← nodeKeys.get) 1
+  checkEq "the no-longer-focusable popup no longer captures" (← popupKeys.get) 1
+  -- Flip back on: capture routing returns without a remount.
+  focusable.set true
+  r.settle
+  r.key .f1
+  checkEq "flipping focusable back on captures again" (← popupKeys.get) 2
+  checkEq "the focused node no longer sees the key" (← nodeKeys.get) 1
+
+/-- An overlay whose `modal` flips across recompositions drives the modal
+focus hook live: on fires it (scoping Tab traversal), off releases it — not
+only at mount/unmount. -/
+private def overlayModalFlipsLive : IO Unit := do
+  let modal ← MutableState.create false
+  let events ← IO.mkRef (#[] : Array Bool)
+  let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white) do
+    Tests.restartable 1 do
+      overlayImpl (anchor := none) (alignment := .center) (offset := ⟨0, 0⟩)
+        (onDismissRequest := none) (focusable := false)
+        (onKeyEvent := fun _ => pure false) (scrimColor := none)
+        (modal := (← modal.get)) (interactive := true)
+        (content := Box (modifier := Modifier.size 40 20 |>.background .red))
+  -- Record hook invocations (replacing installInput's real hook).
+  r.ctx.modalFocusHook.set fun _ opening => events.modify (·.push opening)
+  r.settle
+  checkEq "non-modal mount does not touch the focus hook" (← events.get) #[]
+  modal.set true
+  r.settle
+  checkEq "flipping modal on fires the hook live" (← events.get) #[true]
+  modal.set false
+  r.settle
+  checkEq "flipping modal off releases the hook live" (← events.get) #[true, false]
+
 /-- The overlay group. -/
 def run : IO Unit := do
   scrollWheel
@@ -843,5 +913,7 @@ def run : IO Unit := do
   menuMouse
   menuKeyboard
   menuExitInert
+  popupFocusableFlipsLive
+  overlayModalFlipsLive
 
 end Tests.Overlay

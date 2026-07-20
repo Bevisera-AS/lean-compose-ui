@@ -255,6 +255,9 @@ overlay entry). -/
 private def captureLocals : Composable LocalMap := fun c => c.locals.get
 
 /-- Shared implementation of `Popup` and `Dialog` (see their docstrings).
+`focusable` and `modal` are honored live: a flip across recompositions
+re-registers the key routing / modal focus hook immediately (prop-keyed
+effects below) instead of latching the mount-time value until unmount.
 `blurBehind` requests a Gaussian backdrop blur of the window's *base*
 content while this overlay is open and interactive — static, latched per
 composition; the host applies the max over all open overlays (see
@@ -291,8 +294,19 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     entry.revision.modify (· + 1)
     entry.blurBehind.set (if interactive then max 0 blurBehind.value else 0)
     ctx.recomputeBackdropBlur
+    -- Three effects, not one: the overlay entry itself is keyed on the
+    -- stable id (re-registering would push it to the top of the z-order),
+    -- while the registry facts that *latch* a prop — the capture phase
+    -- (`focusable`) and the modal focus hook (`modal`) — re-register when
+    -- their prop flips across recompositions, so routing follows the
+    -- composition live instead of sticking with the mount-time value until
+    -- unmount. (A focusable flip re-registers the key handler last, i.e.
+    -- innermost — the fresh registration is the most recent interaction.)
     DisposableEffect entry.id do
       ctx.registerOverlay entry
+      return do
+        ctx.unregisterOverlay entry.id
+    DisposableEffect (entry.id, focusable) do
       ctx.registerKeyHandler
         { id := entry.id
           capture := focusable
@@ -307,12 +321,13 @@ composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
               | none => return false
             else
               return false }
-      -- Modal overlays scope focus traversal to themselves and restore the
-      -- prior focus on close (see `FocusManager.pushModalScope`).
-      if modal then (← ctx.modalFocusHook.get) entry.id true
       return do
         ctx.unregisterKeyHandler entry.id
-        ctx.unregisterOverlay entry.id
+    -- Modal overlays scope focus traversal to themselves and restore the
+    -- prior focus on close (see `FocusManager.pushModalScope`).
+    DisposableEffect (entry.id, modal) do
+      if modal then (← ctx.modalFocusHook.get) entry.id true
+      return do
         if modal then (← ctx.modalFocusHook.get) entry.id false
 
 /-- Compose `content` into an overlay above the window's main content,

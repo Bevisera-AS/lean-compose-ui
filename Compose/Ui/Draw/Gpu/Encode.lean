@@ -559,7 +559,10 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
       let rt := max ((r.right + shift.x + m).ceil) (l + 1)
       let bt := max ((r.bottom + shift.y + m).ceil) (t + 1)
       let saved := st.cmds
-      let st := content.foldl (encodePrim texts images extraAlpha (shift - ⟨l, t⟩))
+      -- Content encodes at ambient alpha 1: the enclosing flattened alpha
+      -- applies exactly once, at the composite below (SDL-backend parity —
+      -- its offscreen path renders content with `extraAlpha` 1.0 too).
+      let st := content.foldl (encodePrim texts images 1.0 (shift - ⟨l, t⟩))
         { st with cmds := #[] }
       let idx := st.layers.size
       return { st with
@@ -649,6 +652,18 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
     && r.layers[0]!.transform == none
     && r.layers[0]!.cmds == #[.quads 0 1 none]
     && r.quads == (encode #[.rect {} .red ⟨3, 3⟩ ⟨4, 4⟩] #[]).quads
+-- Ambient flattened alpha reaching an offscreen layer applies exactly once,
+-- at the composite: the content encodes at full alpha (SDL-backend parity;
+-- ambient alpha ≠ 1 needs a hand-built `alpha > 1` flatten layer today).
+#guard
+  let inner : Prim := .layer {} ⟨0, 0, 4, 4⟩ { alpha := 0.5 } #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]
+  let r := encode #[.layer {} ⟨0, 0, 8, 8⟩ { alpha := 2.0 } #[inner]] #[]
+  -- The outer `alpha ≥ 1` layer flattens inline (extraAlpha 2); the inner
+  -- layer goes offscreen with composite alpha 0.5 × 2 = 1 and content
+  -- vertices identical to an unlayered encode (shifted by the 1 px margin).
+  r.layers.size == 1 && r.layers[0]!.alpha == 1.0
+    && r.layers[0]!.cmds == #[.quads 0 1 none]
+    && r.quads == (encode #[.rect {} .red ⟨1, 1⟩ ⟨4, 4⟩] #[]).quads
 -- Nested layers emit innermost-first; the outer layer composites the inner.
 #guard
   let inner : Prim := .layer {} ⟨0, 0, 4, 4⟩ { alpha := 0.5 } #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]

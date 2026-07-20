@@ -715,6 +715,26 @@ private def cancelClearsPinchGate : IO Unit := do
   checkEq "cancel-clears: the pinch gate reopens after a cancelled background press"
     (← calls.get) 1
 
+/-- A long touch drag with no scroll/transform ancestor to steal the gesture
+still must not commit tap-to-focus on the up: past the touch slop the armed
+entry drops (Android arms focus on the tap, not any touch sequence). -/
+private def touchDragDropsPendingFocus : IO Unit := do
+  let log ← IO.mkRef (#[] : Array String)
+  let fc (tag : String) : Bool → IO Unit := fun b =>
+    log.modify (·.push s!"{tag}{if b then "+" else "-"}")
+  let r ← rig <| Column do
+    leaf (Modifier.size 100 40 |>.focusable |>.onFocusChanged (fc "a"))
+  -- A bare drag (nothing steals): past the slop the release commits nothing.
+  let _ ← r.im.pointerEvent (fingerPress 1 50 20)
+  let _ ← r.im.pointerEvent (fingerMove 1 50 60)   -- 40 px, far past the 8 dp slop
+  let _ ← r.im.pointerEvent (fingerRelease 1 50 60)
+  checkEq "touch focus: a bare drag never commits focus" (← log.get) #[]
+  -- A sub-slop wiggle is still a tap.
+  let _ ← r.im.pointerEvent (fingerPress 2 50 20)
+  let _ ← r.im.pointerEvent (fingerMove 2 52 22)   -- ≈2.8 px, under the slop
+  let _ ← r.im.pointerEvent (fingerRelease 2 52 22)
+  checkEq "touch focus: a sub-slop wiggle still taps to focus" (← log.get) #["a+"]
+
 /-- The mouse (pointer 0) and a finger are independent: a finger press on B
 while the mouse holds A neither joins the mouse's capture nor disturbs its
 click. -/
@@ -1921,6 +1941,7 @@ def run : IO Unit := do
   touchTapFocus
   cancelAfterBackgroundPress
   cancelClearsPinchGate
+  touchDragDropsPendingFocus
   mouseAndFingerCoexist
   pointerInputLifecycle
   capturedChainReshuffle

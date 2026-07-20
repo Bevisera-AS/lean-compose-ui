@@ -50,6 +50,11 @@ cursor icon stays right (Compose synthesizes a pointer move after layout).
 Shift-Tab traverse the focusables, Esc clears focus.
 -/
 
+/-- Touch slop for tap-to-focus, in dp (Android's `ViewConfiguration` touch
+slop): a finger that travels farther than this before its release is a drag,
+not a tap, so the armed focus drops. -/
+def touchTapSlop : Dp := 8
+
 /-- Per-window input state; create via `InputManager.create` (headless tests)
 or `installInput` (real windows). -/
 structure InputManager where
@@ -63,10 +68,11 @@ structure InputManager where
   captures : IO.Ref (Std.HashMap UInt64 (Array HitTarget))
   /-- Touch click-to-focus is tap-gated: a finger press *arms* the deepest
   focusable under it here (`none` = the press hit no focusable, so the tap
-  clears focus); the release commits it, a steal or gesture cancel drops it
-  — a drag-scroll over a text field must not pop the keyboard. Mouse
-  presses focus immediately (`focusOnPress`) and never appear here. -/
-  pendingFocus : IO.Ref (Std.HashMap UInt64 (Option LayoutNode))
+  clears focus) alongside the press position; the release commits it, while
+  a capture steal, a gesture cancel, or travelling past `touchTapSlop` drops
+  it — a drag over a text field must not pop the keyboard. Mouse presses
+  focus immediately (`focusOnPress`) and never appear here. -/
+  pendingFocus : IO.Ref (Std.HashMap UInt64 (Option LayoutNode × Offset))
   /-- Buttons currently held per pointer (tracked from press/release events
   so synthetic tests need no SDL mouse state). -/
   buttonsHeld : IO.Ref (Std.HashMap UInt64 Sdl.MouseButtonFlags)
@@ -223,8 +229,8 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
         -- Focus-neutral chrome (selection handles/toolbar) arms nothing:
         -- the current focus must survive the tap.
         match ← FocusManager.focusPress path with
-        | .focus n => im.pendingFocus.modify (·.insert pid (some n))
-        | .clear => im.pendingFocus.modify (·.insert pid none)
+        | .focus n => im.pendingFocus.modify (·.insert pid (some n, ev.position))
+        | .clear => im.pendingFocus.modify (·.insert pid (none, ev.position))
         | .keep => pure ()
       dispatchToPath path { ev with buttons := held }
     else
@@ -243,7 +249,7 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
     -- release handlers observe the updated focus (the ordering mouse gets
     -- at press time). A steal or cancel already dropped the entry.
     if !isMouse && held == .none then
-      if let some cand := (← im.pendingFocus.get).get? pid then
+      if let some (cand, _) := (← im.pendingFocus.get).get? pid then
         im.pendingFocus.modify (·.erase pid)
         match cand with
         | some n =>
@@ -263,6 +269,14 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
       im.lastPos.set ev.position
       im.pointerInside.set true
     let ev := { ev with buttons := (← im.buttonsHeld.get).getD pid .none }
+    -- Touch tap-to-focus is a *tap*: once the finger travels past the touch
+    -- slop the armed entry drops, even when no scroll/transform ancestor
+    -- steals the gesture (a bare drag must not commit focus on the up).
+    unless isMouse do
+      if let some (_, origin) := (← im.pendingFocus.get).get? pid then
+        let slop := (← im.root.data).density.dpToPx touchTapSlop
+        if origin.distance ev.position > slop then
+          im.pendingFocus.modify (·.erase pid)
     let captured := (← im.captures.get).getD pid #[]
     if captured.isEmpty then
       if isMouse then

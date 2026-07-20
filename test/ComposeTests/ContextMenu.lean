@@ -105,6 +105,22 @@ private def leftClickBubbles : IO Unit := do
       assertExists (.role .menuItem)      -- right click still owns the menu
       checkEq "right click did not fire the ancestor" (← clicks.get) 1
 
+/-! ## A chorded left click during a held right press must not open early -/
+
+private def chordDoesNotOpenEarly : IO Unit := do
+  let picked ← MutableState.create "-"
+  let disabledFired ← IO.mkRef false
+  runComposeTest (tree picked disabledFired) do
+    let c := (← boundsOf (.tag "area")).center
+    mouseDown c (button := .right)
+    mouseDown c (button := .left)
+    mouseUp c (button := .left)
+    settle
+    assertMissing (.role .menuItem)   -- the left release is not the gesture's end
+    mouseUp c (button := .right)
+    settle
+    assertExists (.role .menuItem)    -- the right release opens the menu
+
 /-- The ContextMenu group. -/
 def run : IO Unit := do
   scenario "openSelectClose" openSelectClose
@@ -112,5 +128,6 @@ def run : IO Unit := do
   scenario "escDismiss" escDismiss
   scenario "clickAwayDismiss" clickAwayDismiss
   scenario "leftClickBubbles" leftClickBubbles
+  scenario "chordDoesNotOpenEarly" chordDoesNotOpenEarly
 
 end Tests.ContextMenu

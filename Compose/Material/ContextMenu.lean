@@ -41,14 +41,17 @@ structure ContextMenuItem where
   onClick : IO Unit
   deriving Inhabited
 
-/-- Await events until the pressed button ends: a `release` (consumed) or an
-`exit` (`none`). The private helper of `detectTapGestures`, restated for the
-right-button-only detector below. -/
+/-- Await events until the pressed *right* button ends: its `release`
+(consumed) or an `exit` (`none`). The private helper of `detectTapGestures`,
+restated for the right-button-only detector below; other buttons' releases
+(a chorded left click during the held right press) pass through unconsumed. -/
 private partial def awaitRelease (scope : PointerInputScope) :
     UiTask (Option PointerEvent) := do
   let ev ← scope.awaitEvent
   match ev.eventType with
-  | .release => ev.consume; return some ev
+  | .release =>
+    if ev.button == some .right then ev.consume; return some ev
+    else awaitRelease scope
   | .exit => return none
   | _ => awaitRelease scope
 

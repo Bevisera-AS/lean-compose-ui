@@ -6,7 +6,7 @@ A [Jetpack Compose](https://github.com/jetbrains/compose-multiplatform)-style
 declarative UI framework for [Lean 4](https://lean-lang.org), rendered with
 SDL3 via [lean-sdl3](https://github.com/philnguyen/lean-sdl3). It
 ships a full animation system, a Material-lite widget set, a UI-test
-framework, and all seven [7GUIs tasks](https://eugenkiss.github.io/7guis/tasks)
+framework, and all [7GUIs tasks](https://eugenkiss.github.io/7guis/tasks)
 as demos.
 
 <p align="center">
@@ -22,31 +22,24 @@ as demos.
 
 ## Highlights
 
-- **Full animation system** — easing, tween/spring/keyframes/repeat specs,
-  `Animatable` (velocity-preserving interruption), `animate*AsState`,
+- **Full animation system** — easing, tween/spring/keyframes specs,
+  `Animatable` with velocity-preserving interruption, `animate*AsState`,
   `Transition`, `AnimatedVisibility`.
-- **Material-lite widgets** — theme (light/dark schemes, typography, shapes),
-  state layers + bounded ripple, `Button`/`Checkbox`/`RadioButton`/`Switch`/
-  `Slider`/`ProgressIndicator`/`TextField`, scroll, lazy lists, popups,
-  dropdown menus, dialogs.
-- **Two render backends** — an SDL_GPU backend (the default) rendering
-  instanced SDF shapes, analytic Gaussian elevation shadows, real offscreen
-  layers for group opacity, Gaussian blur (including opt-in blur-behind for
-  dialogs), the Android-12 stretch-overscroll warp, and exact rounded
-  clipping, and an SDL_Renderer backend with feathered CPU tessellation
-  (`COMPOSE_BACKEND=sdl`; the automatic fallback, runs headless — all tests
-  use it), from the same recorded display list.
+- **Material-lite widgets** — light/dark theming, ripple, the standard
+  controls (`Button`, `Checkbox`, `Switch`, `Slider`, `TextField`, …),
+  scroll, lazy lists, popups, menus, and dialogs.
+- **Two render backends** — a GPU backend (the default) with instanced SDF
+  shapes, elevation shadows, real layers, blur, and exact rounded clipping;
+  and a CPU backend (`COMPOSE_BACKEND=sdl`) that runs headless — all tests
+  use it. Both draw the same recorded display list.
 - **Desktop components** — declarative multi-window `application` with
-  `Window`/`DialogWindow`, an in-window `MenuBar`, `ContextMenuArea`,
-  `TooltipArea`, and a system `Tray`.
+  `Window`/`DialogWindow`, menu bars, context menus, tooltips, and a
+  system `Tray`.
 - **MT UI-test framework** (`Compose.Test`) — a headless
   `androidx.compose.ui.test` analog: a semantics tree, matcher-first finders,
   and actions synthesized through the *real* input router, with a fake clock.
-- **Demos**
-  + **7GUIs demos** — Counter, Temperature Converter, Flight Booker, Timer,
-  CRUD, Circle Drawer, and Cells (a virtualized formula spreadsheet).
-  + **File manager** — breadcrumb navigation, a dirs-first sorted listing
-  (`LazyColumn` + scrollbar), and a file info panel over an injected `FsSource`.
+- **Demos** — all seven 7GUIs tasks, including Cells (a virtualized formula
+  spreadsheet), plus a file manager.
 
 ## Quick start
 
@@ -114,16 +107,10 @@ def increment : IO Unit := runComposeTest counterUi do
 
 Clicks/keys/text go through the same router the app uses; the clock is frozen
 until you `advanceTimeBy`/`settle`, so animations are deterministic. Failures
-dump the semantics tree. See `test/ComposeTests/UiTest.lean` for worked
-examples.
-
-Real-device input is regression-tested by **record & replay**: run any app
-with `COMPOSE_INPUT_RECORD=<path>` and every translated pointer event (plus
-each frame-clock tick) is dumped as JSONL; the `Replay` test group drives
-committed recordings (`assets/test/input/`) back through the router with
-their original timestamps and asserts invariants — real finger streams carry
-the fractional coordinates and batched timing that synthetic events can't
-fake.
+dump the semantics tree. Real-device input is regression-tested by record &
+replay: `COMPOSE_INPUT_RECORD=<path>` dumps an app's input as JSONL, and the
+`Replay` tests drive committed recordings back through the router. See
+`test/ComposeTests/UiTest.lean` for worked examples.
 
 ## Project layout
 

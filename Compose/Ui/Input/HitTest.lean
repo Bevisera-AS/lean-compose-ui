@@ -49,6 +49,14 @@ structure HitTarget where
   node : LayoutNode
   /-- Hit chain indices into `node`'s `modifier.elems` (pointer/focus only). -/
   elems : Array Nat
+  /-- The `pointerInput` states behind the hit `.input` elements, each paired
+  with its chain index at hit time. A press capture holds targets across
+  frames while the chain may reshuffle (a conditional modifier toggling
+  mid-gesture updates `PointerInputState.elemIdx` via reconcile) — `deliver`
+  re-resolves each recorded index through its state's *live* `elemIdx`, so
+  the captured coroutine keeps its event stream instead of silently
+  detaching (a lost release latches pressed state). -/
+  inputs : Array (Nat × PointerInputState) := #[]
   deriving Inhabited
 
 namespace LayoutNode
@@ -99,7 +107,16 @@ partial def hitTest (n : LayoutNode) (p : Offset) : IO (Array HitTarget) := do
   -- (an inert overlay layer during a dropdown's exit animation).
   unless d.hitTestable do return #[]
   let (elems, open') := hitChain d p
-  let self : Array HitTarget := if elems.isEmpty then #[] else #[{ node := n, elems }]
+  let self : Array HitTarget ←
+    if elems.isEmpty then pure #[] else do
+      -- Snapshot the states behind the hit `.input` elements (see
+      -- `HitTarget.inputs` — capture-proofing against chain reshuffles).
+      let mut inputs := #[]
+      for st in d.pointerInputs do
+        let i ← st.elemIdx.get
+        if elems.contains i then
+          inputs := inputs.push (i, st)
+      pure #[{ node := n, elems, inputs }]
   unless open' do return self
   let q := p - d.contentOffset.toOffset
   for i in [0:d.children.size] do
@@ -121,7 +138,9 @@ per-dispatch leftover delta, created by `dispatchToPath`): each returns what
 it consumed per axis, and the event counts as consumed when the remainder
 reaches zero. Given `stealSlot`, each delivered event's `steal` records the
 receiving node (the router turns it into a capture takeover — see
-`PointerEvent.steal`). -/
+`PointerEvent.steal`). `pointerInput` indices are re-resolved through the
+states captured at hit time (`HitTarget.inputs`), so a captured target keeps
+delivering to its coroutine across mid-gesture chain reshuffles. -/
 def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset)
     (scrollRemaining : Option (IO.Ref Offset) := none)
     (stealSlot : Option (IO.Ref (Option Nat)) := none) : IO Unit := do
@@ -130,7 +149,22 @@ def HitTarget.deliver (t : HitTarget) (ev : PointerEvent) (rootPos : Offset)
   -- Innermost element first (bubbling starts at the leaf-most handler).
   for i in [0:t.elems.size] do
     let consumed ← ev.isConsumed
-    let idx := t.elems[t.elems.size - 1 - i]!
+    let recorded := t.elems[t.elems.size - 1 - i]!
+    -- Re-resolve a `pointerInput` index through the state captured at hit
+    -- time: a chain reshuffle mid-gesture moved the element, and the state's
+    -- live `elemIdx` tracks it (reconcile). Only a live association is
+    -- followed — the element at the live index must still carry this state's
+    -- key, so a cancelled state's stale index cannot hijack delivery; a
+    -- replaced element (key change) falls back to the recorded index, where
+    -- the relaunched state receives positionally as before.
+    let idx ← match t.inputs.find? (·.1 == recorded) with
+      | some (_, st) => do
+        let liveIdx ← st.elemIdx.get
+        match d.modifier.elems[liveIdx]? with
+        | some (.pointer (.input key _ _)) =>
+          pure (if key == st.key then liveIdx else recorded)
+        | _ => pure recorded
+      | none => pure recorded
     let offset := (d.resolvedDraws.find? (·.elemIdx == idx)).map (·.offset.toOffset) |>.getD .zero
     let localPos := rootPos - origin - offset
     match d.modifier.elems[idx]? with

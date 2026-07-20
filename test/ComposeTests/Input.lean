@@ -732,6 +732,33 @@ private def pointerInputLifecycle : IO Unit := do
   r.settle
   check "lifecycle: cancelled on leave-composition" (← j1.isCancelled)
 
+/-- A conditional modifier toggling mid-gesture reshuffles the chain (the
+`pointerInput`'s `elemIdx` moves), but the press-time capture must keep
+delivering to the same coroutine: the release still arrives — by state
+identity, not by the stale chain index — so pressed state cannot latch. -/
+private def capturedChainReshuffle : IO Unit := do
+  let log ← IO.mkRef (#[] : Array String)
+  let deco ← MutableState.create false
+  let r ← rig <| Tests.restartable 1 do
+    let m := Modifier.size 40 40
+    let m := if ← deco.get then m.background .red else m
+    leaf (m.pointerInput 1 (logEvents log "h" (only := [.press, .release])))
+  let _ ← r.im.pointerEvent (pressAt 5 5)
+  checkEq "reshuffle: press received" (← log.get) #["h:press"]
+  -- Toggle the decoration mid-press: the pointerInput element's chain index
+  -- shifts (reconcile keeps the coroutine, updating its live elemIdx).
+  deco.set true
+  r.settle
+  let _ ← r.im.pointerEvent (releaseAt 5 5)
+  checkEq "reshuffle: release reaches the captured coroutine"
+    (← log.get) #["h:press", "h:release"]
+  -- And the reshuffled chain keeps working for the next gesture.
+  log.set #[]
+  let _ ← r.im.pointerEvent (pressAt 5 5)
+  let _ ← r.im.pointerEvent (releaseAt 5 5)
+  checkEq "reshuffle: next gesture delivers normally"
+    (← log.get) #["h:press", "h:release"]
+
 /-- Composing a `pointerInput` without an ambient scheduler throws (clear
 misuse signal, like `LaunchedEffect`). -/
 private def missingScheduler : IO Unit := do
@@ -1837,6 +1864,7 @@ def run : IO Unit := do
   touchTapFocus
   mouseAndFingerCoexist
   pointerInputLifecycle
+  capturedChainReshuffle
   missingScheduler
   raceSemantics
   sdlTranslation

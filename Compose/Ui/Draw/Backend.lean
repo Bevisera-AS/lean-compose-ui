@@ -45,6 +45,14 @@ structure RenderBackend where
   (the live-resize watch's constraint). Returns whether a frame was actually
   presented; `false` re-arms the caller's dirty flag. -/
   render : (clear : Color) → (list : DisplayList) → (mayBlock : Bool) → IO Bool
+  /-- Render `list` at `w × h` render-target pixels and read the result back
+  as tightly packed straight-alpha **RGBA8**, top row first (`w * h * 4`
+  bytes) — the capture path (`COMPOSE_SCREENSHOT`, `COMPOSE_CAPTURE`). Both
+  backends normalize the channel order, so callers never see the GPU
+  swapchain's native BGRA. Nothing is presented: a capture leaves the screen
+  alone. A full device round-trip per call — for captures and tests, never
+  the frame loop. -/
+  capture : (clear : Color) → (list : DisplayList) → (w h : Nat) → IO ByteArray
   /-- Window coordinates → render-target (layout-pixel) coordinates. -/
   coordinatesFromWindow : Float32 → Float32 → IO (Float32 × Float32)
   /-- Best-effort vsync control (the multi-window single-pacer election);

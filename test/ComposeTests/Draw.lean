@@ -31,6 +31,26 @@ private def clearBlack (ren : Sdl.Renderer) : IO Unit := do
   ren.setDrawColor 0 0 0 255
   ren.clear
 
+/-- `RenderBackend.capture` contract: exactly `w × h × 4` bytes, tightly packed
+straight-alpha RGBA8 with the top row first — regardless of the backend's
+native readback order (the GPU side swizzles its BGRA swapchain into the same
+layout; gpu-probe covers that half). This is what `COMPOSE_CAPTURE` streams to
+ffmpeg, so a channel-order or stride regression here is a silently wrong GIF. -/
+private def backendCapture : IO Unit := do
+  let ren ← mkRen 32 16
+  let backend ← SdlBackend.create ren
+  let (list, _) ← DrawScope.record {} do
+    drawRect (.solid Color.red) ⟨0, 0⟩ ⟨16, 16⟩
+  let bytes ← backend.capture Color.blue list 32 16
+  checkEq "capture: tightly packed, w × h × 4 bytes" bytes.size (32 * 16 * 4)
+  let px (x y : Nat) : Array UInt8 :=
+    let o := (y * 32 + x) * 4
+    #[bytes[o]!, bytes[o + 1]!, bytes[o + 2]!, bytes[o + 3]!]
+  -- (4,4) is inside the red rect, (24,4) is bare clear color: both pin the
+  -- channel order, and together they pin the row stride and top-down order.
+  checkEq "capture: RGBA channel order" (px 4 4) #[255, 0, 0, 255]
+  checkEq "capture: clear color fills the rest" (px 24 4) #[0, 0, 255, 255]
+
 /-- Text run-origin snapping (M-j): a run drawn at a fractional origin renders
 byte-identically to the same run at the shared `snapTextOrigin` result
 (⟨15.4, 20.6⟩ → ⟨15, 21⟩) — the cross-backend invariant whose GPU side
@@ -289,5 +309,8 @@ def run : IO Unit := do
 
   -- 13. backend error hygiene (target/clip/pool restore across throws)
   errorRestore
+
+  -- 14. RenderBackend.capture readback contract
+  backendCapture
 
 end Tests.Draw

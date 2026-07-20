@@ -343,6 +343,19 @@ def create (renderer : Renderer) : IO RenderBackend := do
       execute renderer list images
       renderer.present
       return true
+    capture := fun clear list w h => do
+      let (cr, cg, cb, ca) := clear.toBytes
+      renderer.setDrawColor cr cg cb ca
+      renderer.clear
+      execute renderer list images
+      -- No `present`: the backbuffer is read straight back (the software
+      -- renderer's target persists), so a capture never flashes the window.
+      let shot ← renderer.readPixels
+        (some ⟨0, 0, Int32.ofNat w, Int32.ofNat h⟩)
+      let rgba ←
+        if (← shot.format) == Sdl.PixelFormat.rgba32 then pure shot
+        else shot.convert Sdl.PixelFormat.rgba32
+      rgba.getPixels
     coordinatesFromWindow := fun x y => renderer.coordinatesFromWindow x y
     setVSync := fun target => renderer.setVSync target
     sdlRenderer? := some renderer

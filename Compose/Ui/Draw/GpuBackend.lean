@@ -40,6 +40,18 @@ private def applyVSync (dev : Sdl.Gpu.Device) (window : Sdl.Window)
       pure Sdl.Gpu.PresentMode.vsync
   dev.setSwapchainParameters window .sdr mode
 
+/-- Swap the R and B channels of tightly packed 4-byte pixels, in place where
+the array is uniquely referenced — the swapchain's native `b8g8r8a8Unorm`
+readback normalized to the `RenderBackend.capture` contract (RGBA8). -/
+private def bgraToRgba (bytes : ByteArray) : ByteArray := Id.run do
+  let mut out := bytes
+  for i in [0:bytes.size / 4] do
+    let o := i * 4
+    let b := out.get! o
+    let r := out.get! (o + 2)
+    out := (out.set! o r).set! (o + 2) b
+  return out
+
 /-- Claim `window` for the shared GPU device and package the GPU renderer as
 its `RenderBackend`. Throws when no GPU backend exists (dummy driver). -/
 def create (window : Sdl.Window) : IO RenderBackend := do
@@ -50,10 +62,16 @@ def create (window : Sdl.Window) : IO RenderBackend := do
     s!"Compose GPU backend: driver {← dev.getDriver}, shader formats {(← dev.getShaderFormats).val}")
   dev.claimWindow window
   let renderer ← Gpu.GpuRenderer.create dev window
+  -- Stable for the lifetime of the claim, so the capture path resolves the
+  -- channel order once rather than per frame.
+  let bgra := (← dev.getSwapchainTextureFormat window) == .b8g8r8a8Unorm
   return {
     kind := .gpu
     createTextEngine := Sdl.Ttf.createGpuTextEngine dev
     render := fun clear list mayBlock => renderer.render clear list mayBlock
+    capture := fun clear list w h => do
+      let bytes ← renderer.renderOffscreen clear list w h
+      return if bgra then bgraToRgba bytes else bytes
     coordinatesFromWindow := fun x y => do
       -- Window coordinates → device px (the swapchain is always pixel-sized).
       let scale ← window.pixelDensity

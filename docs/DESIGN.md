@@ -628,6 +628,16 @@ contexts). The loop (power-friendly, dirty-driven):
 5. Honor `COMPOSE_MAX_FRAMES` env var (headless CI smoke, mirroring
    lean-sdl3's `SDL_LEAN_MAX_FRAMES`).
 
+Capture modes short-circuit the loop entirely. `COMPOSE_SCREENSHOT=<path>`
+dumps one settled frame (SDL backend, software renderer, BMP).
+`COMPOSE_CAPTURE=<path>` records raw RGBA8 frames
+(`COMPOSE_CAPTURE_FRAMES`/`COMPOSE_CAPTURE_FPS`; `scripts/capture-gif.sh`
+packs a GIF with ffmpeg) on a **virtual clock** stepped by exactly `1/fps`
+per frame — deterministic regardless of readback speed — reading back through
+`RenderBackend.capture`, which renders off-screen and presents nothing.
+Unlike the screenshot path it honors the configured backend, so
+`COMPOSE_BACKEND=gpu` captures the GPU renderer's real output.
+
 Live resize: macOS/Windows run a modal loop *inside* step 1's pump, freezing
 the app until mouse-up. An SDL event watch (armed only while the loop is
 parked in the pump) runs steps 3–4 synchronously from within it — once per

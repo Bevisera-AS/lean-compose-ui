@@ -334,15 +334,20 @@ def initVideo : IO Unit := do
 user event), root node, and composition for `content`, wiring both
 invalidation hooks to the window's `needsFrame` flag — everything `step`
 needs, without entering the loop. `width`/`height` are `Dp` (sized in window
-coordinates via `windowCoordSize`). Main thread only. -/
+coordinates via `windowCoordSize`). Main thread only.
+
+`clock` is the scheduler's time source (default: real time); `captureFrames`
+substitutes a manually stepped ref. An overriding caller must also drive the
+scheduler itself — `step` reads real time. -/
 def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
-    (config : AppConfig := {}) : IO WindowContext := do
+    (config : AppConfig := {}) (clock : IO UInt64 := Sdl.getTicksNS) :
+    IO WindowContext := do
   initVideo
   let some wakeEvent ← Sdl.registerEvents 1
     | throw (IO.userError "Compose: SDL_RegisterEvents exhausted user event types")
   let scheduler ← Scheduler.create
     (wake := do let _ ← Sdl.pushUserEvent wakeEvent; pure ())
-    (clock := Sdl.getTicksNS)
+    (clock := clock)
   bootstrapWindow scheduler wakeEvent title width height content config
 
 /-- Handle one app-lifecycle transition for a window: maintain the `paused`
@@ -480,16 +485,14 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     -- Input and everything else: M6's hook.
     let _ ← (← ctx.inputSink.get) event
 
-/-- Render one frame (step 4): drain recompositions, remeasure the tree with
-window-pixel constraints at the current density, record the draw walk into a
-display list, and hand it to the window's backend (clear → execute →
-present). The `needsFrame` flag is consumed *before* draining so writes
-raised by effects during the drain schedule the next frame instead of being
-lost. `mayBlock := false` (the live-resize watch's fallback) forbids the
-backend from waiting on swapchain availability; a skipped frame re-arms
-`needsFrame`. -/
-def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := true) :
-    IO Unit := do
+/-- Bring the frame up to date and record it: drain recompositions, remeasure
+the tree with window-pixel constraints at the current density, service a
+pending bring-into-view, and record the draw walk into a display list. The
+`needsFrame` flag is consumed *before* draining so writes raised by effects
+during the drain schedule the next frame instead of being lost. Everything
+`renderFrame` does except handing the list to a backend — which is what lets
+`captureFrames` reuse the frame pipeline without presenting. -/
+def recordFrame (ctx : WindowContext) : IO DisplayList := do
   ctx.needsFrame.set false
   (← ctx.composition).drain
   let density ← ctx.density
@@ -505,6 +508,15 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := t
       if let some n ← fm.focused then
         n.bringIntoView ctx.scheduler
   let (list, _) ← DrawScope.record density ctx.root.drawTree
+  return list
+
+/-- Render one frame (step 4): `recordFrame`, then hand the list to the
+window's backend (clear → execute → present). `mayBlock := false` (the
+live-resize watch's fallback) forbids the backend from waiting on swapchain
+availability; a skipped frame re-arms `needsFrame`. -/
+def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := true) :
+    IO Unit := do
+  let list ← recordFrame ctx
   -- A backend render can throw *transiently*: the Vulkan swapchain acquire
   -- fails (the lean-sdl3 binding throws) while Android recreates the surface
   -- behind a resume or rotation. Log, keep the frame requested, and retry;
@@ -807,18 +819,82 @@ def captureScreenshot (title : String) (width height : Dp)
   (← (← ctx.sdlRenderer).readPixels).saveBMP path
   (← ctx.composition).dispose
 
+/-- Frames per second of *virtual* time a capture records at when
+`COMPOSE_CAPTURE_FPS` is unset. -/
+def captureDefaultFps : Nat := 20
+
+/-- Frames a capture records when `COMPOSE_CAPTURE_FRAMES` is unset (three
+seconds at `captureDefaultFps`). -/
+def captureDefaultFrames : Nat := 60
+
+/-- Record `frames` frames of the app to `path` as raw straight-alpha RGBA8
+(`width × height × 4` bytes per frame, top row first, no header) instead of
+entering the event loop — the animated-screenshot pipeline
+(`COMPOSE_CAPTURE=<path>`; `scripts/capture-gif.sh` packs the result with
+ffmpeg). Time is **virtual**: the scheduler runs on a clock stepped by
+exactly `1/fps` per frame (as `Compose.Test`'s `advanceTimeBy` does), so a
+capture is reproducible regardless of readback speed. The pre-roll settles
+effects and layout at *t = 0*, so frame 1 is the settled initial state.
+Unlike `captureScreenshot` this honors the configured backend, and
+`RenderBackend.capture` presents nothing — the window stays untouched. Main
+thread only. -/
+def captureFrames (title : String) (width height : Dp)
+    (content : Composable Unit) (config : AppConfig) (path : String)
+    (frames : Nat := captureDefaultFrames) (fps : Nat := captureDefaultFps) :
+    IO Unit := do
+  -- The software renderer keeps SDL-backend readbacks stable; it is inert
+  -- under the GPU backend, so this is safe to pin either way. `backend` is
+  -- deliberately left alone — that is the knob being captured.
+  let capCfg := { config with rendererName := some Sdl.softwareRenderer, vsync := false }
+  let clockRef ← IO.mkRef (0 : UInt64)
+  let ctx ← bootstrap title width height content capCfg (clock := clockRef.get)
+  -- Pre-roll at t = 0: drain effects and settle layout without ticking the
+  -- frame clock, so nothing animates before the first recorded frame.
+  for _ in [0:screenshotSettlePasses] do
+    ctx.scheduler.runDue 0
+    if ← ctx.needsFrame.get then
+      let _ ← recordFrame ctx
+  let (pw, ph) ← ctx.window.getSizeInPixels
+  let (w, h) := (pw.toNatClampNeg, ph.toNatClampNeg)
+  -- The wrapper script needs the pixel size to hand ffmpeg, and only the
+  -- window knows it (Dp × display scale).
+  IO.println s!"COMPOSE_CAPTURE_INFO width={w} height={h} frames={frames} fps={fps} \
+backend={repr ctx.backend.kind}"
+  let dtNs : UInt64 := 1_000_000_000 / UInt64.ofNat (max 1 fps)
+  let out ← IO.FS.Handle.mk path .write
+  let mut now : UInt64 := 0
+  for _ in [0:frames] do
+    now := now + dtNs
+    clockRef.set now
+    ctx.scheduler.runDue now
+    -- Unconditional: `awaitFrame` subscribers must see every frame's nanos,
+    -- and a tick is what makes the next one due.
+    ctx.scheduler.tickFrame now
+    out.write (← ctx.backend.capture capCfg.clearColor (← recordFrame ctx) w h)
+  (← ctx.composition).dispose
+  ctx.backend.dispose
+
 /-- Run a Compose application: create the window (`width`/`height` in `Dp`),
 compose `content`, and drive the dirty-driven event loop until quit. Honors
 `COMPOSE_MAX_FRAMES=<n>` (exit 0 after n loop passes — headless CI,
 mirroring lean-sdl3's `SDL_LEAN_MAX_FRAMES`; passes, not presented frames,
 so fully static demos terminate too) and `COMPOSE_SCREENSHOT=<path>` (dump
 the settled frame to a BMP and exit — see `captureScreenshot`). Call from
-`main` (main thread only).
+`main` (main thread only). `COMPOSE_CAPTURE=<path>` (with optional
+`COMPOSE_CAPTURE_FRAMES`/`COMPOSE_CAPTURE_FPS`) records an animation instead —
+see `captureFrames`.
 Mirrors `androidx.compose.ui.window.singleWindowApplication`. -/
 def runApp (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) : IO UInt32 := do
   if let some path ← IO.getEnv "COMPOSE_SCREENSHOT" then
     captureScreenshot title width height content config path
+    return 0
+  if let some path ← IO.getEnv "COMPOSE_CAPTURE" then
+    let frames := ((← IO.getEnv "COMPOSE_CAPTURE_FRAMES").bind (·.toNat?)).getD
+      captureDefaultFrames
+    let fps := ((← IO.getEnv "COMPOSE_CAPTURE_FPS").bind (·.toNat?)).getD
+      captureDefaultFps
+    captureFrames title width height content config path frames fps
     return 0
   let ctx ← bootstrap title width height content config
   let wid ← ctx.window.id

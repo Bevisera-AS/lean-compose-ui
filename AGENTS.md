@@ -40,6 +40,12 @@ material). `Compose/Runtime/SlotVal.lean` is the only module allowed to use
 - GPU smoke (real driver, local-only): `scripts/smoke-gpu.sh` — Metal/MSL
   pass plus a SPIR-V pass over MoltenVK (`COMPOSE_GPU_DRIVER=vulkan` forces
   the driver; skipped where no Vulkan loader exists)
+- screenshots: `COMPOSE_SCREENSHOT=<path.bmp>` dumps one settled frame (SDL
+  backend, headless); animated ones are `scripts/capture-gif.sh <demo-exe>
+  <out.gif> [frames] [fps] [width]`, which records on a virtual clock through
+  `COMPOSE_CAPTURE` and packs the frames with ffmpeg. Defaults to the GPU
+  backend (real driver, local-only, a window flashes); `COMPOSE_BACKEND=sdl`
+  runs it headless. Deterministic — a re-run reproduces the same file.
 - shader regen: after editing `shaders/*` run `scripts/gen-shaders.sh`
   (glslc + spirv-val → `Gpu/SpirvBlobs.lean`; stale blobs fail `lake build`
   via `include_str` pins)

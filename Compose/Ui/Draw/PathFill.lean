@@ -63,9 +63,19 @@ private structure SweepEdge where
   clipSrc : Bool := false
   deriving Inhabited
 
-/-- The edge's x at height `y` (callers keep `y` within `[a.y, b.y]`). -/
+/-- The edge's x at height `y`, with `y` clamped into `[a.y, b.y]`: the
+ε-dedup in `eventYs` can swallow an endpoint event, and an *unclamped*
+near-horizontal edge queried ε past its endpoint would extrapolate a
+trapezoid vertex several px outside the geometry. -/
 private def SweepEdge.xAt (e : SweepEdge) (y : Float32) : Float32 :=
+  let y := min (max y e.a.y) e.b.y
   e.a.x + (y - e.a.y) / (e.b.y - e.a.y) * (e.b.x - e.a.x)
+
+-- Clamping: a near-horizontal edge queried past an endpoint (an ε-swallowed
+-- event y) stays at the endpoint's x instead of extrapolating far outside.
+#guard SweepEdge.xAt { a := ⟨0, 0⟩, b := ⟨100, 1⟩, w := 1 } 1.5 == 100
+#guard SweepEdge.xAt { a := ⟨0, 0⟩, b := ⟨100, 1⟩, w := 1 } (-0.5) == 0
+#guard SweepEdge.xAt { a := ⟨0, 0⟩, b := ⟨100, 1⟩, w := 1 } 0.5 == 50
 
 /-- Non-horizontal edges of closed contours, y-sorted per edge. Horizontal
 segments carry no winding (the feather pass still anti-aliases them). -/

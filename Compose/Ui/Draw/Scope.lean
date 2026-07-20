@@ -308,10 +308,16 @@ def clipPath (path : Path) (body : DrawM α) : DrawM α := do
     (fun c => { c with clipPathShape := some (path.translate ctx.translation) })
     body
 
-/-- Translate the coordinate system by `o` for the duration of `body`. Mirrors
+/-- Translate the coordinate system by `o` for the duration of `body`. The
+local-frame `clipShape` re-localizes by `−o` so it keeps describing the same
+screen region in the *new* frame (shape-aware draws pair it with their own
+local coordinates — the `circleFillClipped` invariant); the target-frame clip
+state (`clip`/`clipPathShape`/`rounded`) needs no adjustment. Mirrors
 `DrawScope.translate`. -/
 def translate (o : Offset) (body : DrawM α) : DrawM α :=
-  withReader (fun c => { c with translation := c.translation + o }) body
+  withReader (fun c => { c with
+    translation := c.translation + o
+    clipShape := c.clipShape.map (·.translate (-o)) }) body
 
 /-- Multiply the layer alpha by `a` for the duration of `body` (folded into
 every draw's output alpha). Mirrors `DrawScope.alpha` / a graphics-layer alpha. -/

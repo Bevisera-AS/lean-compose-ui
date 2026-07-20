@@ -71,6 +71,17 @@ private def ambientState : IO Unit := do
     [ "rect @(100,0) clip=(100,0,140,40) rounded=rr(100,0,140,40)r8 #0000ffff tl=(0,0) sz=40x40"
     , "shape @(100,0) clip=(100,0,140,40) rounded=rr(100,0,140,40)r8 \
        circleFillClipped c=(20,20) r=30 rr(0,0,40,40)r8 #ff0000ff" ]
+  -- A `translate` between `clipRoundRect` and a shape-aware draw re-localizes
+  -- the record-time clip shape: `circleFillClipped` pairs its center and rrect
+  -- in the SAME (innermost) frame, so the clip lands where the rounded clip
+  -- is on screen — not offset by the translation.
+  let l ← rec do
+    DrawScope.clipRoundRect (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) do
+      DrawScope.translate ⟨5, 10⟩ do
+        DrawScope.drawCircle (.solid .red) ⟨10, 10⟩ 6
+  checkBriefs "translate re-localizes the rounded clip shape" l
+    [ "shape @(5,10) clip=(0,0,40,40) rounded=rr(0,0,40,40)r8 \
+       circleFillClipped c=(10,10) r=6 rr(-5,-10,35,30)r8 #ff0000ff" ]
 
 private def layersAndShadows : IO Unit := do
   -- `withLayer` records a layer primitive wrapping its content, bounds in

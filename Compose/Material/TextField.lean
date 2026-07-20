@@ -695,17 +695,20 @@ composable def ValueTextField (value : TextFieldValue)
     let selectWord (pos : Offset) : IO TextRange := do
       doEdit (.selectWord (← hitCaret pos))
       return (← valueRef.get).selection
-    -- Handle drag: map the finger's window x back into the element (the
-    -- anchors carry the inner clip's window x; `hitCaret` re-adds pad and
-    -- scroll), run the pure drag math, keep the grabbed role across
-    -- crossings. The dragged end is `active`, so the field's caret
-    -- auto-scroll follows the finger for free.
+    -- Handle drag: map the finger's window x back into the element through
+    -- the field's *true* window origin (`chromePos`, recorded by the draw
+    -- pass while chrome is up; `hitCaret` re-adds pad and scroll), run the
+    -- pure drag math, keep the grabbed role across crossings. NOT via the
+    -- published `clipLeft`: that edge is intersected with the ambient clip,
+    -- so an enclosing container cutting the field's left edge would offset
+    -- every drag by the cut amount. The dragged end is `active`, so the
+    -- field's caret auto-scroll follows the finger for free.
     let handleGrab (h : SelectionHandle) : IO Unit := do
       dragHandleRef.set h
       chromeStep (.handleGrab h)
     let handleDragTo (winX : Float32) : IO Unit := do
-      if let some a ← chromeAnchors.get then
-        let off ← hitCaret ⟨winX - (a.clipLeft - density.dpToPx contentPadDp), 0⟩
+      if let some (baseX, _) ← chromePos.get then
+        let off ← hitCaret ⟨winX - baseX, 0⟩
         let v ← valueRef.get
         let (sel', h') := (← dragHandleRef.get).dragSelection v.text v.selection off
         dragHandleRef.set h'

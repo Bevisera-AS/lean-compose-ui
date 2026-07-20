@@ -469,6 +469,46 @@ private def touchChromeEdges : IO Unit := do
   check "chrome edges: the scrolled-out start handle is suppressed"
     (!near (← r2.pixel 20 42) L.primary)
 
+/-- Handle drags under an enclosing clip that cuts the field's *left* edge
+(a horizontally scrolled container): the drag's window x must map back into
+the element through the field's true origin — regression: `handleDragTo`
+reconstructed the origin from the published `clipLeft`, which is
+intersected with the ambient clip, so every drag was offset by the amount
+the clip cut away. -/
+private def touchClippedHandleDrag : IO Unit := do
+  let text := "hello world"
+  let value ← MutableState.create ({ text, selection := .caret 0 } : TextFieldValue)
+  let st ← ScrollState.create
+  let r ← tboot <| Tests.restartable 1 do
+    Box (modifier := Modifier.width 150 |>.horizontalScroll st) do
+      let v ← value.get
+      ValueTextField v value.set (modifier := Modifier.width 240)
+  -- Scroll the container 30 px right: the field's left edge (and the first
+  -- ~2 glyphs) is cut by the container clip.
+  r.pump
+  st.scrollTo 30
+  r.pump
+  checkEq "clipped drag: premise — the container is scrolled" (← st.value) 30
+  -- Long-press "world" (window x = field-local x − 30): selects it.
+  let x7 ← caretScreenX r text 7
+  r.fingerDown (x7 - 30 + 1) 20
+  r.tick 600
+  r.fingerUp (x7 - 30 + 1) 20
+  r.pump
+  r.pump
+  checkEq "clipped drag: long-press selects the word" (← value.get)
+    (⟨text, ⟨6, 11⟩, none⟩)
+  -- Grab the end handle (tip at the selection end, circle center +12) and
+  -- drag it to the byte-8 boundary: the selection must land exactly there.
+  let x11 ← caretScreenX r text 11
+  let x8 ← caretScreenX r text 8
+  r.fingerDown (x11 - 30 + 12) 42
+  r.fingerMove (x8 - 30 + 1) 42
+  checkEq "clipped drag: handle drag maps through the field's true origin"
+    (← value.get) (⟨text, ⟨6, 8⟩, none⟩)
+  r.fingerUp (x8 - 30 + 1) 42
+  r.pump
+
 /-- Touch selection chrome, toolbar half: the settling finger raises the
 Cut/Copy/Paste toolbar over the selection — *below* it when the field sits
 at the window top (the `preferAbove` fallback), above it otherwise (proved
@@ -1188,6 +1228,7 @@ def run : IO Unit := do
   touchSelectionHandles
   touchSelectionToolbar
   touchChromeEdges
+  touchClippedHandleDrag
   emojiFallbackRenders
   imeSyncHook
   clipboardOps

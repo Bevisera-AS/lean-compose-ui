@@ -126,8 +126,8 @@ private def block (w h : Dp) (c : Compose.Color) : Composable Unit :=
 
 /-! ## Scroll -/
 
-/-- Wheel scrolls (50 px per notch), clamps at both ends, and actually
-shifts the drawn content. -/
+/-- Wheel scrolls (50 dp per notch — 50 px at this rig's 1× density), clamps
+at both ends, and actually shifts the drawn content. -/
 private def scrollWheel : IO Unit := do
   let st ← ScrollState.create
   let r ← oboot <| Column (modifier := Modifier.size 100 100 |>.verticalScroll st) do

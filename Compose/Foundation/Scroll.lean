@@ -37,7 +37,8 @@ a scroll-position write re-lays out exactly the scrolled node (cheap: the
 content's cached measurement short-circuits) — the placement-read idiom of
 Compose's `ScrollingLayoutNode`. Content/viewport changes re-clamp the value.
 
-Wheel events over the container scroll by `wheelScrollStep` px per notch;
+Wheel events over the container scroll by `wheelScrollStep` (dp, resolved
+through the container's density) per notch;
 each container consumes only its own axis and only what it could actually
 move, so a diagonal wheel event splits between nested horizontal + vertical
 containers and end-stopped remainders bubble to outer scrollables.
@@ -58,9 +59,11 @@ what it leaves, so deeper nests cascade. A consumed gesture that publishes
 nothing (a slider) still stands outer containers off entirely.
 -/
 
-/-- Pixels scrolled per mouse-wheel notch (the desktop-Compose-ish line
-step). -/
-def wheelScrollStep : Float32 := 50
+/-- Dp scrolled per mouse-wheel notch (the desktop-Compose-ish line step),
+resolved through the container's density like the drag slop — a notch covers
+the same visual distance at every scale (Compose Desktop scales its line
+step by density too). -/
+def wheelScrollStep : Dp := 50
 
 /-- Touch slop for drag-scrolling, dp (Android's `ViewConfiguration`
 default): a press that moves less than this along the scroll axis stays a
@@ -148,6 +151,10 @@ structure ScrollState where
   placement ignores it and the draw-time warp derives its damped intensity
   via `stretchIntensity` (written by the drag and `settleStretch`). -/
   overscrollState : MutableState Float32
+  /-- Density of the container's last measure (written by the scroll layout
+  block; `1` before it) — resolves `wheelScrollStep`, whose `onScroll`
+  handler has no other density source. Plain ref, not observable. -/
+  densityRef : IO.Ref Density
 
 instance : Nonempty ScrollState :=
   ⟨{ id := 0
@@ -156,7 +163,8 @@ instance : Nonempty ScrollState :=
      viewportSizeState := Classical.choice inferInstance
      contentSizeState := Classical.choice inferInstance
      mutationGen := Classical.choice inferInstance
-     overscrollState := Classical.choice inferInstance }⟩
+     overscrollState := Classical.choice inferInstance
+     densityRef := Classical.choice inferInstance }⟩
 
 namespace ScrollState
 
@@ -168,7 +176,8 @@ def create (initial : Float32 := 0) : IO ScrollState :=
            viewportSizeState := ← MutableState.create 0
            contentSizeState := ← MutableState.create 0
            mutationGen := ← IO.mkRef 0
-           overscrollState := ← MutableState.create 0 }
+           overscrollState := ← MutableState.create 0
+           densityRef := ← IO.mkRef {} }
 
 /-- Cancel any in-flight scroll animation and claim the mutation lock; returns
 the new generation the caller must keep matching to stay live (Compose's
@@ -373,7 +382,9 @@ constraints, metrics published, value re-clamped, content placed at
 `-value` on the axis. -/
 private def scrollLayoutBlock (state : ScrollState) (vertical : Bool)
     (mode : OverscrollMode) : CustomLayout :=
-  ⟨fun _ c measureInner => do
+  ⟨fun density c measureInner => do
+    -- Cache the ambient density for the wheel handler (`wheelScrollStep`).
+    state.densityRef.set density
     let innerC :=
       if vertical then { c with minHeight := 0, maxHeight := Constraints.infinity }
       else { c with minWidth := 0, maxWidth := Constraints.infinity }
@@ -419,8 +430,9 @@ private def scrollBringIntoViewResponder (state : ScrollState) (vertical : Bool)
     return (if vertical then (⟨0, shift⟩ : Offset) else ⟨shift, 0⟩,
             some (state.animateScrollTo target))⟩
 
-/-- The wheel handler shared by both axes: scroll by `wheelScrollStep` px per
-notch and consume this axis's delta iff movement actually happened — the
+/-- The wheel handler shared by both axes: scroll by `wheelScrollStep`
+(density-resolved) per notch and consume this axis's delta iff movement
+actually happened — the
 cross axis is untouched (a diagonal wheel event feeds the other axis's
 container), while an *end-stopped* scrollable consumes nothing and lets its
 axis bubble to an outer one (partial movement at the boundary still consumes
@@ -437,7 +449,8 @@ private def scrollWheelHandler (state : ScrollState) (vertical : Bool) :
   -- Wheels never rubber-band (AOSP skips edge effects for SOURCE_MOUSE);
   -- snapping also frees a bounce the interrupt just froze.
   if (← state.overscrollState.cell.get) != 0 then state.overscrollState.set 0
-  let moved ← state.scrollBy ((if vertical then -notches else notches) * wheelScrollStep)
+  let step := (← state.densityRef.get).dpToPx wheelScrollStep
+  let moved ← state.scrollBy ((if vertical then -notches else notches) * step)
   if moved == 0 then return .zero
   return if vertical then ⟨0, notches⟩ else ⟨notches, 0⟩
 

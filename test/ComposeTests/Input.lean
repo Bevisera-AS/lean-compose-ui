@@ -1588,6 +1588,24 @@ private def wheelNoBounce : IO Unit := do
   checkEq "wheel: snaps a standing band" (← st.overscroll) 0
   checkEq "wheel: and scrolls normally" (← st.value) 150
 
+/-- The wheel line step resolves through density like the drag slop: one
+notch at 2× covers 100 physical px — the same *visual* distance as 50 px at
+1× (Compose Desktop scales its line step by density). -/
+private def wheelStepDensityScaled : IO Unit := do
+  let st ← ScrollState.create
+  let (s, _) ← fakeSched
+  let root ← LayoutNode.create
+  let _ ← Composition.create (LayoutNode.applier root)
+    (CompositionLocalProvider LocalScheduler (some s) <| Box do
+      Box (modifier := Modifier.size 100 100 |>.verticalScroll st) do
+        leaf (Modifier.size 100 400))
+  -- 2× display: the same dp geometry, twice the pixels.
+  let _ ← root.remeasure { maxWidth := 400, maxHeight := 400 } { density := 2 }
+  let im ← InputManager.create root { set := fun _ => pure () } (sched := some s)
+  s.runDue 0
+  let _ ← im.pointerEvent (scrollAt 50 50 ⟨0, -1⟩)
+  checkEq "wheel density: one notch at 2x scrolls 100 physical px" (← st.value) 100
+
 /-! ## Overscroll stretch (the default mode) -/
 
 /-- Dragging past the start in stretch mode accumulates the *raw* pull 1:1
@@ -1840,6 +1858,7 @@ def run : IO Unit := do
   catchDuringBounce
   nestedBounceLandsOnOwner
   wheelNoBounce
+  wheelStepDensityScaled
   stretchDragAccumulates
   stretchReleaseSpringsBack
   stretchFlingAbsorb

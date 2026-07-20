@@ -349,6 +349,61 @@ def run : IO UInt32 := do
   compare "text fractional" gpuR bgra ren ⟨0, 0, 0, 1⟩ gpuListF sdlListF
     (meanTol := 0.5) (grossTol := 0.005)
 
+  -- Emoji under alpha: `.color` (COLRv0 Twemoji) glyphs tint white on the GPU
+  -- but must still fold the run color's own alpha AND the ambient alpha —
+  -- SDL_ttf applies the text alpha to color glyphs on both engines. (Before
+  -- the fold fix the GPU drew a translucent-color run's emoji fully opaque
+  -- and this scene failed.) Where the local SDL_ttf stack cannot rasterize
+  -- COLRv0 (the glyph would be an invisible advance, same probe as
+  -- `Fonts.emojiFontUsable`) the scene degrades to the bundled monochrome
+  -- fallback — `.alpha` emoji sequences, run-color alpha parity still pinned.
+  let usable := fun (path : String) => do
+    try
+      let f ← Sdl.Ttf.openFont path 16
+      if !(← f.hasGlyph '😀') then pure false else
+        let m ← f.glyphMetrics '😀'
+        pure (m.maxx - m.minx > 0 && m.maxy - m.miny > 0)
+    catch _ => pure false
+  let emojiPath? ← do
+    if ← usable "assets/fonts/TwemojiMozilla.ttf" then
+      pure (some "assets/fonts/TwemojiMozilla.ttf")
+    else if ← usable "assets/fonts/NotoEmoji-Regular.ttf" then
+      IO.println "  note: COLRv0 not drawable here — emoji scene uses the monochrome fallback"
+      pure (some "assets/fonts/NotoEmoji-Regular.ttf")
+    else
+      pure none
+  if let some emojiPath := emojiPath? then
+    -- `addFallbackFont` does not retain: `emojiFont` stays live in this scope.
+    let emojiFont ← Sdl.Ttf.openFont emojiPath 16
+    font.addFallbackFont emojiFont
+    let s := "hi 😀🎉"
+    let gpuEmoji ← gpuEngine.createText font s
+    let sdlEmoji ← sdlEngine.createText font s
+    let emojiBody (t : Sdl.Ttf.Text) : DrawM Unit := do
+      -- Translucent run color (the failing case pre-fix) …
+      DrawScope.drawText { text := t, string := s, color := Color.white.withAlpha 0.5 }
+        ⟨15, 25⟩
+      -- … and full-alpha color under ambient alpha (the `s.alpha` path).
+      DrawScope.withAlpha 0.5 do
+        DrawScope.drawText { text := t, string := s, color := .white } ⟨15, 65⟩
+    let (gpuListE, _) ← DrawScope.record {} (emojiBody gpuEmoji)
+    let (sdlListE, _) ← DrawScope.record {} (emojiBody sdlEmoji)
+    compare "emoji under alpha" gpuR bgra ren ⟨0, 0, 0, 1⟩ gpuListE sdlListE
+      (meanTol := 0.6) (grossTol := 0.006)
+    -- Anti-vacuity: blank-advance emoji would diff empty against empty. The
+    -- glyphs sit past the "hi " prefix — some of their pixels must be lit.
+    let bytes ← gpuR.renderOffscreen ⟨0, 0, 0, 1⟩ gpuListE W H
+    let mut lit := 0
+    for y in [25:48] do
+      for x in [40:130] do
+        let o := (y * W + x) * 4
+        if bytes.get! o > 40 || bytes.get! (o + 1) > 40 || bytes.get! (o + 2) > 40 then
+          lit := lit + 1
+    check s!"emoji glyphs marked the target ({lit} lit px)" (lit > 20)
+    font.removeFallbackFont emojiFont
+  else
+    IO.println "  skip: emoji under alpha (no drawable bundled emoji font)"
+
   let stats ← Compose.Draw.Gpu.frameStats.get
   IO.println s!"  last frame stats: {stats.brief}"
   check "frame stats populated" (stats.drawCalls > 0)

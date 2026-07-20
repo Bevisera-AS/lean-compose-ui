@@ -214,10 +214,14 @@ private def pushGlyphSeq (color : Color) (alpha : Float32) (origin : Offset)
   let n := seq.xy.size / 2
   if n == 0 || seq.indices.isEmpty then return st
   -- `.color` (emoji) atlases carry the pixel colors; tint white per SDL's
-  -- testgputext convention. `.alpha` (and `.sdf`) tint with the run color.
+  -- testgputext convention — but the run color's own alpha still folds in
+  -- (the SDL backend sets `c.a * st.alpha * extraAlpha` as the text alpha,
+  -- which SDL_ttf applies to color glyphs too). `.alpha` (and `.sdf`) tint
+  -- with the run color.
+  let a := color.a * alpha
   let vcolor := match seq.imageType with
-    | .color => Color.white.withAlpha alpha
-    | _ => color.withAlpha (color.a * alpha)
+    | .color => Color.white.withAlpha a
+    | _ => color.withAlpha a
   let base := st.glyphVertCount
   let first := st.glyphIdxCount
   let mut verts := st.glyphVerts
@@ -242,6 +246,19 @@ private def pushGlyphSeq (color : Color) (alpha : Float32) (origin : Offset)
     else
       return { st with cmds := st.cmds.push (.glyphs first seq.indices.size seq.atlas scissor) }
   | _ => return { st with cmds := st.cmds.push (.glyphs first seq.indices.size seq.atlas scissor) }
+
+-- A `.color` (emoji) sequence tints white but still folds the run color's own
+-- alpha with the folded prim alpha — `white.withAlpha (color.a * alpha)`, the
+-- exact fold the SDL backend applies to color glyphs; `.alpha` sequences tint
+-- with the full run color at the same alpha.
+#guard
+  let seq (t : Sdl.Ttf.ImageType) : ResolvedSeq :=
+    { atlas := 0, xy := ⟨#[0, 0]⟩, uv := ⟨#[0, 0]⟩, indices := #[0, 0, 0], imageType := t }
+  let run : Color := ⟨1, 0, 0, 0.5⟩          -- translucent run color
+  let emoji := pushGlyphSeq run 0.5 .zero none {} (seq .color)
+  let alpha := pushGlyphSeq run 0.5 .zero none {} (seq .alpha)
+  emoji.glyphVerts == packTexVertex .empty .zero .zero (Color.white.withAlpha 0.25)
+    && alpha.glyphVerts == packTexVertex .empty .zero .zero (run.withAlpha 0.25)
 
 /-- Append one image draw: a textured quad at `dst` with UVs covering the
 `src` fraction of the texture (the whole texture when `none`), the folded

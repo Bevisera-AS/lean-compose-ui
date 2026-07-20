@@ -258,6 +258,26 @@ private def scrollbarDrag : IO Unit := do
   r.settle
   check s!"scrollbar: track click above pages up ({← st.value})" ((← st.value) == 0)
 
+/-- A chorded right click mid-thumb-drag neither ends the drag nor eats the
+release: only the initiating button's release does. -/
+private def scrollbarDragButtonChord : IO Unit := do
+  let st ← ScrollState.create
+  let r ← oboot <| themed <| Box (modifier := Modifier.size 100 100 |>.background .white) do
+    Column (modifier := Modifier.fillMaxSize |>.verticalScroll st) (block 100 400 .white)
+    VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight)
+  r.settle
+  r.press 96 10
+  r.move 96 40
+  r.settle
+  checkEq "drag chord: dragging before the chord" (← st.value) 120
+  r.send (.mouseButtonDown ⟨0, ⟨0⟩, ⟨0⟩, .right, true, 1, 96, 40⟩)
+  r.send (.mouseButtonUp ⟨0, ⟨0⟩, ⟨0⟩, .right, false, 1, 96, 40⟩)
+  r.move 96 50
+  r.settle
+  checkEq "drag chord: the drag survives a foreign release" (← st.value) 160
+  r.release 96 50
+  r.settle
+
 /-- Auto-hide after ~1 s of scheduler time; hovering shows it again and
 widens the thumb to 8 dp. -/
 private def scrollbarAutoHide : IO Unit := do
@@ -807,6 +827,7 @@ def run : IO Unit := do
   scrollNested
   scrollbarGeometry
   scrollbarDrag
+  scrollbarDragButtonChord
   scrollbarAutoHide
   scrollbarNonScrollableDoesNotEat
   scrollbarFadedDoesNotEat

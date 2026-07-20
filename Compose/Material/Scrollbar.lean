@@ -87,7 +87,7 @@ private partial def scrollbarGesture (state : ScrollState) (vertical : Bool)
         -- Thumb drag: track-px travel maps onto the scrollable range.
         let travel := track - len
         let ratio := if travel ≤ 0 then 0 else maxVal / travel
-        drag pos v0 ratio
+        drag ev.button pos v0 ratio
       else
         -- Track click: page toward the click.
         let _ ← state.scrollBy (if pos < off then -viewport else viewport)
@@ -95,17 +95,20 @@ private partial def scrollbarGesture (state : ScrollState) (vertical : Bool)
 where
   /-- The main-axis coordinate of a local position. -/
   mainAxis (p : Offset) : Float32 := if vertical then p.y else p.x
-  /-- Follow one thumb drag until release/window-leave. -/
-  drag (p0 v0 ratio : Float32) : UiTask Unit := do
+  /-- Follow one thumb drag until the initiating `button`'s release (a
+  chorded other button's release passes through) or a window leave. -/
+  drag (button : Option Sdl.MouseButton) (p0 v0 ratio : Float32) : UiTask Unit := do
     let ev ← scope.awaitEvent
     match ev.eventType with
     | .move =>
       ev.consume
       state.scrollTo (v0 + (mainAxis ev.position - p0) * ratio)
-      drag p0 v0 ratio
-    | .release => ev.consume
+      drag button p0 v0 ratio
+    | .release =>
+      if ev.button == button then ev.consume
+      else drag button p0 v0 ratio
     | .exit => pure ()
-    | _ => drag p0 v0 ratio
+    | _ => drag button p0 v0 ratio
 
 /-- The axis-shared scrollbar body (see the module docstring); prefer the
 `VerticalScrollbar`/`HorizontalScrollbar` entry points. The strip is 8 dp

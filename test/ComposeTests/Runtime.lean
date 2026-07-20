@@ -854,6 +854,36 @@ def createDrainThrowDisposes : IO Unit := do
   check "createDrain: applier cleared" ((← t.takeLog).contains "clear")
   checkEq "createDrain: no unbalanced remembers" (← events.get) #["-x"]
 
+/-- A scope group missing from its parent's child list (corrupt tree) is
+reported loudly instead of silently re-running at applier position 0. -/
+def corruptTreeReported : IO Unit := do
+  let t ← TestTree.create
+  let capturedScope ← IO.mkRef (none : Option RecomposeScope)
+  -- Raw combinators so the test can hold on to the scope.
+  let capture : Composable Unit := fun c => do
+    let scope ← c.startRestartGroup 22
+    capturedScope.set (some scope)
+    (emitLabeled t "x").run c
+    c.endRestartGroup scope (pure ())
+  let comp ← Composition.create t.applier <| restartable 1 capture
+  checkEq "corrupt: initial tree" (← t.render) "(root x)"
+  match ← capturedScope.get with
+  | none => check "corrupt: captured scope" false
+  | some scope =>
+    match (← scope.group.data).parent with
+    | none => check "corrupt: scope group has a parent" false
+    | some p =>
+      -- Simulate the corruption: drop the scope's group from its parent's
+      -- children, then force a standalone re-run.
+      let gid := (← scope.group.data).gid
+      let mut keep := #[]
+      for ch in (← p.data).children do
+        unless (← ch.data).gid == gid do
+          keep := keep.push ch
+      p.modifyData fun d => { d with children := keep }
+      scope.invalidate
+      checkThrows "corrupt: missing child reported loudly" comp.drain
+
 /-- All Runtime suites. -/
 def run : IO Unit := do
   rememberSame
@@ -890,5 +920,6 @@ def run : IO Unit := do
   staleSpineCountsAfterAbort
   drainRequeuesRemainingOnThrow
   createDrainThrowDisposes
+  corruptTreeReported
 
 end Tests.Runtime

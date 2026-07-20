@@ -65,7 +65,8 @@ private partial def groupPath (g : Group) (acc : List Nat := []) : IO (List Nat)
   match (← g.data).parent with
   | none => return acc
   | some p =>
-    let idx := (← childIdx p (← g.data).gid).getD 0
+    let some idx ← childIdx p (← g.data).gid
+      | throw <| IO.userError "Compose: group missing from its parent's children (corrupt group tree)"
     groupPath p (idx :: acc)
 
 /-- Base applier index and node parent for composing at `g`: walks up the
@@ -77,7 +78,8 @@ private partial def locate (c : Composer) (g : Group) (acc : Nat := 0) :
   | none => return (acc, c.applier.root)
   | some p =>
     let pd ← p.data
-    let idx := (← childIdx p (← g.data).gid).getD 0
+    let some idx ← childIdx p (← g.data).gid
+      | throw <| IO.userError "Compose: group missing from its parent's children (corrupt group tree)"
     let mut acc' := acc
     for j in [0 : idx] do
       acc' := acc' + (← pd.children[j]!.data).nodes

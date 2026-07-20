@@ -343,10 +343,13 @@ partial def Prim.bounds : Prim → Option Rect
       match p.bounds with
       | none => return st.clip    -- unknown content extent
       | some b => acc := some ((acc.getD b).union b)
+    -- Empty content renders nothing: degenerate damage, regardless of any
+    -- effect/transform (there are no pixels for them to spread or map).
+    let some u := acc | return some .zero
     -- An effect spreads pixels in the texture (pre-transform); a composite
     -- transform then maps where they land (AABB of the mapped union); the
     -- enclosing clip still bounds the composite.
-    let u := (acc.getD .zero).inflate props.effect.spread
+    let u := u.inflate props.effect.spread
     return some (clipBounds st (match props.transform with
       | some t => t.mapRect u
       | none => u))
@@ -376,6 +379,12 @@ def DisplayList.bounds (list : DisplayList) : Option Rect := Id.run do
 -- A blur spreads the content union by 3σ + 1 (pre-transform).
 #guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { effect := .blur 4 }
           #[.rect {} .red ⟨15, 15⟩ ⟨20, 20⟩]).bounds == some ⟨2, 2, 48, 48⟩
+-- EMPTY layer content reports degenerate damage even under a blur: no
+-- phantom `±(3σ+1)` region inflated around the origin.
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { effect := .blur 4 } #[]).bounds == some .zero
+#guard (Prim.layer {} ⟨0, 0, 50, 50⟩
+          { transform := some (.translation ⟨5, 0⟩), effect := .blur 4 } #[]).bounds
+        == some .zero
 -- A stretch spreads nothing: damage is the content union.
 #guard (Prim.layer {} ⟨0, 0, 50, 50⟩ { effect := .stretch 0 0.03 }
           #[.rect {} .red ⟨15, 15⟩ ⟨20, 20⟩]).bounds == some ⟨15, 15, 35, 35⟩

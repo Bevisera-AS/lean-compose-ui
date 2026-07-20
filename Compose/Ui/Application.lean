@@ -37,7 +37,12 @@ needs a frame, scheduler deadline otherwise, idle cap else; idle = 0 % CPU.
 
 The application exits when no windows remain (the composition has settled at
 least once by construction — `bootstrapApplication` composes before the loop
-starts) or when the action returned by `exitApplication` runs.
+starts) or when the action returned by `exitApplication` runs. A per-window
+quit request (`WindowContext.requestQuit` — a `terminating` broadcast sets
+every window's, an unconsumed platform back key sets one) closes *that*
+window through its declarative latch, so an OS terminate tears every window
+down through the normal disposal effects and exits via the registry-empty
+rule.
 -/
 
 /-- One live window of a running application: the routing id, its context,
@@ -268,8 +273,11 @@ def applicationWakeTimeoutMs (app : ApplicationScope)
     return Int32.ofNat (min cap ((d - now) / 1_000_000 + 1)).toNat
 
 /-- One pass of the application loop: wait for events up to the computed
-deadline, dispatch them all by window id, run due coroutines, tick the
-shared frame clock if subscribed, drain the app composition when dirty
+deadline, dispatch them all by window id, close any window whose
+`quitRequested` is set (a `terminating` broadcast sets all, an unconsumed
+back key sets one — the multi-window reading of the single-window quit,
+which closes its only window), run due coroutines, tick the shared frame
+clock if subscribed, drain the app composition when dirty
 (creating/disposing windows through `Window` effects — main thread), and
 render every dirty window. Returns `true` iff any frame was presented. -/
 def stepApplication (app : ApplicationScope)
@@ -286,6 +294,18 @@ def stepApplication (app : ApplicationScope)
     match ← armedPump watch Sdl.pollEvent with
     | some e => dispatchApplicationEvent app e
     | none => break
+  -- Per-window quit requests (`WindowContext.requestQuit`): a `terminating`
+  -- broadcast sets every window's flag, an unconsumed platform back key sets
+  -- one. In application mode "quit" means *that window closes* — the
+  -- multi-window reading of the single-window loop's exit, which closes its
+  -- only window. Closing runs declaratively (the composable's closed latch),
+  -- so this same pass's drain runs the disposal effects, and the app exits
+  -- through the registry-empty rule once no window remains — teardown fits
+  -- the OS terminate budget instead of idling it away.
+  for e in ← app.windows.get do
+    if ← e.ctx.quitRequested.get then
+      e.close
+      app.dirty.set true
   if ← app.exitRequested.get then return false
   let now ← Sdl.getTicksNS
   app.scheduler.runDue now

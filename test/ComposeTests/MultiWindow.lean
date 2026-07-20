@@ -150,6 +150,34 @@ private def exitsWhenEmpty : IO Unit := do
   check "loop honors done" (← app.done)
   (← app.composition).dispose
 
+/-- Per-window quit requests are honored by the application loop: an
+unconsumed platform back key (`acBack`) closes the requesting window only,
+and a `terminating` broadcast (which sets every window's flag) closes them
+all — teardown runs through the `Window` disposal effects and the app is
+`done`, instead of the loop spinning out the OS teardown budget. -/
+private def perWindowQuitRequests : IO Unit := do
+  let app ← bootstrapApplication do
+    Window "q-a" 120 100 (config := cfg)
+    Window "q-b" 120 100 (config := cfg)
+  let _ ← stepApplication app (idleCapMs := 5)
+  let b ← entryTitled! app "q-b"
+  -- An unconsumed back key in B requests B's quit…
+  dispatchApplicationEvent app
+    (.keyDown ⟨0, b.id, ⟨0⟩, .unknown, .acBack, .none, 0, true, false⟩)
+  check "unconsumed back requests that window's quit" (← b.ctx.quitRequested.get)
+  -- …and the next pass closes exactly that window.
+  let _ ← stepApplication app (idleCapMs := 5)
+  checkEq "back closes the requesting window" (← app.windows.get).size 1
+  check "the sibling survives a window quit" (← entryTitled app "q-a").isSome
+  check "application keeps running with the sibling" (!(← app.done))
+  -- `terminating` broadcasts to every window; the next pass disposes them
+  -- all and the loop is done.
+  dispatchApplicationEvent app (.terminating ⟨0⟩)
+  let _ ← stepApplication app (idleCapMs := 5)
+  checkEq "terminating closes every window" (← app.windows.get).size 0
+  check "application is done after terminating" (← app.done)
+  (← app.composition).dispose
+
 /-- `exitApplication` hands content an exit action that stops the loop even
 with windows still open. -/
 private def explicitExit : IO Unit := do
@@ -367,6 +395,7 @@ def run : IO Unit := do
   closeRequestRouting
   stateDrivenCloseAndReopen
   exitsWhenEmpty
+  perWindowQuitRequests
   explicitExit
   dialogParentAndModal
   titleAndSizeFollowParams

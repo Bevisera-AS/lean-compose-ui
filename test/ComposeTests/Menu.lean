@@ -75,9 +75,50 @@ private def exposedMatchesFieldWidth : IO Unit := do
     check s!"exposed: row does not span the window (width {ib.width})"
       (ib.width < 320)
 
+/-- Keyboard-nav order tracks *visual* order when a conditional item
+toggles while the menu is open (regression: re-registration appended, so
+a re-entering middle item moved to the end of the nav order). -/
+private def conditionalItemOrder : IO Unit := do
+  let expanded ← MutableState.create false
+  let showB ← MutableState.create true
+  let picked ← IO.mkRef (#[] : Array String)
+  runComposeTest
+    (Tests.restartable 1 do
+      let isOpen ← expanded.get
+      Column (modifier := Modifier.fillMaxSize) do
+        Button (expanded.set true) (Text "Open")
+        DropdownMenu isOpen (onDismissRequest := expanded.set false) do
+          DropdownMenuItem "Alpha" (onClick := picked.modify (·.push "Alpha"))
+          match ← showB.get with
+          | true =>
+            keyed "B" (DropdownMenuItem "Beta"
+              (onClick := picked.modify (·.push "Beta")))
+          | false => keyed "noB" (pure ())
+          DropdownMenuItem "Gamma" (onClick := picked.modify (·.push "Gamma")))
+    do
+      click (.text "Open")
+      settle
+      -- Toggle the middle item off and back on while the menu is open.
+      showB.set false
+      settle
+      assertMissing (.text "Beta")
+      showB.set true
+      settle
+      assertExists (.text "Beta")
+      -- Deterministic start: hover Alpha (highlight follows hover), then
+      -- Down must land on the *visually next* item — Beta, not Gamma.
+      moveTo (.text "Alpha")
+      settle
+      pressKey .down
+      pressKey .return
+      settle
+      checkEq "menu order: keyboard nav follows visual order"
+        (← picked.get) #["Beta"]
+
 /-- The Menu group. -/
 def run : IO Unit := do
   scenario "dropdownWrapsWidestItem" dropdownWrapsWidestItem
   scenario "exposedMatchesFieldWidth" exposedMatchesFieldWidth
+  scenario "conditionalItemOrder" conditionalItemOrder
 
 end Tests.Menu

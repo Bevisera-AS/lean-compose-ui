@@ -45,11 +45,15 @@ their `androidx.compose.material3` namesakes on the M10 diet:
   click — enough for Flight Booker's combobox.
 -/
 
-/-- Shared state of one open menu: the registered items (in registration
-order) and the keyboard/hover-highlighted item id. -/
+/-- Shared state of one open menu: the registered items and the
+keyboard/hover-highlighted item id. Keyboard navigation walks the items in
+*visual* order (each row's captured window y, see `MenuState.ordered`) —
+registration order alone goes stale when a conditional item leaves and
+re-enters the composition while the menu is open (re-registration appends). -/
 structure MenuState where
-  /-- `(item id, current onClick)` per composed item. -/
-  items : IO.Ref (Array (Nat × IO.Ref (IO Unit)))
+  /-- `(item id, current onClick, captured window y of the row)` per
+  composed item, in registration order. -/
+  items : IO.Ref (Array (Nat × IO.Ref (IO Unit) × IO.Ref Float32))
   /-- The highlighted item's id (observable — items recompose on change). -/
   highlighted : MutableState (Option Nat)
 
@@ -63,27 +67,41 @@ namespace MenuState
 def create : IO MenuState :=
   return { items := ← IO.mkRef #[], highlighted := ← MutableState.create none }
 
-/-- Move the highlight by `delta` items (wrapping); from nothing, Down lands
-on the first item and Up on the last. -/
-def move (m : MenuState) (delta : Int) : IO Unit := do
+/-- The registered item ids in visual order: sorted by each row's captured
+window y, registration index breaking ties — so rows not yet positioned
+(first frame, y still 0) keep registration order, which equals composition
+order on a fresh menu. -/
+def ordered (m : MenuState) : IO (Array Nat) := do
   let items ← m.items.get
+  let mut keyed : Array (Float32 × Nat × Nat) := #[]   -- (y, reg idx, id)
+  for h : i in [0:items.size] do
+    let (id, _, yRef) := items[i]
+    keyed := keyed.push ((← yRef.get), i, id)
+  let sorted := keyed.qsort fun (y₁, i₁, _) (y₂, i₂, _) =>
+    y₁ < y₂ || (y₁ == y₂ && i₁ < i₂)
+  return sorted.map (·.2.2)
+
+/-- Move the highlight by `delta` items (wrapping, in visual order); from
+nothing, Down lands on the first item and Up on the last. -/
+def move (m : MenuState) (delta : Int) : IO Unit := do
+  let items ← m.ordered
   if items.isEmpty then return
   let n := items.size
   let cur ← m.highlighted.cell.get
   let idx ← match cur with
     | some id =>
-      match items.findIdx? (·.1 == id) with
+      match items.findIdx? (· == id) with
       | some i => pure (((((i : Int) + delta) % (n : Int) + (n : Int)) % (n : Int)).toNat)
       | none => pure (if delta ≥ 0 then 0 else n - 1)
     | none => pure (if delta ≥ 0 then 0 else n - 1)
   if h : idx < items.size then
-    m.highlighted.set (some items[idx].1)
+    m.highlighted.set (some items[idx])
 
 /-- Run the highlighted item's current action, if any. -/
 def activateHighlighted (m : MenuState) : IO Unit := do
   let some id ← m.highlighted.cell.get | return
   let items ← m.items.get
-  if let some (_, action) := items.find? (·.1 == id) then
+  if let some (_, action, _) := items.find? (·.1 == id) then
     (← action.get)
 
 end MenuState
@@ -195,10 +213,14 @@ composable def DropdownMenuItem (text : String) (onClick : IO Unit)
   let menu? ← LocalMenuState.current
   let id ← remember freshId
   let actionRef ← rememberUpdatedRef onClick
-  -- Register with the enclosing menu (composition order) for keyboard nav.
+  -- Register with the enclosing menu for keyboard nav. The row's window y
+  -- (captured below) — not the registration position — orders navigation:
+  -- a conditional item re-entering the composition while the menu is open
+  -- re-registers at the end of the array but keeps its visual slot.
+  let yRef ← remember (IO.mkRef (0.0 : Float32))
   DisposableEffect id do
     if let some menu := menu? then
-      menu.items.modify (·.push (id, actionRef))
+      menu.items.modify (·.push (id, actionRef, yRef))
     return do
       if let some menu := menu? then
         menu.items.modify (·.filter (·.1 != id))
@@ -212,6 +234,7 @@ composable def DropdownMenuItem (text : String) (onClick : IO Unit)
     | some menu => do pure ((← menu.highlighted.get) == some id)
     | none => pure false
   let m := modifier
+    |>.onGloballyPositioned (fun r => yRef.set r.top)
     |>.fillMaxWidth
     |>.sizeIn (minWidth := some 112) (minHeight := some 36)
     |>.semantics (role := some .menuItem)

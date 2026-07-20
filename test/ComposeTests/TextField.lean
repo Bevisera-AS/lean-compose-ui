@@ -742,6 +742,68 @@ private def typingEndToEnd : IO Unit := do
     checkEq "typing: consecutive events compose without recomposition"
       (← value.get) (⟨"hi!?", .caret 4, none⟩)
 
+/-- The controlled-rejection contract (see `ValueTextField`'s batching
+docs): optimism never leaks past its own frame drain. Within ONE drain the
+parent cannot veto between events, so a batch composes and is
+accepted/rejected wholesale; at the next drain the field re-syncs to the
+authoritative prop even when the rejecting parent echoed nothing
+(regression: the re-sync only ran when the parent happened to recompose
+the field, so rejected edits accumulated in the optimistic ref and
+resurrected under later keystrokes). -/
+private def rejectingParent : IO Unit := do
+  -- Digits-only parent: 'a' then '1' land in one drain — the batch
+  -- composes ("a", then "a1") and is rejected wholesale; the next drain's
+  -- '2' must apply to the value the parent actually holds.
+  let value ← MutableState.create ({} : TextFieldValue)
+  let calls ← IO.mkRef (#[] : Array TextFieldValue)
+  runComposeTest
+    (Tests.restartable 1 do
+      let v ← value.get
+      ValueTextField v
+        (fun v' => do
+          calls.modify (·.push v')
+          if v'.text.all (·.isDigit) then value.set v')
+        (modifier := Modifier.testTag "field"))
+    do
+      click (.tag "field")
+      awaitIdle
+      textInput "a"
+      textInput "1"        -- same drain: composes onto the rejected "a"
+      awaitIdle            -- the drain re-syncs to the authoritative ""
+      checkEq "reject: mixed batch rejected wholesale" (← value.get).text ""
+      textInput "2"
+      awaitIdle
+      checkEq "reject: a post-drain digit applies to the accepted value"
+        (← value.get).text "2"
+      checkEq "reject: reports compose within a batch, reset across drains"
+        ((← calls.get).map (·.text)) #["a", "a1", "2"]
+  -- Wholesale-rejecting (read-only) parent under key repeat: the prop
+  -- never changes, and every drain's edits must still start from it.
+  let ro ← MutableState.create
+    ({ text := "fix", selection := .caret 3 } : TextFieldValue)
+  let roCalls ← IO.mkRef (#[] : Array TextFieldValue)
+  runComposeTest
+    (Tests.restartable 1 do
+      let v ← ro.get
+      ValueTextField v (fun v' => roCalls.modify (·.push v'))
+        (modifier := Modifier.testTag "ro"))
+    do
+      click (.tag "ro")
+      awaitIdle
+      roCalls.set #[]
+      -- Two repeat backspaces in one drain: the batch composes…
+      keyDown .backspace
+      keyDown .backspace (isRepeat := true)
+      awaitIdle
+      checkEq "read-only: batch reports compose within one drain"
+        ((← roCalls.get).map (·.text)) #["fi", "f"]
+      -- …and the next drain starts from the unchanged prop again.
+      keyDown .backspace
+      awaitIdle
+      checkEq "read-only: the next drain starts from the authoritative value"
+        ((← roCalls.get).map (·.text)) #["fi", "f", "fi"]
+      checkEq "read-only: the value never changed" (← ro.get).text "fix"
+
 /-! ## Full keyboard editing scripts (MT framework) -/
 
 private def editingScripts : IO Unit := do
@@ -1236,6 +1298,7 @@ private def stringOverload : IO Unit := do
 /-- The TextField group. -/
 def run : IO Unit := do
   typingEndToEnd
+  rejectingParent
   editingScripts
   minWidthOverflow
   macKeys

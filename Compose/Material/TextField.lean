@@ -37,10 +37,18 @@ The M11 outlined single-line text field, mirroring
 - **Editing**: all edits go through the pure `EditModel`
   (`TextFieldValue.apply`); the field is a **controlled component** — it
   never owns the value, every edit is reported through `onValueChange` and
-  the caller echoes it back. An internal "latest value" ref is updated
-  optimistically after each self-applied edit so events arriving between
-  recompositions (fast typing, key repeat) compose correctly; recomposition
-  re-synchronizes it with the authoritative `value` prop.
+  the caller echoes it back. **Batching contract**: events landing between
+  two recompositions (fast typing, key repeat, paste + keystroke) compose
+  optimistically onto an internal "latest value" ref and each intermediate
+  result is reported — recomposition is per frame drain, so the parent
+  cannot veto *between* the events of one drain; it accepts or rejects the
+  composed reports. Every applied edit also bumps an epoch state the body
+  reads, so the next drain recomposes the field even when a rejecting
+  parent echoes nothing, and recomposition unconditionally re-synchronizes
+  the ref with the authoritative `value` prop (Compose's `EditProcessor`
+  reset analog). Optimism a parent did not acknowledge therefore never
+  outlives its own drain: a rejecting parent sees the next drain's edits
+  applied to the value it actually holds.
 - **Caret**: 1.5 dp bar at the selection's `active` end, blinking at ~1 Hz
   via a timer-stepped boolean (`caretBlinkLoop`, armed only while focused):
   a focused-but-idle field wakes only at each 500 ms flip — one
@@ -551,8 +559,12 @@ private def drawTextField (vis : FieldVisuals) : DrawM Unit := do
 docstring for the full behavior): `value` carries text *plus*
 selection/composition. **Controlled**: `value` is the single source of
 truth; every edit (typing, motion, selection, IME) is reported through
-`onValueChange` and takes effect when the caller echoes it back. Most apps
-want the plain-`String` `TextField` instead. Mirrors
+`onValueChange` and takes effect when the caller echoes it back. Rejection
+(echoing nothing, or something else) is honored at frame-drain granularity:
+events arriving between two recompositions compose optimistically and each
+intermediate result is reported, but whatever the parent does not echo back
+is dropped at the next recomposition — see the module docstring's batching
+contract. Most apps want the plain-`String` `TextField` instead. Mirrors
 `androidx.compose.material3.OutlinedTextField` (the `TextFieldValue`
 overload).
 
@@ -588,7 +600,16 @@ composable def ValueTextField (value : TextFieldValue)
     let focusedState ← remember (mutableStateOf false)
     let focused ← focusedState.get
     let valueRef ← remember (IO.mkRef value)
-    -- Re-synchronize the optimistic ref with the authoritative prop.
+    -- Editing epoch: bumped by every applied edit, and read here, so the
+    -- next frame drain always recomposes this scope — even when a rejecting
+    -- parent echoes nothing back (no prop change, no other invalidation).
+    let editEpoch ← remember (mutableStateOf (0 : Nat))
+    let _ ← editEpoch.get
+    -- Re-synchronize the optimistic ref with the authoritative prop: any
+    -- optimism the parent did not acknowledge by this recomposition is
+    -- dropped (Compose's `EditProcessor` reset analog). Together with the
+    -- epoch above this bounds optimistic drift to a single drain — see the
+    -- docstring's batching contract.
     valueRef.set value.normalized
     let onChangeRef ← rememberUpdatedRef onValueChange
     let scrollRef ← remember (IO.mkRef (0.0 : Float32))
@@ -650,6 +671,7 @@ composable def ValueTextField (value : TextFieldValue)
       let v' := v.apply cmd
       unless v' == v do
         valueRef.set v'
+        editEpoch.modify (· + 1)
         chromeStep (if v'.text == v.text
                     then .selectionChanged v'.selection.collapsed
                     else .textEdited)

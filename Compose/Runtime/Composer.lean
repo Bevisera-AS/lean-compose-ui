@@ -36,7 +36,7 @@ insert/remove/move.
 A throw escaping composable content unwinds the open groups (`abortTo`):
 freshly inserted groups are undone and severed, surviving open scopes are
 invalidated for retry, so the applier and the group tree always agree.
-Pass-level rollback (pending effects, `composed`) lives in
+Pass-level rollback (pending effects, slot replacements, `composed`) lives in
 `Compose.Runtime.Recomposer` — see its module docstring for the contract.
 -/
 
@@ -244,6 +244,19 @@ partial def liveNodeCount (g : Group) : IO Nat := do
   else
     gd.children.foldlM (fun acc ch => return acc + (← liveNodeCount ch)) 0
 
+/-- One in-place slot replacement performed by the current pass (the
+key-change path of `Composer.rememberObservedKeyed`), logged so an aborted
+pass can be undone: the previous slot content, the queue position of the
+`onForgotten` the replacement pushed, and the innermost restart scope at the
+time (a retry must re-run it so the replacement happens again exactly once).
+See `Composer.rollbackSlotReplacements`. -/
+structure SlotReplacement where
+  group : Group
+  slotIdx : Nat
+  prev : Slot
+  forgetIdx : Option Nat
+  scope : Option RecomposeScope
+
 /-- One open group during composition: the group plus its child/slot cursors.
 
 `nodeIndex` is the number of emitted nodes preceding the child cursor within
@@ -287,6 +300,11 @@ structure Composer where
   pendingRemembers : IO.Ref (Array (IO Unit))
   /-- Deferred `SideEffect`s, dispatched last. -/
   pendingSideEffects : IO.Ref (Array (IO Unit))
+  /-- Pass-scoped log of in-place slot replacements (`rememberObservedKeyed`
+  key changes), so a pass abort can restore the slots it mutated — see
+  `rollbackSlotReplacements` and the abort protocol in
+  `Compose.Runtime.Recomposer`. -/
+  slotReplacements : IO.Ref (Array SlotReplacement)
   /-- Observer called whenever a scope is invalidated (enqueued for
   recomposition). The M5 app shell points this at its needs-frame flag so any
   state write schedules a frame — the composition half of Compose's
@@ -313,6 +331,7 @@ def create (applier : NodeApplier) : IO Composer :=
            pendingForgets := ← IO.mkRef #[]
            pendingRemembers := ← IO.mkRef #[]
            pendingSideEffects := ← IO.mkRef #[]
+           slotReplacements := ← IO.mkRef #[]
            onInvalidate := ← IO.mkRef (pure ()) }
 
 private def topFrame (c : Composer) : IO Frame := do
@@ -377,6 +396,32 @@ def dispatchEffects (c : Composer) : IO Unit := do
   remembers.forM id
   let effects ← c.pendingSideEffects.modifyGet fun a => (a, #[])
   effects.forM id
+
+/-- Drop the slot-replacement log entries past `mark`: the pass they belong
+to applied, so the mutations are final. -/
+def commitSlotReplacements (c : Composer) (mark : Nat) : IO Unit :=
+  c.slotReplacements.modify (·.take mark)
+
+/-- Undo the in-place slot replacements past `mark`, newest first: restore
+the previous slot (old key and observer), retract the `onForgotten` the
+replacement queued (that forget's removal never applied), and invalidate the
+enclosing restart scope so a retry re-runs the replacement — `init` runs and
+both lifecycle ends are queued again, exactly once overall. A replacement
+whose group was removed later in the same pass (slots already severed) is
+left alone: that removal applied, so its collected forget must stand. Part
+of the pass-abort protocol (see `Compose.Runtime.Recomposer`). -/
+def rollbackSlotReplacements (c : Composer) (mark : Nat) : IO Unit := do
+  let log ← c.slotReplacements.get
+  for e in (log.extract mark log.size).reverse do
+    if e.slotIdx < (← e.group.data).slots.size then
+      e.group.modifyData fun d => { d with slots := d.slots.set! e.slotIdx e.prev }
+      if let some i := e.forgetIdx then
+        c.pendingForgets.modify (·.eraseIdx! i)
+      if let some s := e.scope then
+        unless ← s.disposed.get do
+          s.valid.set false
+          c.invalidations.modify fun q => if q.any (·.id == s.id) then q else q.push s
+  c.slotReplacements.set (log.take mark)
 
 /-- After a standalone scope re-run changed a subtree's node count, patch the
 ancestor chain's `nodes` up to (excluding) the nearest node group or root.
@@ -599,8 +644,20 @@ def rememberObservedKeyed (c : Composer) [BEq κ] [Nonempty α]
       if k' == k then
         return v'
       else
-        if let some obs := slot.observer then
-          c.pendingForgets.modify (·.push obs.onForgotten)
+        -- Log the replacement (previous slot, queued forget, enclosing
+        -- scope) so an aborted pass can undo it: otherwise a retry would
+        -- find the new key already stored and neither re-run `init` nor
+        -- queue the new `onRemembered`, while the old observer's queued
+        -- `onForgotten` would still fire.
+        let forgetIdx ← match slot.observer with
+          | some obs =>
+            let i := (← c.pendingForgets.get).size
+            c.pendingForgets.modify (·.push obs.onForgotten)
+            pure (some i)
+          | none => pure none
+        c.slotReplacements.modify (·.push
+          { group := f.group, slotIdx := f.slotCursor, prev := slot, forgetIdx
+            scope := (← c.scopeStack.get).back? })
         fresh
     else
       throw <| IO.userError

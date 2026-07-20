@@ -672,6 +672,96 @@ def throwDuringRecomposition : IO Unit := do
   comp.dispose
   checkEq "throw-rec: dispose balanced" (← events.get) #["start outer", "stop outer"]
 
+/-- A `DisposableEffect` key change inside a pass that later throws must
+survive the abort: the retry re-runs `init` and fires the old `onForgotten`
+and the new `onRemembered` exactly once each. -/
+def keyChangeAbortRetry : IO Unit := do
+  let t ← TestTree.create
+  let events ← IO.mkRef (#[] : Array String)
+  let key ← MutableState.create "a"
+  let boom ← MutableState.create false
+  let comp ← Composition.create t.applier <| restartable 1 do
+    let k ← key.get
+    DisposableEffect k do
+      events.modify (·.push s!"start {k}")
+      pure (events.modify (·.push s!"stop {k}"))
+    if ← boom.get then
+      withGroup 11 (throw (IO.userError "boom"))
+    else
+      withGroup 12 (pure ())
+  checkEq "keyAbort: initial" (← events.get) #["start a"]
+  key.set "b"
+  boom.set true
+  checkThrows "keyAbort: failed pass propagates" comp.drain
+  checkEq "keyAbort: failed pass dispatched nothing" (← events.get) #["start a"]
+  boom.set false
+  comp.drain
+  checkEq "keyAbort: retry fires each end exactly once"
+    (← events.get) #["start a", "stop a", "start b"]
+  comp.dispose
+  checkEq "keyAbort: dispose balanced" (← events.get)
+    #["start a", "stop a", "start b", "stop b"]
+
+/-- If the key reverts to its old value between the aborted pass and the
+retry, the restored slot still matches and no spurious lifecycle fires. -/
+def keyChangeAbortKeyReverts : IO Unit := do
+  let t ← TestTree.create
+  let events ← IO.mkRef (#[] : Array String)
+  let key ← MutableState.create "a"
+  let boom ← MutableState.create false
+  let comp ← Composition.create t.applier <| restartable 1 do
+    let k ← key.get
+    DisposableEffect k do
+      events.modify (·.push s!"start {k}")
+      pure (events.modify (·.push s!"stop {k}"))
+    if ← boom.get then
+      withGroup 11 (throw (IO.userError "boom"))
+    else
+      withGroup 12 (pure ())
+  key.set "b"
+  boom.set true
+  checkThrows "keyRevert: failed pass propagates" comp.drain
+  key.set "a"
+  boom.set false
+  comp.drain
+  checkEq "keyRevert: no spurious lifecycle" (← events.get) #["start a"]
+  comp.dispose
+  checkEq "keyRevert: dispose stops the original" (← events.get) #["start a", "stop a"]
+
+/-- A key change in a child scope that *completed* before a later sibling
+threw: the abort must re-invalidate the completed child, or the retry skips
+it (its slot already holds the new key) and the new effect never starts. -/
+def keyChangeAbortInCompletedChild : IO Unit := do
+  let t ← TestTree.create
+  let events ← IO.mkRef (#[] : Array String)
+  let tick ← MutableState.create (0 : Nat)
+  let key ← MutableState.create "a"
+  let boom ← MutableState.create false
+  let comp ← Composition.create t.applier <| restartable 1 do
+    let _ ← tick.get
+    restartable 2 do
+      let k ← key.get
+      DisposableEffect k do
+        events.modify (·.push s!"start {k}")
+        pure (events.modify (·.push s!"stop {k}"))
+    restartable 3 do
+      if ← boom.get then
+        withGroup 11 (throw (IO.userError "boom"))
+      else
+        withGroup 12 (pure ())
+  checkEq "keyNested: initial" (← events.get) #["start a"]
+  tick.set 1
+  key.set "b"
+  boom.set true
+  checkThrows "keyNested: failed pass propagates" comp.drain
+  boom.set false
+  comp.drain
+  checkEq "keyNested: retry re-runs the completed child's replacement"
+    (← events.get) #["start a", "stop a", "start b"]
+  comp.dispose
+  checkEq "keyNested: dispose balanced" (← events.get)
+    #["start a", "stop a", "start b", "stop b"]
+
 /-- All Runtime suites. -/
 def run : IO Unit := do
   rememberSame
@@ -702,5 +792,8 @@ def run : IO Unit := do
   removalSeversSubtree
   throwOnInitialComposition
   throwDuringRecomposition
+  keyChangeAbortRetry
+  keyChangeAbortKeyReverts
+  keyChangeAbortInCompletedChild
 
 end Tests.Runtime

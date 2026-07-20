@@ -21,15 +21,18 @@ dispose. Mirrors `androidx.compose.runtime.Recomposer`/`Composition`.
 
 **Exception safety.** A throw inside composable content propagates to the
 caller (`Composition.create`/`setContent`/`drain`) and never corrupts the
-runtime: open groups unwind (`Composer.abortTo`), so the applier and the
-group tree agree; remembers/side effects queued by the failed pass are
-abandoned, while already-collected forgets (whose removals did apply) stay
-queued for the next successful apply; a failed *initial* composition rolls
-back to a clean slate (`composed` stays false, retry composes from scratch);
-a failed re-run leaves its scope invalid and queued, so a later drain
-retries once the offending state changes. (Compose's `onAbandoned` protocol
-is not modeled: a `DisposableEffect` whose pass never applied simply never
-runs either end.)
+runtime: open groups unwind (`Composer.abortTo`), so the applier
+and the group tree agree; in-place slot replacements (`rememberObservedKeyed`
+key changes) are undone — the previous observer restored, its queued forget
+retracted, the enclosing scope re-invalidated — so a retry re-runs the
+replacement exactly once (`Composer.rollbackSlotReplacements`); remembers/
+side effects queued by the failed pass are abandoned, while already-collected
+forgets (whose removals did apply) stay queued for the next successful apply;
+a failed *initial* composition rolls back to a clean slate (`composed` stays
+false, retry composes from scratch); a failed re-run leaves its scope invalid
+and queued, so a later drain retries once the offending state changes.
+(Compose's `onAbandoned` protocol is not modeled: a `DisposableEffect` whose
+pass never applied simply never runs either end.)
 -/
 
 /-- Drives recomposition for one composition. Mirrors
@@ -99,14 +102,19 @@ def rerunScope (r : Recomposer) (s : RecomposeScope) : IO Unit := do
   c.standaloneRerun.set true
   let remembersMark ← c.pendingRemembers.get
   let effectsMark ← c.pendingSideEffects.get
-  try (← s.rerun.get)
+  let replacementsMark := (← c.slotReplacements.get).size
+  try
+    (← s.rerun.get)
+    c.commitSlotReplacements replacementsMark
   catch e =>
-    -- Failed re-run: unwind to a consistent tree, abandon this pass's
-    -- remembers/side effects (their slots never applied; collected forgets
-    -- stay — those removals did apply), and leave the scope invalid and
-    -- queued so a later drain retries once the offending state changes.
+    -- Failed re-run: unwind to a consistent tree, undo in-place slot
+    -- replacements, abandon this pass's remembers/side effects (their slots
+    -- never applied; collected forgets stay — those removals did apply),
+    -- and leave the scope invalid and queued so a later drain retries once
+    -- the offending state changes.
     c.abortTo 0
     c.pendingEnter.set none
+    c.rollbackSlotReplacements replacementsMark
     c.pendingRemembers.set remembersMark
     c.pendingSideEffects.set effectsMark
     s.valid.set false
@@ -171,10 +179,12 @@ private def composeRoot (comp : Composition) : IO Unit := do
   c.standaloneRerun.set false
   let remembersMark ← c.pendingRemembers.get
   let effectsMark ← c.pendingSideEffects.get
+  let replacementsMark := (← c.slotReplacements.get).size
   try
     withReadObserver c.readRouter do
       (← comp.content.get).run c
       c.endGroup
+    c.commitSlotReplacements replacementsMark
     comp.composed.set true
   catch e =>
     c.abortTo 0
@@ -184,8 +194,10 @@ private def composeRoot (comp : Composition) : IO Unit := do
       c.pendingForgets.set #[]
       c.pendingRemembers.set #[]
       c.pendingSideEffects.set #[]
+      c.slotReplacements.set #[]
       c.invalidations.set #[]
     else
+      c.rollbackSlotReplacements replacementsMark
       c.pendingRemembers.set remembersMark
       c.pendingSideEffects.set effectsMark
     throw e

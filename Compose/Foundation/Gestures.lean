@@ -37,14 +37,18 @@ inductive PressOutcome where
   | longPressed
   deriving Inhabited
 
-/-- Await events until the press ends: a `release` (consumed) or an `exit`.
-Intermediate moves/presses pass through unconsumed. -/
-private partial def awaitReleaseOrCancel (scope : PointerInputScope) : UiTask PressOutcome := do
+/-- Await events until the press of `button` ends: its `release` (consumed)
+or an `exit`. Intermediate moves/presses — and releases of *other* buttons
+(a chorded right click during a held left press) — pass through unconsumed. -/
+private partial def awaitReleaseOrCancel (button : Option Sdl.MouseButton)
+    (scope : PointerInputScope) : UiTask PressOutcome := do
   let ev ← scope.awaitEvent
   match ev.eventType with
-  | .release => ev.consume; return .released ev
+  | .release =>
+    if ev.button == button then ev.consume; return .released ev
+    else awaitReleaseOrCancel button scope
   | .exit => return .cancelled
-  | _ => awaitReleaseOrCancel scope
+  | _ => awaitReleaseOrCancel button scope
 
 /-- The receiver of `detectTapGestures`' `onPress`: where the press went down
 and a way to suspend until it ends. Mirrors
@@ -54,6 +58,9 @@ structure PressScope where
   scope : PointerInputScope
   /-- Press position, element-local px. -/
   pressPosition : Offset
+  /-- The button that went down (a finger's contact is modeled as `.left`);
+  only its release ends the press — chorded other-button releases don't. -/
+  pressButton : Option Sdl.MouseButton
   /-- The press outcome, memoized so `onPress` and the detector share one
   event consumer (the queue has a single waiter slot). -/
   outcomeRef : IO.Ref (Option PressOutcome)
@@ -77,10 +84,10 @@ private def awaitOutcome (ps : PressScope) : UiTask PressOutcome := do
         if arm then
           UiTask.race
             (do UiTask.delay ms; pure .longPressed)
-            (awaitReleaseOrCancel ps.scope)
+            (awaitReleaseOrCancel ps.pressButton ps.scope)
         else
-          awaitReleaseOrCancel ps.scope
-      | none => awaitReleaseOrCancel ps.scope
+          awaitReleaseOrCancel ps.pressButton ps.scope
+      | none => awaitReleaseOrCancel ps.pressButton ps.scope
     ps.outcomeRef.set (some o)
     return o
 
@@ -119,12 +126,12 @@ partial def detectTapGestures
     if ev.button == some .right && onSecondaryTap.isSome then
       -- Secondary click: fire on a release inside the element (no double/long
       -- press variants — the desktop context-menu gesture is a plain click).
-      if let .released rel ← awaitReleaseOrCancel scope then
+      if let .released rel ← awaitReleaseOrCancel ev.button scope then
         if ← scope.containsLocal rel.position then
           if let some st := onSecondaryTap then st rel.position
     else
       let ps : PressScope :=
-        { scope, pressPosition := ev.position
+        { scope, pressPosition := ev.position, pressButton := ev.button
           outcomeRef := ← IO.mkRef none
           longPressMs := if onLongPress.isSome then some longPressMillis else none
           armRef := ← IO.mkRef true }
@@ -156,33 +163,38 @@ partial def detectDragGestures
   let ev ← scope.awaitEvent
   if ev.eventType == .press then
     ev.consume
-    track ev.position false ev.position
+    track ev.button ev.position false ev.position
   detectDragGestures onDrag onDragStart onDragEnd onDragCancel touchSlop scope
 where
-  /-- Follow one press: `started` once past the slop, `last` = previous
-  drag position (deltas accumulate from the press position). -/
-  track (pressPos : Offset) (started : Bool) (last : Offset) : UiTask Unit := do
+  /-- Follow one press of `button`: `started` once past the slop, `last` =
+  previous drag position (deltas accumulate from the press position). A
+  chorded other button's release passes through without ending the drag. -/
+  track (button : Option Sdl.MouseButton) (pressPos : Offset) (started : Bool)
+      (last : Offset) : UiTask Unit := do
     let ev ← scope.awaitEvent
     match ev.eventType with
     | .move =>
       if started then
         ev.consume
         onDrag ev.position (ev.position - last)
-        track pressPos started ev.position
+        track button pressPos started ev.position
       else if pressPos.distance ev.position > touchSlop then
         ev.consume
         onDragStart ev.position
         onDrag ev.position (ev.position - pressPos)
-        track pressPos true ev.position
+        track button pressPos true ev.position
       else
-        track pressPos started last
+        track button pressPos started last
     | .release =>
-      if started then
-        ev.consume
-        onDragEnd
+      if ev.button == button then
+        if started then
+          ev.consume
+          onDragEnd
+      else
+        track button pressPos started last
     | .exit =>
       if started then onDragCancel
-    | _ => track pressPos started last
+    | _ => track button pressPos started last
 
 /-- Stream hover enter/move/exit callbacks (the raw-element diet version of
 hover-interaction plumbing; see `Modifier.hoverable` for the

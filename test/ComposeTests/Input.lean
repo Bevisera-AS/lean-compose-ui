@@ -384,6 +384,60 @@ private def dragGesture : IO Unit := do
   checkEq "drag: second button mid-drag keeps the capture" (← log.get)
     #["start@80,90", "drag@80,90Δ70,80", "drag@85,90Δ5,0", "end"]
 
+/-- A chorded second button during a held press: releases match the
+*initiating* button, so a right release mid-left-press neither taps nor
+fires the secondary handler, and vice versa. -/
+private def tapButtonChord : IO Unit := do
+  let taps ← IO.mkRef (0 : Nat)
+  let secs ← IO.mkRef (0 : Nat)
+  let r ← rig <| Box do
+    leaf (Modifier.size 50 50 |>.pointerInput 1
+      (detectTapGestures
+        (onTap := some fun _ => taps.modify (· + 1))
+        (onSecondaryTap := some fun _ => secs.modify (· + 1))))
+  let rightAt := fun (t : PointerEventType) (x y : Float32) =>
+    ({ eventType := t, position := ⟨x, y⟩, button := some .right } : PointerEvent)
+  -- Left press held, right click chords in: no tap until the left release.
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  let _ ← r.im.pointerEvent (rightAt .press 12 10)
+  let _ ← r.im.pointerEvent (rightAt .release 12 10)
+  checkEq "chord: a foreign release does not tap" (← taps.get) 0
+  let _ ← r.im.pointerEvent (releaseAt 12 10)
+  checkEq "chord: the initiating button's release taps" (← taps.get) 1
+  checkEq "chord: the secondary handler stayed silent" (← secs.get) 0
+  -- Right press held, left click chords in: the secondary tap waits for the
+  -- right release.
+  let _ ← r.im.pointerEvent (rightAt .press 15 20)
+  let _ ← r.im.pointerEvent (pressAt 17 20)
+  let _ ← r.im.pointerEvent (releaseAt 17 20)
+  checkEq "chord: a left release does not fire the secondary tap" (← secs.get) 0
+  let _ ← r.im.pointerEvent (rightAt .release 15 20)
+  checkEq "chord: the right release fires it" (← secs.get) 1
+  checkEq "chord: no extra primary tap" (← taps.get) 1
+
+/-- A chorded right click mid-drag must not end the drag: only the
+initiating button's release does. -/
+private def dragButtonChord : IO Unit := do
+  let log ← IO.mkRef (#[] : Array String)
+  let r ← rig <| Box do
+    leaf (Modifier.size 50 50 |>.pointerInput 1
+      (detectDragGestures
+        (onDrag := fun p d =>
+          log.modify (·.push s!"drag@{p.x.toInt32},{p.y.toInt32}Δ{d.x.toInt32},{d.y.toInt32}"))
+        (onDragStart := fun p => log.modify (·.push s!"start@{p.x.toInt32},{p.y.toInt32}"))
+        (onDragEnd := log.modify (·.push "end"))
+        (onDragCancel := log.modify (·.push "cancel"))))
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  let _ ← r.im.pointerEvent (moveTo 30 10)
+  let _ ← r.im.pointerEvent { eventType := .press, position := ⟨30, 10⟩
+                              button := some .right, clicks := 1 }
+  let _ ← r.im.pointerEvent { eventType := .release, position := ⟨30, 10⟩
+                              button := some .right, clicks := 1 }
+  let _ ← r.im.pointerEvent (moveTo 40 10)   -- the drag must still be live
+  let _ ← r.im.pointerEvent (releaseAt 40 10)
+  checkEq "drag chord: a foreign release does not end the drag" (← log.get)
+    #["start@30,10", "drag@30,10Δ20,0", "drag@40,10Δ10,0", "end"]
+
 /-! ## Focus -/
 
 /-- Tab order over three focusables (preorder = layout order), wrap-around,
@@ -1898,6 +1952,8 @@ def run : IO Unit := do
   secondaryTapGesture
   longPressGesture
   dragGesture
+  tapButtonChord
+  dragButtonChord
   dragScrollSteals
   dragScrollFlingAndCatch
   dragScrollFlingEndStop

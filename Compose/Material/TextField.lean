@@ -42,8 +42,10 @@ The M11 outlined single-line text field, mirroring
   recompositions (fast typing, key repeat) compose correctly; recomposition
   re-synchronizes it with the authoritative `value` prop.
 - **Caret**: 1.5 dp bar at the selection's `active` end, blinking at ~1 Hz
-  through `rememberInfiniteTransition` (composed only while focused, so an
-  idle field schedules no frames).
+  via a timer-stepped boolean (`caretBlinkLoop`, armed only while focused):
+  a focused-but-idle field wakes only at each 500 ms flip — one
+  recomposition and one redraw per flip, no display-rate frame work — and
+  an unfocused field schedules nothing.
 - **Selection**: one `primary`@40 % rect from the start caret x to the end
   caret x (single line), under the glyphs, drawn while focused.
 - **IME**: committed text inserts via `Modifier.onTextInput`; composition
@@ -217,6 +219,19 @@ private instance : Nonempty FieldGestureParams :=
 /-- Finger long-press timeout, ms (Android's `LONG_PRESS_TIMEOUT`; matches
 `detectTapGestures`' default). -/
 private def fieldLongPressMillis : UInt32 := 500
+
+/-- Caret blink half-period, ms (the Compose/Android 500 ms convention). -/
+private def caretBlinkHalfPeriodMillis : UInt32 := 500
+
+/-- Flip `visible` once per half-period, driven by scheduler timers — not
+the frame clock — so a focused-but-idle field wakes twice a second (one
+recomposition and one redraw per flip) instead of subscribing to
+display-rate frames. Launched while focused, cancelled on focus loss (see
+`ValueTextField`'s blink `LaunchedEffect`). -/
+private partial def caretBlinkLoop (visible : MutableState Bool) : UiTask Unit := do
+  UiTask.delay caretBlinkHalfPeriodMillis
+  visible.modify (!·)
+  caretBlinkLoop visible
 
 /-- How a finger contact on the field resolved: the long-press timer won, or
 the tap wait ended first (release, cancel, or an enclosing scroll's steal). -/
@@ -719,14 +734,17 @@ composable def ValueTextField (value : TextFieldValue)
          chromeShow := chromeStep .touchSelected
          chromeSettle := chromeStep .settled }
         : FieldGestureParams)
-    -- Caret blink: composed only while focused, so an idle field schedules
-    -- no frame work.
-    let caretOn ← if focused && enabled then do
-        let it ← rememberInfiniteTransition
-        let phase ← it.animateFloat 0 1 (.infiniteRepeatable (.tween 1000 0 .linear))
-        pure (((← phase.get) < 0.5 : Bool))
-      else
-        pure false
+    -- Caret blink: a timer-stepped boolean (`caretBlinkLoop`) — composition
+    -- sees exactly one state flip per 500 ms half-period, never a
+    -- display-rate frame subscription, so a focused-but-idle field wakes
+    -- (recomposes + redraws) only twice a second and an unfocused field
+    -- schedules nothing at all.
+    let caretVisible ← remember (mutableStateOf true)
+    LaunchedEffect (focused && enabled) do
+      if focused && enabled then
+        caretVisible.set true
+        caretBlinkLoop caretVisible
+    let caretOn ← if focused && enabled then caretVisible.get else pure false
     let vis : FieldVisuals :=
       { layout, placeholder?, label?
         value := value.normalized, focused, enabled, caretOn

@@ -14,9 +14,9 @@ blink, IME, auto-scroll, outline states) keep the raw `TRig` — pixel output
 is the property under test there, and glyph-coordinate expectations come
 from a probe `TextLayout` sharing the window's font stack.
 
-The caret-blink `InfiniteTransition` keeps frame work alive while a field is
-focused, so the TRig tests advance time with bounded `pump`s instead of
-settle-until-idle.
+The caret blink is a scheduler-timer flip (no frame-clock subscription), so
+a focused field is idle between flips; the TRig tests advance time with
+bounded `pump`s/`tick`s, which drives both the timers and any animations.
 -/
 
 namespace Tests.TextField
@@ -1078,19 +1078,37 @@ private def caretBlink : IO Unit := do
   check "blink: no caret while unfocused"
     ((← findColorX r 20 4 236 L.primary) == none)
   r.click 100 20
-  r.pump   -- blink phase ≈ 24 ms: caret on
+  r.pump   -- ≈ 24 ms into the visible half-period: caret on
   let on0 ← findColorX r 20 4 236 L.primary
   check s!"blink: caret visible right after focus ({on0})"
     (on0.any fun x => x ≥ 12 && x ≤ 15)
-  r.tick 600   -- phase ≈ 0.6: caret off
+  -- Advance in frame-sized steps: the blink timer re-arms when it fires, so
+  -- the fake clock must not overshoot a flip by a whole coarse jump (the
+  -- real loop wakes at the deadline, keeping drift ≈ 0).
+  for _ in [0:75] do r.tick 8   -- ≈ 620 ms: mid off-phase
   check "blink: caret hidden mid-cycle" ((← findColorX r 20 4 236 L.primary) == none)
-  r.tick 450   -- phase wraps: caret on again
+  for _ in [0:56] do r.tick 8   -- ≈ 1070 ms: next visible half-period
   check "blink: caret returns next cycle"
     ((← findColorX r 20 4 236 L.primary).isSome)
   r.key .escape
   r.pump
   check "blink: unfocused again → no caret"
     ((← findColorX r 20 4 236 L.primary) == none)
+
+/-- A focused-but-idle field must not recompose/redraw at display rate:
+the caret blink is a timer-stepped boolean, so a second of idle focused
+time renders only the ~2 blink flips (regression: an infinite 1 s tween
+was read in composition, recomposing the whole body every frame). -/
+private def caretIdleFrames : IO Unit := do
+  let (r, _, _) ← fieldRig
+  r.click 100 20
+  -- Let the focus/label animations finish (150 ms tweens + slack).
+  for _ in [0:40] do r.tick 8
+  let before ← r.ctx.framesRendered.get
+  for _ in [0:125] do r.tick 8   -- one second of idle focus at 8 ms steps
+  let rendered := (← r.ctx.framesRendered.get) - before
+  check s!"blink: an idle focused field renders only the blink flips ({rendered}/s)"
+    (rendered ≤ 6)
 
 /-! ## Horizontal auto-scroll -/
 
@@ -1236,6 +1254,7 @@ def run : IO Unit := do
   imeGreedyCommitRepair
   imeSession
   caretBlink
+  caretIdleFrames
   autoScroll
   outlineStates
   placeholderAndLabel

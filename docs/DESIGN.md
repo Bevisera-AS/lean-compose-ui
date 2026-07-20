@@ -728,7 +728,8 @@ clock only while subscribers exist, so an idle UI consumes no CPU.
   (vector-ish icons drawn with primitives), `Checkbox`, `RadioButton`,
   `Switch`, `Slider` (drag + click + arrow keys), `LinearProgressIndicator` +
   `CircularProgressIndicator` (arc), `TextField` (single-line, outlined:
-  caret blink via frame clock, selection with mouse drag/shift-arrows/
+  timer-stepped caret blink (2 Hz wakes, no display-rate frame work),
+  selection with mouse drag/shift-arrows/
   double-click word select, clipboard shortcuts, IME composition underline,
   horizontal auto-scroll, `isError` state; touch: long-press word selection
   with floating drag handles + a Cut/Copy/Paste toolbar — focus-neutral

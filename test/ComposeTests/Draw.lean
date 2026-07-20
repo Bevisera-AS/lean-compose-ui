@@ -80,6 +80,36 @@ private def stretchRecord : IO Unit := do
   check "stretch record: zero intensity records no layer"
     (flat.map (·.brief) == #["rect @(0,0) #ff0000ff tl=(10,10) sz=40x40"])
 
+/-- Backend error hygiene: an IO error while executing primitives must not
+leave SDL state stale. A destroyed `Ttf.Text` handle makes its prim throw at
+execute time: inside a *transformed layer* the renderer must come back
+targeted at the window (not the pooled layer texture, which must also return
+to the pool); mid-list the clip must be restored on the way out. Afterwards
+the same backend caches render normally. -/
+private def errorRestore : IO Unit := do
+  let ren ← mkRen 96 96
+  Sdl.Ttf.init
+  let font ← Sdl.Ttf.openFont "assets/fonts/Roboto-Regular.ttf" 16
+  let engine ← Sdl.Ttf.createRendererTextEngine ren
+  let text ← engine.createText font "boom"
+  text.destroy
+  let caches ← SdlBackend.Caches.new
+  let badText : Prim := .text { origin := ⟨10, 10⟩ } { text, string := "boom", color := .white }
+  -- 1. throw while rendering transformed-layer content
+  let badLayer : Prim := .layer {} ⟨0, 0, 40, 40⟩
+    { transform := some (.rotation 0.3) } #[badText]
+  checkThrows "layer content error propagates" (SdlBackend.execute ren #[badLayer] caches)
+  check "renderer target restored after layer content error" (← ren.getTarget).isNone
+  -- 2. throw mid-list after a clip was applied
+  let clipped : Prim := .rect { clip := some ⟨0, 0, 10, 10⟩ } .red ⟨0, 0⟩ ⟨5, 5⟩
+  checkThrows "mid-list error propagates" (SdlBackend.execute ren #[clipped, badText] caches)
+  check "clip restored after mid-list error" (!(← ren.clipEnabled))
+  -- 3. the backend still renders normally with the same caches
+  clearBlack ren
+  SdlBackend.execute ren #[.rect {} .red ⟨5, 5⟩ ⟨20, 20⟩] caches
+  let shot ← ren.readPixels
+  check "backend renders normally after errors" (colorNear (← shot.readPixel 10 10) 255 0 0)
+
 /-- The Draw group. -/
 def run : IO Unit := do
   Sdl.init .video
@@ -256,5 +286,8 @@ def run : IO Unit := do
 
   -- 12. text run-origin snapping (M-j)
   textSnap
+
+  -- 13. backend error hygiene (target/clip/pool restore across throws)
+  errorRestore
 
 end Tests.Draw

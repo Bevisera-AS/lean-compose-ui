@@ -264,58 +264,69 @@ private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
       let bt := max ((bounds.bottom + 1).ceil) (tp + 1)
       let (w, h) := (rt - l, bt - tp)
       let (tex, poolIdx) ← acquireTarget r caches w h
-      let prevTarget ← r.getTarget
-      let savedClip ← applied.get
-      r.setTarget (some tex)
-      -- Clip state is per render target, and pooled textures can carry a
-      -- stale clip from their previous use: reset both SDL and the tracker.
-      r.setClipRect none
-      applied.set none
-      -- Transparent clear (`clear` ignores blend mode): `.blend` content on
-      -- transparency yields premultiplied texels.
-      r.setDrawColor 0 0 0 0
-      r.clear
-      -- Content renders at full alpha; the group alpha (and any enclosing
-      -- flattened alpha) applies once at composite — transformed layers get
-      -- true group opacity on SDL.
-      for p in content do
-        execPrim r applied caches 1.0 (shift - ⟨l, tp⟩) p
-      r.setTarget prevTarget
-      -- The previous target's clip state was untouched (per-target): just
-      -- restore the tracker.
-      applied.set savedClip
-      applyClip r applied (st.clip.map (·.translate shift))
-      let a := props.alpha * extraAlpha
-      tex.setBlendMode .blendPremultiplied
-      tex.setColorModFloat a a a
-      tex.setAlphaModFloat a
-      -- Region corners mapped through the transform, in this target's
-      -- coordinates.
-      let map (p : Offset) : Offset := t.mapOffset p + shift
-      let o := map ⟨l, tp⟩
-      if t.snapComposite then
-        -- Near-integer pure translation: snap to the grid and copy 1:1 —
-        -- crisp (text stays byte-identical to unlayered rendering).
-        tex.setScaleMode .nearest
-        r.texture tex (some ⟨0, 0, w, h⟩) (some ⟨o.x.round, o.y.round, w, h⟩)
-      else
-        tex.setScaleMode .linear
-        let rgt := map ⟨rt, tp⟩
-        let dwn := map ⟨l, bt⟩
-        r.textureAffine tex (some ⟨0, 0, w, h⟩)
-          (some ⟨o.x, o.y⟩) (some ⟨rgt.x, rgt.y⟩) (some ⟨dwn.x, dwn.y⟩)
-      releaseTarget caches poolIdx
+      -- An IO error anywhere below must not leak state: the pool entry
+      -- returns to the free list (`trimTargets` never ages `inUse` entries),
+      -- and the renderer comes back on the previous target with the clip
+      -- tracker intact (SDL clip state is per target, so the previous
+      -- target's actual clip was never touched).
+      try
+        let prevTarget ← r.getTarget
+        let savedClip ← applied.get
+        try
+          r.setTarget (some tex)
+          -- Clip state is per render target, and pooled textures can carry a
+          -- stale clip from their previous use: reset both SDL and the tracker.
+          r.setClipRect none
+          applied.set none
+          -- Transparent clear (`clear` ignores blend mode): `.blend` content on
+          -- transparency yields premultiplied texels.
+          r.setDrawColor 0 0 0 0
+          r.clear
+          -- Content renders at full alpha; the group alpha (and any enclosing
+          -- flattened alpha) applies once at composite — transformed layers get
+          -- true group opacity on SDL.
+          for p in content do
+            execPrim r applied caches 1.0 (shift - ⟨l, tp⟩) p
+        finally
+          r.setTarget prevTarget
+          applied.set savedClip
+        applyClip r applied (st.clip.map (·.translate shift))
+        let a := props.alpha * extraAlpha
+        tex.setBlendMode .blendPremultiplied
+        tex.setColorModFloat a a a
+        tex.setAlphaModFloat a
+        -- Region corners mapped through the transform, in this target's
+        -- coordinates.
+        let map (p : Offset) : Offset := t.mapOffset p + shift
+        let o := map ⟨l, tp⟩
+        if t.snapComposite then
+          -- Near-integer pure translation: snap to the grid and copy 1:1 —
+          -- crisp (text stays byte-identical to unlayered rendering).
+          tex.setScaleMode .nearest
+          r.texture tex (some ⟨0, 0, w, h⟩) (some ⟨o.x.round, o.y.round, w, h⟩)
+        else
+          tex.setScaleMode .linear
+          let rgt := map ⟨rt, tp⟩
+          let dwn := map ⟨l, bt⟩
+          r.textureAffine tex (some ⟨0, 0, w, h⟩)
+            (some ⟨o.x, o.y⟩) (some ⟨rgt.x, rgt.y⟩) (some ⟨dwn.x, dwn.y⟩)
+      finally
+        releaseTarget caches poolIdx
 
 /-- Execute a recorded display list against `r`, restoring an unclipped
-renderer afterwards. `caches` is the backend's persistent texture state
-(pass a fresh `Caches.new` for single-shot execution). -/
+renderer afterwards — also when a primitive throws mid-list (the clip
+restore and pool aging run in a `finally`). `caches` is the backend's
+persistent texture state (pass a fresh `Caches.new` for single-shot
+execution). -/
 def execute (r : Renderer) (list : DisplayList) (caches : Caches) :
     IO Unit := do
   let applied ← IO.mkRef (none : Option Rect)
-  for p in list do
-    execPrim r applied caches 1.0 .zero p
-  applyClip r applied none
-  trimTargets caches
+  try
+    for p in list do
+      execPrim r applied caches 1.0 .zero p
+  finally
+    applyClip r applied none
+    trimTargets caches
 
 /-- Package `renderer` as a `RenderBackend` (see `Backend.lean`): render =
 clear → execute → present (always presents — SDL_Renderer never blocks on

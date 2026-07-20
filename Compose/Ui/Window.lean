@@ -352,13 +352,23 @@ def sdlRenderer (ctx : WindowContext) : IO Sdl.Renderer := do
       "Compose: window is not backed by an SDL renderer (GPU backend has no readback path)")
 
 /-- Schedule a frame: the next loop pass recomposes/remeasures/redraws.
-Idempotent. Mirrors `Owner.onRequestMeasure`/`invalidate` scheduling. -/
-def requestFrame (ctx : WindowContext) : IO Unit :=
-  ctx.needsFrame.set true
+Idempotent. On the clear→set transition it also pushes the wake user event,
+so a loop parked in `waitEventTimeout` repaints now instead of at the idle
+cap — state writes may land from task-pool threads (`IO.asTask`
+completions), and SDL's event push is thread-safe. A silently dropped push
+(full queue) is mitigated by the finite idle wait (`idleWaitMs`, the same
+missed-wake defense the scheduler's wake relies on). Mirrors
+`Owner.onRequestMeasure`/`invalidate` scheduling. -/
+def requestFrame (ctx : WindowContext) : IO Unit := do
+  unless ← ctx.needsFrame.modifyGet fun f => (f, true) do
+    let _ ← Sdl.pushUserEvent ctx.wakeEvent
 
-/-- Ask the loop to exit (honored at the next iteration). -/
-def requestQuit (ctx : WindowContext) : IO Unit :=
+/-- Ask the loop to exit (honored at the next iteration). The wake push ends
+a parked wait immediately, so e.g. a `terminating` teardown starts inside
+its OS budget instead of idling up to `idleWaitMs` first. -/
+def requestQuit (ctx : WindowContext) : IO Unit := do
   ctx.quitRequested.set true
+  let _ ← Sdl.pushUserEvent ctx.wakeEvent
 
 /-- Ask for the focused node to be scrolled into view on the next frame,
 *after* remeasure — the deferral makes an IME-raised reveal compute

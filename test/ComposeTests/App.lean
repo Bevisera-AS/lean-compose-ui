@@ -277,6 +277,28 @@ private def idleStepBlocks : IO Unit := do
   check "idle: no frame from an idle step" (!rendered)
   check s!"idle: blocked ≈ the timeout ({elapsed} ms)" (60 ≤ elapsed && elapsed < 800)
 
+/-- A dirtying write landed from a background thread must wake a parked
+loop promptly: `requestFrame` pushes the wake user event (SDL's push is
+thread-safe), so an `IO.asTask` completion repaints in milliseconds instead
+of stalling until the idle cap (up to `idleWaitMs` = 1 s of latency). -/
+private def backgroundWriteWakesTheLoop : IO Unit := do
+  let color ← MutableState.create Color.red
+  let ctx ← boot <| Tests.restartable 1 do
+    let c ← color.get
+    Box (modifier := Modifier.size 50 50 |>.background c)
+  let _ ← step ctx cfg  -- initial render; now fully idle
+  let t0 ← Sdl.getTicks
+  let task ← IO.asTask (prio := .dedicated) do
+    IO.sleep 40
+    color.set .blue
+  -- Parked with a long cap: the off-thread write must end the wait early.
+  let rendered ← step ctx cfg (idleCapMs := 3000)
+  let elapsed := (← Sdl.getTicks) - t0
+  let _ ← IO.wait task
+  check "bg wake: the woken step rendered the write" rendered
+  check s!"bg wake: parked loop woke promptly ({elapsed} ms)" (elapsed < 1000)
+  check "bg wake: pixels show the background write" (colorNear (← pixel ctx 10 10) 0 0 255)
+
 /-- A scheduler timer bounds the wait: the loop wakes for the deadline, runs
 the coroutine, and renders its state write. -/
 private def timerWakesAndRenders : IO Unit := do
@@ -477,6 +499,7 @@ def run : IO Unit := do
   watchDisarmedDuringDispatch
   frameCapHonored
   idleStepBlocks
+  backgroundWriteWakesTheLoop
   timerWakesAndRenders
   lifecyclePausesAndResumes
   renderErrorResilience

@@ -677,6 +677,44 @@ private def touchTapFocus : IO Unit := do
   let _ ← r.im.pointerEvent (fingerRelease 4 50 80)
   checkEq "touch focus: a tap on nothing clears" (← log.get) #["a-"]
 
+/-- A cancel (`exit`) after a press that hit nothing must clear the pointer's
+capture and button state: the next press hit-tests fresh instead of taking
+the second-button branch (which would leave the tap dead), and a stale touch
+entry no longer gates trackpad pinch routing. -/
+private def cancelAfterBackgroundPress : IO Unit := do
+  let clicks ← IO.mkRef (0 : Nat)
+  let r ← rig <| Box do
+    leaf (Modifier.size 50 50 |>.clickable (clicks.modify (· + 1)))
+  -- Mouse: press on empty space, then a window-leave cancel.
+  let _ ← r.im.pointerEvent (pressAt 150 150)
+  let _ ← r.im.pointerEvent { eventType := .exit, position := ⟨150, 150⟩ }
+  let _ ← r.im.pointerEvent (pressAt 10 10)
+  let _ ← r.im.pointerEvent (releaseAt 10 10)
+  checkEq "cancel-clears: a mouse click after a background press+cancel fires"
+    (← clicks.get) 1
+  -- Finger: the same hole via a system cancel.
+  let _ ← r.im.pointerEvent (fingerPress 1 150 150)
+  let _ ← r.im.pointerEvent (fingerCancel 1 150 150)
+  let _ ← r.im.pointerEvent (fingerPress 1 10 10)
+  let _ ← r.im.pointerEvent (fingerRelease 1 10 10)
+  checkEq "cancel-clears: a finger tap after a background press+cancel fires"
+    (← clicks.get) 2
+
+/-- A cancelled background finger press must not keep suppressing trackpad
+pinch routing (the gate checks for live *touch* captures). -/
+private def cancelClearsPinchGate : IO Unit := do
+  let calls ← IO.mkRef (0 : Nat)
+  let r ← rig <| Box do
+    let st ← rememberTransformableState fun _ _ _ _ => calls.modify (· + 1)
+    leaf (Modifier.size 50 50 |>.transformable st)
+  let conv (x y : Float32) : IO Offset := pure ⟨x, y⟩
+  let _ ← r.im.pointerEvent (fingerPress 1 150 150)   -- background: empty path
+  let _ ← r.im.pointerEvent (fingerCancel 1 150 150)
+  let _ ← r.im.pointerEvent (moveTo 25 25)            -- cursor over the element
+  let _ ← r.im.sdlEvent conv (.pinchUpdate ⟨0, 1.5, ⟨0⟩⟩)
+  checkEq "cancel-clears: the pinch gate reopens after a cancelled background press"
+    (← calls.get) 1
+
 /-- The mouse (pointer 0) and a finger are independent: a finger press on B
 while the mouse holds A neither joins the mouse's capture nor disturbs its
 click. -/
@@ -1881,6 +1919,8 @@ def run : IO Unit := do
   multiTouchIndependentPresses
   multiTouchCancel
   touchTapFocus
+  cancelAfterBackgroundPress
+  cancelClearsPinchGate
   mouseAndFingerCoexist
   pointerInputLifecycle
   capturedChainReshuffle

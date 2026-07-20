@@ -296,8 +296,12 @@ def pointerEvent (im : InputManager) (ev : PointerEvent) : IO Bool := do
     im.pendingFocus.modify (·.erase pid)
     unless captured.isEmpty do
       let _ ← dispatchToPath captured ev
-      im.captures.modify (·.erase pid)
-      im.buttonsHeld.modify (·.erase pid)
+    -- Unconditional: a press on a non-interactive area captures an *empty*
+    -- path, and leaving its entries behind would make the pointer's next
+    -- press take the second-button branch (a dead tap) and keep the stale
+    -- `buttonsHeld` entry suppressing pinch routing.
+    im.captures.modify (·.erase pid)
+    im.buttonsHeld.modify (·.erase pid)
     if isMouse then
       let _ ← im.hover.update im.root ev none
     return true

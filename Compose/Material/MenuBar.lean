@@ -76,11 +76,15 @@ private def menuBarHeight : Dp := 36
 /-- The bar's key handling while a menu is open (registered as an overlay
 *capture* handler, so it runs before focused-node routing): Up/Down move the
 highlight, Enter activates it, Left/Right switch to the adjacent top-level menu
-(wrapping), Esc closes. A no-op while every menu is closed. -/
+(wrapping), Esc closes. A no-op while every menu is closed. The handler is
+registered once for the bar's lifetime, so the menu count is read through a
+`rememberUpdatedRef` cell per event — a `menus` array that grows or shrinks
+across recompositions must not wrap over a stale count. -/
 private def menuBarKeyHandler (openIndex : MutableState (Option Nat))
-    (menu : MenuState) (count : Nat) : KeyEvent → IO Bool := fun ke => do
+    (menu : MenuState) (countRef : IO.Ref Nat) : KeyEvent → IO Bool := fun ke => do
   unless ke.down do return false
   let some cur ← openIndex.cell.get | return false
+  let count ← countRef.get
   match ke.key with
   | .down => menu.move 1; return true
   | .up => menu.move (-1); return true
@@ -105,8 +109,10 @@ private def menuBarKeyHandler (openIndex : MutableState (Option Nat))
 strip it is the topmost layer, so it drives hover-to-switch (motion over a label
 switches the open menu) and click-to-toggle (a press on the open label closes,
 on another label switches); a press anywhere else closes (click-away). The
-dropdown layer sits above it, so item clicks never reach here. -/
-private partial def menuBarBackdrop (labelRects : Array (MutableState Rect))
+dropdown layer sits above it, so item clicks never reach here. `labelRects` is
+the bar's *live* rect-cell array (read per event — the coroutine outlives
+recompositions that grow or shrink the `menus` array). -/
+private partial def menuBarBackdrop (labelRects : IO.Ref (Array (MutableState Rect)))
     (openIndex : MutableState (Option Nat)) (scope : PointerInputScope) :
     UiTask Unit := do
   let ev ← scope.awaitEvent
@@ -126,7 +132,7 @@ where
   /-- The index of the label whose captured rect contains `p` (root coords). -/
   hitLabel (p : Offset) : IO (Option Nat) := do
     let mut i := 0
-    for rect in labelRects do
+    for rect in ← labelRects.get do
       let r ← rect.cell.get
       if r != Rect.zero && r.contains p then return some i
       i := i + 1
@@ -189,7 +195,21 @@ composable def MenuBar (menus : Array MenuBarMenu) : Composable Unit := do
   let ctx? ← LocalWindowContext.current
   let openIndex ← remember (mutableStateOf (none : Option Nat))
   let menuState ← remember MenuState.create
-  let labelRects ← remember (menus.mapM (fun _ => mutableStateOf Rect.zero))
+  -- Live label state: the rect cells and the menu count must track a `menus`
+  -- array that grows or shrinks across recompositions (the backdrop coroutine
+  -- and the capture key handler are registered once for the bar's lifetime,
+  -- so both read through refs — the `rememberUpdatedRef` idiom).
+  let labelRects ← remember (IO.mkRef (#[] : Array (MutableState Rect)))
+  let rects ← liftM (m := IO) do
+    let cur ← labelRects.get
+    if cur.size == menus.size then pure cur
+    else do
+      let mut arr := cur.take menus.size
+      for _ in [arr.size : menus.size] do
+        arr := arr.push (← MutableState.create Rect.zero)
+      labelRects.set arr
+      pure arr
+  let countRef ← rememberUpdatedRef menus.size
   let handlerId ← remember freshId
   -- Keyboard: one capture handler for the bar's lifetime, active only while a
   -- menu is open (Left/Right/Up/Down/Enter/Esc — see `menuBarKeyHandler`).
@@ -198,31 +218,37 @@ composable def MenuBar (menus : Array MenuBarMenu) : Composable Unit := do
     | some ctx =>
       ctx.registerKeyHandler
         { id := handlerId, capture := true
-          handler := menuBarKeyHandler openIndex menuState menus.size }
+          handler := menuBarKeyHandler openIndex menuState countRef }
       return ctx.unregisterKeyHandler handlerId
     | none => return pure ()
   -- The bar strip: labels + a bottom divider, on the theme surface.
   Column (modifier := Modifier.fillMaxWidth |>.background colors.surface) do
     Row (modifier := Modifier.fillMaxWidth |>.height menuBarHeight) do
       for i in [0:menus.size] do
-        if let some rs := labelRects[i]? then
+        if let some rs := rects[i]? then
           keyed i (menuBarLabel i menus[i]!.label openIndex rs)
     HorizontalDivider
   -- While open: a full-window backdrop (lowest — hover/click logic + click-away)
   -- then the dropdown for the open menu (above it). Fixed compose order keeps
-  -- the z-order stable across menu switches.
-  if let some i ← openIndex.get then
-    withGroup 0x6d626f do
-      Popup (onDismissRequest := none) do
-        Spacer (Modifier.fillMaxSize
-          |>.pointerInput (stringKey "Compose.MenuBar.backdrop")
-              (menuBarBackdrop labelRects openIndex))
-      let anchor ← match labelRects[i]? with
-        | some rs => rs.get
-        | none => pure Rect.zero
-      Popup (menuBarDropdown menuState menus[i]!.items openIndex)
-        (anchor := if anchor == Rect.zero then none else some anchor)
-  else
+  -- the z-order stable across menu switches. An open index that outlived a
+  -- shrunken `menus` array closes the bar instead of indexing out of bounds.
+  match ← openIndex.get with
+  | some i =>
+    if h : i < menus.size then
+      withGroup 0x6d626f do
+        Popup (onDismissRequest := none) do
+          Spacer (Modifier.fillMaxSize
+            |>.pointerInput (stringKey "Compose.MenuBar.backdrop")
+                (menuBarBackdrop labelRects openIndex))
+        let anchor ← match rects[i]? with
+          | some rs => rs.get
+          | none => pure Rect.zero
+        Popup (menuBarDropdown menuState menus[i].items openIndex)
+          (anchor := if anchor == Rect.zero then none else some anchor)
+    else do
+      liftM (m := IO) (openIndex.set none)
+      withGroup 0x6d626e (pure ())
+  | none =>
     withGroup 0x6d626e (pure ())
 
 end Compose

@@ -145,6 +145,52 @@ private def dropdownWidth : IO Unit := do
     check s!"menu bar dropdown: item wraps the menu, not the window (width {b.width})"
       (b.width ≥ 112 && b.width < 320)
 
+/-- A `menus` array that grows (and shrinks) across recompositions: the
+new label must appear, open its menu, and keyboard Left/Right must wrap
+over the LIVE count; shrinking under an open stale index must close
+gracefully (regression: label rects and the capture key handler froze the
+menu count at first composition — a grown bar silently dropped labels and
+wrapped over the stale count; a shrunken one panicked). -/
+private def liveMenusGrowth : IO Unit := do
+  let f ← fixture
+  let extra ← MutableState.create false
+  let zoomRef ← IO.mkRef 0
+  runComposeTest
+    (Tests.restartable 1 do
+      let menus := if ← extra.get then
+          f.menus.push { label := "View"
+                         items := #[.item "Zoom" (zoomRef.modify (· + 1))] }
+        else f.menus
+      MenuBar menus)
+    do
+      click (.text "File")
+      settle
+      assertExists (.text "New")
+      click (.text "File")   -- close again
+      settle
+      -- Grow the bar while idle: the new label must be composed at all.
+      extra.set true
+      settle
+      assertExists (.text "View")
+      -- The new label opens its menu and its item fires.
+      click (.text "View")
+      settle
+      click (.text "Zoom")
+      settle
+      checkEq "grown bar: the new menu's item fires" (← zoomRef.get) 1
+      -- Left from the first menu wraps over the live count of 3 → View.
+      click (.text "File")
+      settle
+      pressKey .left
+      settle
+      assertExists (.text "Zoom")
+      assertMissing (.text "Copy")
+      -- Shrink while the (stale-index) last menu is open: closes, no panic.
+      extra.set false
+      settle
+      assertMissing (.role .menuItem)
+      assertMissing (.text "View")
+
 /-- The MenuBar group. -/
 def run : IO Unit := do
   scenario "openHoverSwitch" openHoverSwitch
@@ -152,5 +198,6 @@ def run : IO Unit := do
   scenario "dismiss" dismiss
   scenario "keyboardNav" keyboardNav
   scenario "dropdownWidth" dropdownWidth
+  scenario "liveMenusGrowth" liveMenusGrowth
 
 end Tests.MenuBar

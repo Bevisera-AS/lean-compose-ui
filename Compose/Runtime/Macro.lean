@@ -340,7 +340,16 @@ macro_rules
       let mainMod ← MonadQuotation.getMainModule
       let ns ← Macro.getCurrNamespace
       let pos := (f.raw.getPos?.map (·.byteIdx)).getD 0
-      let base := mixKeys (stringKey s!"{mainMod}.{ns}") pos.toUInt64
+      -- The current macro scope is unique per expansion (and deterministic
+      -- within a build), so two `composable fun`s with the *same* source
+      -- position — position-less macro-generated syntax (`getPos? = none`),
+      -- or one user macro expanding to several lambdas — still get distinct
+      -- keys. Without it, dynamically switching between two such lambdas at
+      -- one composition position would reuse the group and bleed its
+      -- remember slots across the switch (slot-type drift = UB).
+      let scp ← MonadQuotation.getCurrMacroScope
+      let base := mixKeys (stringKey s!"{mainMod}.{ns}")
+        (mixKeys pos.toUInt64 scp.toUInt64)
       let body' ← rewriteBody base body
       let key := quote base.toNat
       `(fun $xs* => Compose.withGroup $key $body')

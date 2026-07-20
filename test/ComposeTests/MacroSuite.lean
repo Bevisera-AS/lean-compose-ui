@@ -309,8 +309,43 @@ def restartArgs : IO Unit := do
   checkEq "restart: scope re-ran alone with its latest args" (← log.get) #["a:0", "b:0", "b:1"]
   checkEq "restart: parent ran only for the label change" (← pruns.get) 2
 
+/-- Expands to a *pair* of `composable fun`s. Both lambdas inherit the same
+synthetic source position (the one `screenPair` call site's ref), so the
+position alone cannot key them apart — the shape any user macro generating
+several screens/content lambdas in one expansion produces. The `composable`
+macro must mix each expansion's macro scope into the key to tell them
+apart. -/
+local macro "screenPair" t:term:max : term =>
+  `(((composable fun _u => do
+        let cell ← remember (mutableStateOf (1 : Nat))
+        Tests.emitText $t s!"v{← cell.get}",
+      composable fun _u => do
+        let cell ← remember (mutableStateOf (2 : Nat))
+        Tests.emitText $t s!"v{← cell.get}") :
+     (Unit → Compose.Composable Unit) × (Unit → Compose.Composable Unit)))
+
+/-- Two same-position macro-generated `composable fun`s switched at one
+composition position: each keeps its *own* remember slots across the switch —
+distinct keys mean the group is replaced, not reused (pre-fix both lambdas
+keyed off the shared source position alone, so screen B inherited screen A's
+slot and `v1` leaked through). -/
+def poslessKeys : IO Unit := do
+  let t ← TestTree.create
+  let flip ← MutableState.create false
+  let (screenA, screenB) := screenPair t
+  let comp ← Composition.create t.applier <| Tests.restartable 1 do
+    if (← flip.get) then screenB () else screenA ()
+  checkEq "posless: screen A's own slot" (← t.render) "(root v1)"
+  flip.set true
+  comp.drain
+  checkEq "posless: screen B gets fresh slots, not A's" (← t.render) "(root v2)"
+  flip.set false
+  comp.drain
+  checkEq "posless: back to A, its slot rebuilt" (← t.render) "(root v1)"
+
 /-- All `composable`-macro suites. -/
 def run : IO Unit := do
+  poslessKeys
   counterScope
   skipping
   ifFlip

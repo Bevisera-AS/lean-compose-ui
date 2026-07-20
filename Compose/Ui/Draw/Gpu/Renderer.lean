@@ -226,13 +226,6 @@ def GpuRenderer.create (dev : Device) (window : Sdl.Window) : IO GpuRenderer := 
 /-- Round `n` up to a 16-byte boundary (transfer-region alignment). -/
 private def align16 (n : Nat) : Nat := (n + 15) / 16 * 16
 
-/-- Pad `b` with zeros up to `size` bytes. -/
-private def padTo (b : ByteArray) (size : Nat) : ByteArray := Id.run do
-  let mut b := b
-  for _ in [0:size - b.size] do
-    b := b.push 0
-  return b
-
 /-- Ensure a GPU buffer of at least `needed` bytes (grow to the next power of
 two, min 4 KiB; the old buffer is released — SDL defers destruction while
 in-flight frames reference it). Untouched when `needed` is 0. -/
@@ -519,15 +512,20 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
           (UInt32.ofNat (max 4096 total.nextPowerOfTwo)))
     bufs := { bufs with transfer := some tb }
     r.buffers.set bufs
-    let put (b : ByteArray) (off : Nat) (bytes : ByteArray) : ByteArray :=
-      padTo b off ++ bytes
-    let staging := padTo
-      (put (put (put (put (put (put (put (put (put enc.quads
-        shOff enc.shadows) mvOff enc.meshVerts) miOff enc.meshIdx)
-        gvOff enc.glyphVerts) giOff enc.glyphIdx) lvOff lVerts) liOff lIdx)
-        ivOff enc.imageVerts) iiOff enc.imageIdx)
-      total
-    tb.write staging (cycle := true)
+    -- Each region writes straight into the transfer buffer at its offset (no
+    -- staging concatenation). The first write cycles — the previous frame's
+    -- copy pass may still be reading the old backing — and the rest must NOT
+    -- cycle again (another cycle would swap away the regions just written).
+    -- Alignment gaps are never uploaded, so they can stay stale.
+    let mut cycled := false
+    for (off, bytes) in [(qOff, enc.quads), (shOff, enc.shadows),
+                         (mvOff, enc.meshVerts), (miOff, enc.meshIdx),
+                         (gvOff, enc.glyphVerts), (giOff, enc.glyphIdx),
+                         (lvOff, lVerts), (liOff, lIdx),
+                         (ivOff, enc.imageVerts), (iiOff, enc.imageIdx)] do
+      unless bytes.isEmpty do
+        tb.write bytes (dstOffset := UInt32.ofNat off) (cycle := !cycled)
+        cycled := true
     let cp ← cb.beginCopyPass
     uploadRegion cp tb qOff enc.quads bufs.quad
     uploadRegion cp tb shOff enc.shadows bufs.shadow

@@ -63,29 +63,35 @@ def scrollbarThumb (track viewport content value minThumb : Float32) :
 /-- The scrollbar's pointer coroutine, shared by both axes (`vertical` picks
 the main-axis coordinate): a press on the thumb starts a drag (1:1 through
 the travel↔scroll ratio, from the value at press); a press on the track
-pages one viewport toward the click. -/
+pages one viewport toward the click. `alpha` reads the bar's live fade —
+presses are claimed only under the draw's own visibility/scrollability
+conditions, so an invisible (faded-out) or non-scrollable bar never swallows
+clicks on its strip. -/
 private partial def scrollbarGesture (state : ScrollState) (vertical : Bool)
-    (minThumbPx : Float32) (scope : PointerInputScope) : UiTask Unit := do
+    (minThumbPx : Float32) (alpha : IO Float32)
+    (scope : PointerInputScope) : UiTask Unit := do
   let ev ← scope.awaitEvent
   if ev.eventType == .press then
-    ev.consume
-    let sz ← scope.size
-    let track := (if vertical then sz.height else sz.width).toFloat32
-    let pos := mainAxis ev.position
     let viewport ← state.viewportSizeState.cell.get
     let content ← state.contentSizeState.cell.get
-    let maxVal ← state.maxValueState.cell.get
-    let v0 ← state.valueState.cell.get
-    let (len, off) := scrollbarThumb track viewport content v0 minThumbPx
-    if off ≤ pos && pos < off + len then
-      -- Thumb drag: track-px travel maps onto the scrollable range.
-      let travel := track - len
-      let ratio := if travel ≤ 0 then 0 else maxVal / travel
-      drag pos v0 ratio
-    else
-      -- Track click: page toward the click.
-      let _ ← state.scrollBy (if pos < off then -viewport else viewport)
-  scrollbarGesture state vertical minThumbPx scope
+    -- Live at event time (not composition time): the same gate as the draw.
+    if (← alpha) > 0.001 && content > viewport then
+      ev.consume
+      let sz ← scope.size
+      let track := (if vertical then sz.height else sz.width).toFloat32
+      let pos := mainAxis ev.position
+      let maxVal ← state.maxValueState.cell.get
+      let v0 ← state.valueState.cell.get
+      let (len, off) := scrollbarThumb track viewport content v0 minThumbPx
+      if off ≤ pos && pos < off + len then
+        -- Thumb drag: track-px travel maps onto the scrollable range.
+        let travel := track - len
+        let ratio := if travel ≤ 0 then 0 else maxVal / travel
+        drag pos v0 ratio
+      else
+        -- Track click: page toward the click.
+        let _ ← state.scrollBy (if pos < off then -viewport else viewport)
+  scrollbarGesture state vertical minThumbPx alpha scope
 where
   /-- The main-axis coordinate of a local position. -/
   mainAxis (p : Offset) : Float32 := if vertical then p.y else p.x
@@ -131,7 +137,7 @@ composable def scrollbar (state : ScrollState) (vertical : Bool)
     |>.hoverable source
     |>.pointerInput (mixKeys (stringKey "Compose.Material.Scrollbar")
           (mixKeys state.id (if vertical then 1 else 0)))
-        (scrollbarGesture state vertical minThumbPx)
+        (scrollbarGesture state vertical minThumbPx alphaState.get)
     |>.drawBehind do
       let sz ← DrawScope.size
       if alpha > 0.001 && content > viewport then

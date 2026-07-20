@@ -292,6 +292,53 @@ private def scrollbarAutoHide : IO Unit := do
   r.settle
   check "hover: unhover + idle hides" (near (← r.pixel 98 30) .white)
 
+/-- A scrollbar that isn't there must not swallow presses: with content that
+fits the viewport the bar never draws, so a press on its strip belongs to
+handlers beneath it in the hit path (the gesture gate reads the same
+visibility/scrollability conditions as the draw, live at event time). -/
+private def scrollbarNonScrollableDoesNotEat : IO Unit := do
+  let st ← ScrollState.create
+  let clicks ← IO.mkRef (0 : Nat)
+  let r ← oboot <| themed <|
+    Box (modifier := Modifier.size 100 100 |>.background .white
+        |>.clickable (clicks.modify (· + 1))) do
+      Column (modifier := Modifier.fillMaxSize |>.verticalScroll st) (block 100 50 .white)
+      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight)
+  r.settle
+  r.click 96 50
+  r.settle
+  checkEq "gate: a non-scrollable bar passes clicks to the ancestor" (← clicks.get) 1
+  checkEq "gate: and pages nothing" (← st.value) 0
+
+/-- A faded-out (auto-hidden) scrollbar is invisible chrome: presses on the
+strip pass through instead of paging the content. -/
+private def scrollbarFadedDoesNotEat : IO Unit := do
+  let st ← ScrollState.create
+  let clicks ← IO.mkRef (0 : Nat)
+  let r ← oboot <| themed <|
+    Box (modifier := Modifier.size 100 100 |>.background .white
+        |>.clickable (clicks.modify (· + 1))) do
+      Column (modifier := Modifier.fillMaxSize |>.verticalScroll st) (block 100 400 .white)
+      VerticalScrollbar st (Modifier.align .topEnd |>.fillMaxHeight)
+  r.settle
+  -- While visible the strip owns its presses (a track click pages).
+  r.click 96 80
+  r.settle
+  checkEq "gate: the visible bar still pages" (← st.value) 100
+  checkEq "gate: and keeps the click" (← clicks.get) 0
+  st.scrollTo 0
+  r.settle
+  -- Fade out (pointer off the bar, idle past the hide delay), then the same
+  -- click passes through.
+  r.move 20 20
+  r.tick 1100
+  r.settle
+  check "premise: the bar faded" (near (← r.pixel 98 10) .white)
+  r.click 96 80
+  r.settle
+  checkEq "gate: a faded-out bar passes clicks through" (← clicks.get) 1
+  checkEq "gate: and no longer pages" (← st.value) 0
+
 /-! ## LazyColumn -/
 
 /-- Only the visible window composes; scrolling composes entering items,
@@ -761,6 +808,8 @@ def run : IO Unit := do
   scrollbarGeometry
   scrollbarDrag
   scrollbarAutoHide
+  scrollbarNonScrollableDoesNotEat
+  scrollbarFadedDoesNotEat
   lazyVirtualization
   lazyStateSwap
   lazyWheelPixels

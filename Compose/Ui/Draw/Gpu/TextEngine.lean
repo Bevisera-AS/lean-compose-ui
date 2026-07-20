@@ -32,6 +32,15 @@ private partial def collect (runs : IO.Ref (Array ResolvedRun))
     let data ← run.text.gpuDrawData
     let mut seqs : ResolvedRun := #[]
     for s in data do
+      -- Every sequence mints a fresh table index, so the encoder's
+      -- `atlas == seq.atlas` merge never fires across runs even though runs
+      -- on one engine usually share one SDL_ttf atlas texture (N labels = N
+      -- glyph draws + binds). Deduplicating needs texture identity, and the
+      -- pinned lean-sdl3 has none: `gpuDrawData` wraps each borrowed
+      -- `SDL_GPUTexture*` in a fresh external (ffi/ttf_text.c) with no
+      -- address/eq accessor — images dedup by `ImageBitmap.id` precisely
+      -- because they carry a Lean-side id. Fixable only with a bindings
+      -- addition (e.g. `Gpu.Texture.addr`).
       let idx := (← atlases.get).size
       atlases.modify (·.push s.atlasTexture)
       seqs := seqs.push

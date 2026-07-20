@@ -92,7 +92,13 @@ after FreeType composites its color layers; on an unpatched SDL_ttf the
 cached metrics come out 0×0 and the `TTF_Text` layout never emits a draw
 op — the glyph would be an invisible advance. Probing the metrics sees
 exactly what that layout will see, so a stack that can't draw the color
-font skips it (and the monochrome one takes over). -/
+font skips it (and the monochrome one takes over).
+
+The probe font is released on every path — success, early `return`, and
+throw — by Lean's deterministic reference counting: `Font` is a
+finalizer-only external (`TTF_CloseFont` runs when the last reference
+drops; lean-sdl3 exposes no manual close), and nothing here retains `f`
+past the probe. -/
 private def emojiFontUsable (p : System.FilePath) : IO Bool := do
   try
     let f ← Sdl.Ttf.openFont p.toString 16

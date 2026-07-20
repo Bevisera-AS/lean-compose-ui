@@ -22,8 +22,9 @@ exactly like a single fill.
 Dashing is a pure arc-length split (`dashSplit`) that runs *before* offsetting;
 each dash strokes as an open polyline with the stroke's caps. A closed contour
 dashes as the open walk around it — when the pattern is "on" across the start
-point, the two abutting butt-capped dashes rejoin seamlessly through the
-winding union.
+point, the wrap-spanning run is stitched into one dash through `pts[0]` (so
+the seam corner keeps its join wedge), and a run covering the whole walk
+strokes closed.
 
 Pure geometry, no SDL, no `IO`; heavily `#guard`-tested (exact arithmetic for
 `dashSplit`, mesh-membership probes for caps/joins). Mirrors
@@ -99,9 +100,12 @@ def Stroke.boundsPad (s : Stroke) : Float32 :=
 (alternating on/off lengths, starting "on") shifted by `phase` (wraps, may be
 negative). Returns open sub-polylines; cut points are lerped on their segment
 and interior vertices are kept. A closed polyline is dashed as the open walk
-around it, closing segment included (abutting first/last dashes rejoin through
-the winding union). Assumes a validated pattern (even count ≥ 2, non-negative,
-positive total — `strokeOutline` checks); a non-positive total yields `#[]`. -/
+around it, closing segment included; when the pattern is "on" across the
+walk's start vertex, the end-run and start-run are stitched into one dash
+through `pts[0]` (kept as an interior vertex, so the stroker emits its join
+wedge — otherwise the seam corner would lose its join to two butt ends).
+Assumes a validated pattern (even count ≥ 2, non-negative, positive total —
+`strokeOutline` checks); a non-positive total yields `#[]`. -/
 def dashSplit (pts : Array Offset) (closed : Bool) (intervals : Array Float32)
     (phase : Float32) : Array (Array Offset) := Id.run do
   if pts.size < 2 then return #[]
@@ -148,6 +152,15 @@ def dashSplit (pts : Array Offset) (closed : Bool) (intervals : Array Float32)
         dash := dash.push (if b >= s1 then walk[i + 1]! else at' b)
     if dash.size >= 2 then
       out := out.push dash
+  -- Stitch the wrap-spanning run: the pattern is on across the seam exactly
+  -- when the last run ends at `totalLen` and the first begins at 0 — one
+  -- contiguous dash through `pts[0]` (the duplicated seam point dropped).
+  if closed && out.size >= 2 then
+    let first := out[0]!
+    let last := out[out.size - 1]!
+    if Offset.distance first[0]! pts[0]! <= 1e-6
+        && Offset.distance last[last.size - 1]! pts[0]! <= 1e-6 then
+      out := (out.extract 1 (out.size - 1)).push (last.pop ++ first)
   return out
 
 section
@@ -177,6 +190,16 @@ private def approxDashes (got : Array (Array Offset)) (want : Array (Array Offse
 -- Degenerate patterns yield nothing.
 #guard (dashSplit #[⟨0, 0⟩, ⟨10, 0⟩] false #[0, 0] 0).isEmpty
 #guard (dashSplit #[⟨5, 5⟩] false #[4, 2] 0).isEmpty
+-- A pattern "on" across a closed walk's seam stitches the end-run and
+-- start-run into ONE dash through `pts[0]` (kept as an interior vertex, so
+-- its join wedge is emitted): (6,4) phase 3 on a perimeter-40 square runs
+-- on over [37..40]∪[0..3].
+#guard approxDashes (dashSplit #[⟨0, 0⟩, ⟨10, 0⟩, ⟨10, 10⟩, ⟨0, 10⟩] true #[6, 4] 3)
+        #[#[⟨7, 0⟩, ⟨10, 0⟩, ⟨10, 3⟩], #[⟨10, 7⟩, ⟨10, 10⟩, ⟨7, 10⟩],
+          #[⟨3, 10⟩, ⟨0, 10⟩, ⟨0, 7⟩], #[⟨0, 3⟩, ⟨0, 0⟩, ⟨3, 0⟩]]
+-- Phase 0 (a run *starting* at the seam but off just before it) does not
+-- stitch: four separate dashes, exactly as before.
+#guard (dashSplit #[⟨0, 0⟩, ⟨10, 0⟩, ⟨10, 10⟩, ⟨0, 10⟩] true #[6, 4] 0).size == 4
 end
 
 /-! ## Outline construction -/
@@ -283,7 +306,13 @@ def strokeOutline (pts : Array Offset) (closed : Bool) (s : Stroke) :
   | some (ints, phase) =>
     let mut out : Array (Array Offset) := #[]
     for dash in dashSplit pts closed ints phase do
-      out := out ++ strokePolyline dash false s h
+      -- A dash covering the whole closed walk comes back with coincident
+      -- endpoints (a fully-"on" pattern, or abutting runs whose union wraps):
+      -- stroke it closed so every vertex — the seam included — gets a join.
+      if closed && dash.size > 2 && Offset.distance dash[0]! dash[dash.size - 1]! <= 1e-6 then
+        out := out ++ strokePolyline dash.pop true s h
+      else
+        out := out ++ strokePolyline dash false s h
     return out
   | none => return strokePolyline pts closed s h
 
@@ -356,6 +385,21 @@ private def outlineMesh (pts : Array Offset) (closed : Bool) (s : Stroke) : Mesh
   let m := outlineMesh #[⟨0, 0⟩, ⟨20, 0⟩] false { width := 4, dash := some (#[6, 4], 0) }
   meshContains m ⟨3, 0⟩ (opaqueOnly := true) && !meshContains m ⟨8, 0⟩
     && meshContains m ⟨13, 0⟩ (opaqueOnly := true) && !meshContains m ⟨19.5, 0⟩
+-- A dashed CLOSED contour whose pattern is on across the walk's start keeps
+-- the join wedge at `pts[0]`: the seam corner's miter tip is filled (it was
+-- a notch when the wrap run was split into two butt-capped open dashes),
+-- while mid-edge gaps stay off.
+#guard
+  let m := outlineMesh #[⟨0, 0⟩, ⟨10, 0⟩, ⟨10, 10⟩, ⟨0, 10⟩] true
+    { width := 4, join := .miter, dash := some (#[6, 4], 3) }
+  meshContains m ⟨-1.7, -1.7⟩ (opaqueOnly := true) && !meshContains m ⟨5, 0⟩
+-- A fully-"on" pattern (a single run covering the whole closed walk) strokes
+-- closed: joins at every corner including the seam, no butt ends.
+#guard
+  let m := outlineMesh #[⟨0, 0⟩, ⟨10, 0⟩, ⟨10, 10⟩, ⟨0, 10⟩] true
+    { width := 4, join := .miter, dash := some (#[50, 2], 1) }
+  meshContains m ⟨-1.7, -1.7⟩ (opaqueOnly := true)
+    && meshContains m ⟨11.7, 11.7⟩ (opaqueOnly := true)
 -- An invalid dash pattern (odd count) strokes solid.
 #guard
   let m := outlineMesh #[⟨0, 0⟩, ⟨20, 0⟩] false { width := 4, dash := some (#[6], 0) }

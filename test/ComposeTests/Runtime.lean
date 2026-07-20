@@ -809,6 +809,31 @@ def staleSpineCountsAfterAbort : IO Unit := do
   comp.drain
   checkEq "stale: later insert lands at the true index" (← t.render) "(root c1 w z)"
 
+/-- A throw from one scope's re-run must not strand the rest of the drained
+batch: not-yet-re-run scopes go back on the queue and recover on the next
+drain. -/
+def drainRequeuesRemainingOnThrow : IO Unit := do
+  let t ← TestTree.create
+  let boom ← MutableState.create false
+  let sB ← MutableState.create (0 : Nat)
+  let bRuns ← IO.mkRef (0 : Nat)
+  let comp ← Composition.create t.applier do
+    restartable 1 do
+      if ← boom.get then
+        withGroup 11 (throw (IO.userError "boom"))
+      else
+        withGroup 12 (pure ())
+    restartable 2 do
+      let _ ← sB.get
+      bRuns.modify (· + 1)
+  checkEq "drainKeep: initial runs" (← bRuns.get) 1
+  boom.set true
+  sB.set 1
+  checkThrows "drainKeep: throw propagates" comp.drain
+  boom.set false
+  comp.drain
+  checkEq "drainKeep: stranded sibling recovered" (← bRuns.get) 2
+
 /-- All Runtime suites. -/
 def run : IO Unit := do
   rememberSame
@@ -843,5 +868,6 @@ def run : IO Unit := do
   keyChangeAbortKeyReverts
   keyChangeAbortInCompletedChild
   staleSpineCountsAfterAbort
+  drainRequeuesRemainingOnThrow
 
 end Tests.Runtime

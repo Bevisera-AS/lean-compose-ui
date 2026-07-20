@@ -31,7 +31,8 @@ side effects queued by the failed pass are abandoned, while already-collected
 forgets (whose removals did apply) stay queued for the next successful apply;
 a failed *initial* composition rolls back to a clean slate (`composed` stays
 false, retry composes from scratch); a failed re-run leaves its scope invalid
-and queued, so a later drain retries once the offending state changes.
+and queued — and re-queues every drained-but-not-yet-re-run scope of the same
+batch — so a later drain retries once the offending state changes.
 (Compose's `onAbandoned` protocol is not modeled: a `DisposableEffect` whose
 pass never applied simply never runs either end.)
 -/
@@ -141,8 +142,20 @@ private partial def drainLoop (r : Recomposer) (fuel : Nat) : IO Unit := do
       "during its recomposition)"
   -- Tree order: parents before descendants, document order among siblings.
   let sorted := live.qsort fun a b => decide (a.1 < b.1)
+  let mut idx := 0
   for (_, s) in sorted do
-    r.rerunScope s
+    try
+      r.rerunScope s
+    catch e =>
+      -- One scope's throw must not strand the rest of the batch: everything
+      -- drained but not yet re-run goes back on the queue (still invalid),
+      -- then the error propagates (`rerunScope` re-queued the thrower).
+      for (_, rest) in sorted.extract (idx + 1) sorted.size do
+        unless (← rest.disposed.get) || (← rest.valid.get) do
+          r.composer.invalidations.modify fun q =>
+            if q.any (·.id == rest.id) then q else q.push rest
+      throw e
+    idx := idx + 1
   drainLoop r (fuel - 1)
 
 /-- Drain the invalidation queue until quiescent: scopes re-run in tree order

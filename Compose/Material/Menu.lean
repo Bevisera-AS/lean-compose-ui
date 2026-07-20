@@ -273,13 +273,35 @@ composable def ExposedDropdownMenuBox (expanded : Bool)
   Box (content scope)
     (modifier := modifier.onGloballyPositioned scope.anchorRect.set)
 
+/-- Endpoints (element-local **px**) of the two strokes of the ▾/▴ trailing
+glyph at `density`: the glyph is authored in dp on a 12×12 dp box, so its
+endpoints must scale with the density like the box does (regression: raw-px
+endpoints drew a tiny, mispositioned glyph on HiDPI). -/
+private def trailingTriangleSegments (density : Density) (expanded : Bool) :
+    (Offset × Offset) × (Offset × Offset) :=
+  let px (d : Dp) : Float32 := density.dpToPx d
+  let (yTop, yBot) := if expanded then (px 8, px 4) else (px 4, px 8)
+  ((⟨px 2, yTop⟩, ⟨px 6, yBot⟩), (⟨px 6, yBot⟩, ⟨px 10, yTop⟩))
+
+#guard trailingTriangleSegments {} false == ((⟨2, 4⟩, ⟨6, 8⟩), (⟨6, 8⟩, ⟨10, 4⟩))
+#guard trailingTriangleSegments {} true == ((⟨2, 8⟩, ⟨6, 4⟩), (⟨6, 4⟩, ⟨10, 8⟩))
+-- HiDPI: endpoints scale with the density (the 12×12 dp box is 24×24 px).
+#guard trailingTriangleSegments { density := 2 } false
+        == ((⟨4, 8⟩, ⟨12, 16⟩), (⟨12, 16⟩, ⟨20, 8⟩))
+#guard trailingTriangleSegments { density := 2 } true
+        == ((⟨4, 16⟩, ⟨12, 8⟩), (⟨12, 8⟩, ⟨20, 16⟩))
+
 /-- The ▾ trailing glyph of `ExposedDropdownMenuField`, drawn with two lines
-(no icon font). Flips ▴ while expanded. -/
+(no icon font). Flips ▴ while expanded. Geometry is dp-authored and
+converted at the draw context's density (`trailingTriangleSegments` — the
+`drawHandleGlyph` idiom). -/
 private def trailingTriangle (color : Color) (expanded : Bool) : Composable Unit :=
   Spacer (Modifier.size 12 12 |>.drawBehind do
-    let (yTop, yBot) : Float32 × Float32 := if expanded then (8, 4) else (4, 8)
-    DrawScope.drawLine (.solid color) ⟨2, yTop⟩ ⟨6, yBot⟩ 1.5
-    DrawScope.drawLine (.solid color) ⟨6, yBot⟩ ⟨10, yTop⟩ 1.5)
+    let ctx ← read
+    let ((a, b), (c, d)) := trailingTriangleSegments ctx.density expanded
+    let w := ctx.density.dpToPx 1.5
+    DrawScope.drawLine (.solid color) a b w
+    DrawScope.drawLine (.solid color) c d w)
 
 /-- The read-only, field-look anchor for `ExposedDropdownMenuBox`: an
 outlined Surface showing the selected `value` with a trailing ▾ glyph;

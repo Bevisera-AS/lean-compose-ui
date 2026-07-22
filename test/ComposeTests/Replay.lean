@@ -260,8 +260,9 @@ private def smokeDrag : IO Unit := do
   let (st, stats) ← replayScroll "assets/test/input/smoke-drag.jsonl"
   checkScrollInvariants "smoke" st stats 40
 
-/-- One real-Pixel fixture (Pixel 10 Pro, wireless-debug capture session,
-2026-07-17) through the scroll rig + the shared invariant block. -/
+/-- One real-Pixel fixture (Pixel 10 Pro, wireless-debug capture sessions,
+2026-07-17; scroll-session refreshed 2026-07-21 on the iteration-11 build)
+through the scroll rig + the shared invariant block. -/
 private def pixelFixture (name : String) (minTravel : Float32) : IO Unit := do
   let (st, stats) ← replayScroll s!"assets/test/input/{name}"
   checkScrollInvariants name st stats minTravel

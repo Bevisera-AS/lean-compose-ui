@@ -135,28 +135,26 @@ composable def widgetsUi : Composable Unit := do
   let choice ← remember (mutableStateOf (0 : Nat))
   let on ← remember (mutableStateOf false)
   let amount ← remember (mutableStateOf (0.5 : Float32))
-  MaterialTheme do
-    Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 10) do
-      Text "Material widgets" (style := { fontSize := 22 })
-      buttonsSection clicks
-      HorizontalDivider
-      togglesSection checked choice on
-      HorizontalDivider
-      progressSection amount
-      HorizontalDivider
-      imagesSection
-      HorizontalDivider
-      gradientsSection
-      HorizontalDivider
-      transformsSection
-      HorizontalDivider
-      effectsSection
-      HorizontalDivider
-      darkSection checked on
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 10) do
+    Text "Material widgets" (style := { fontSize := 22 })
+    buttonsSection clicks
+    HorizontalDivider
+    togglesSection checked choice on
+    HorizontalDivider
+    progressSection amount
+    HorizontalDivider
+    imagesSection
+    HorizontalDivider
+    gradientsSection
+    HorizontalDivider
+    transformsSection
+    HorizontalDivider
+    effectsSection
+    HorizontalDivider
+    darkSection checked on
 
 end Demos.Widgets
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  Compose.runApp "compose widgets" 480 700 Demos.Widgets.widgetsUi
-    { clearColor := Compose.ColorScheme.light.surface }
+  Compose.runMaterialApp "compose widgets" 480 700 Demos.Widgets.widgetsUi

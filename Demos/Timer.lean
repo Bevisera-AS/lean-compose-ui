@@ -96,6 +96,6 @@ composable def timerBody (elapsed duration : MutableState Float32) :
 composable def timerUi : Composable Unit := do
   let elapsed ← remember (mutableStateOf (0.0 : Float32))
   let duration ← remember (mutableStateOf (15000.0 : Float32))
-  MaterialTheme (timerBody elapsed duration)
+  timerBody elapsed duration
 
 end Demos.Timer

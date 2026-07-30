@@ -454,7 +454,7 @@ composable def filesUi (fs : FsSource) (home : String) : Composable Unit := do
   let loading ← remember (mutableStateOf false)
   let generation ← remember (IO.mkRef 0)
   let st : FilesState := { cwd, listing, selected, showHidden, loading, generation }
-  MaterialTheme (filesBody fs st)
+  filesBody fs st
 
 /-- The real app: browse the actual filesystem starting at `$HOME` (or `/`). -/
 def filesApp : Composable Unit := do

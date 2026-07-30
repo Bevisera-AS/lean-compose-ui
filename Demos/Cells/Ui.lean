@@ -371,6 +371,6 @@ composable def cellsUi (initial : Sheet := seedSheet) : Composable Unit := do
   let st ← remember (CellsState.create initial)
   let hs ← rememberScrollState
   let vs ← rememberScrollState
-  MaterialTheme (cellsScreen st hs vs)
+  cellsScreen st hs vs
 
 end Demos.Cells

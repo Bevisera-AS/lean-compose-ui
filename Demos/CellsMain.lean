@@ -10,5 +10,4 @@ without colliding with the test runner's `main`.
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  Compose.runApp "7GUIs Cells" 760 520 Demos.Cells.cellsUi
-    { clearColor := Compose.ColorScheme.light.surface }
+  Compose.runMaterialApp "7GUIs Cells" 760 520 Demos.Cells.cellsUi

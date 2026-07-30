@@ -3,13 +3,14 @@ import Compose
 /-!
 # Liquid Glass (`lake exe demo-glass`)
 
-The Wave-2 showcase for `Theme.liquidGlass`: a vivid scrolling backdrop
-under a fixed glass toolbar and a floating glass panel (both
-`GlassSurface`), an `ElevatedCard` rendering as glass purely through the
-theme's `SurfaceMaterial` seam, and a glass dialog whose backdrop frosts in
-through the animated `blurBehind`. The toolbar switch flips the whole
-subtree between the light and dark adaptive treatments
-(`GlassSpec.forScheme`). Headless:
+The showcase for `Theme.liquidGlass`: a vivid scrolling backdrop under a
+fixed glass toolbar and a floating glass panel (both `GlassSurface`,
+frosting the content scrolling beneath them — true per-panel backdrop blur
+on the GPU backend), an `ElevatedCard` rendering as glass purely through
+the theme's `SurfaceMaterial` seam, and a glass dialog that additionally
+frosts the whole window through the animated `blurBehind`. The toolbar
+switch flips the whole subtree between the light and dark adaptive
+treatments (`GlassSpec.forScheme`). Headless:
 `SDL_VIDEO_DRIVER=dummy COMPOSE_MAX_FRAMES=60 lake exe demo-glass`.
 -/
 
@@ -60,7 +61,7 @@ composable def panelSection (open' : MutableState Bool) : Composable Unit := do
   GlassSurface (shape := .rounded 18) do
     Column (modifier := Modifier.padding (all := 14)) (verticalArrangement := .spacedBy 8) do
       Text "Frosted panel" (style := { fontSize := 15, weight := .medium })
-      Text "Tint, sheen, and rim scale to any panel." (style := { fontSize := 12 })
+      Text "Frost, tint, sheen, and rim scale to any panel." (style := { fontSize := 12 })
       Button (open'.set true) (Text "Open glass dialog")
 
 /-- The demo screen: scrolling backdrop, fixed glass toolbar (top), floating

@@ -29,7 +29,8 @@ as demos.
   controls (`Button`, `Checkbox`, `Switch`, `Slider`, `TextField`, …),
   scroll, lazy lists, popups, menus, and dialogs.
 - **Two render backends** — a GPU backend (the default) with instanced SDF
-  shapes, elevation shadows, real layers, blur, and exact rounded clipping;
+  shapes, elevation shadows, real layers, blur, true per-panel backdrop
+  blur (liquid-glass frost), and exact rounded clipping;
   and a CPU backend (`COMPOSE_BACKEND=sdl`) that runs headless — all tests
   use it. Both draw the same recorded display list.
 - **Desktop components** — declarative multi-window `application` with

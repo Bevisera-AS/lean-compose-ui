@@ -447,19 +447,44 @@ sampler (one bilinear fetch weighs two texels — `Gpu.Sdf.blurWeight`/
 `blurTapOffset` twins) and normalizing by the accumulated weight, premul
 in/premul out. The SDL backend renders blur-layer content **unblurred** (a
 documented approximation, pixel-pinned; a CPU Gaussian would verify nothing
-the GPU probe doesn't). Backdrop blur (sampling behind the layer) is out of
-scope — but see **blur-behind**: `Popup`/`Dialog` (and the Material
+the GPU probe doesn't). Verified by `gpu-probe` ⑭ (impulse response, energy
+conservation, near-identity at tiny σ); excluded from `gpu-parity`
+(GPU-only by design).
+
+**Backdrop blur** (`Prim.backdrop`, GPU-only): `Modifier.backdropBlur
+(radius) (shape)` / `DrawScope.drawBackdrop (bounds) (sigma)` record a
+panel that frosts whatever is *behind it* in the window (σ = radius/2 px,
+capped at 64), masked exactly by the ambient rounded clip (the draw walk
+records the prim under the panel shape's `clipRoundRect`). The encoder
+splits the target list at the **first** backdrop (`snapshotSplit` +
+`BackdropEnc`); the renderer replays the prefix into a pooled full-screen
+snapshot, downsamples each panel's region (panel + 3σ + 4, one halving —
+two past σ 32 — through layer-pipeline copy draws, so the separable passes
+run at σ/2ʰ ≤ 16 within the blur pipeline's 48-tap reach), runs the H/V
+Gaussian round-trip, then clears the target, blits the snapshot 1:1
+nearest (byte-exact), and replays the suffix, whose `.backdrop` commands
+composite the blurred panel quads through the layer pipeline's `LayerClip`
+mask. All panels share the one prefix snapshot, so overlapping glass
+siblings don't frost each other (the iOS-parity approximation), and a
+backdrop inside an *offscreen* layer (alpha/blur/transform ancestor) is
+dropped by the encoder — both documented v1 constraints. The SDL backend
+executes the prim as a no-op (glass keeps tint + rim + shadow — the
+established blur degrade), which also makes it a `gpu-parity` exclusion.
+Verified by `gpu-probe` ⑲ (blit byte-exactness, corner culling, constant
+regions ≈ identity through the downsample chain, a monotonic seam ramp,
+the σ = 40 two-halving path, and text/image prims on both sides of the
+split keeping the resolve/encode walks in lockstep).
+
+**Blur-behind** (whole-window frost): `Popup`/`Dialog` (and the Material
 wrappers) take `blurBehind : Dp`, and while such an overlay is open the
 window's *base* content composes under an always-present wrapper node that
 applies `Modifier.blur` (max radius over open overlays, recomputed on
 register/unregister/refresh) with the radius **animated** toward the
 request (200 ms tween in `backdropHost` — frost eases in on open, back out
-on dismissal). This is the Phase-A frost behind `Theme.liquidGlass`
-(`Compose/Material/Glass.lean`): non-overlay glass panels are tint + sheen
-+ rim + shadow without frosting their backdrop, overlay glass frosts for
-real, σ capped at 16 until Phase B's per-panel backdrop pass.
-Verified by `gpu-probe` ⑭ (impulse response, energy conservation,
-near-identity at tiny σ); excluded from `gpu-parity` (GPU-only by design).
+on dismissal; σ capped at 16, the layer-blur cap). Distinct from the
+per-panel backdrop above: `Theme.liquidGlass` panels frost *themselves*
+through `Modifier.backdropBlur`; `blurBehind` frosts *everything under an
+overlay*, and dialogs may use both.
 
 **Stretch** (`LayerEffect.stretch (sx sy)`): the Android-12 overscroll warp
 (AOSP `StretchEffect` in Flutter's normalized-UV form — identical because

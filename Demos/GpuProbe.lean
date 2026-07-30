@@ -930,6 +930,102 @@ private def probeLayerClip (r : Compose.Draw.Gpu.GpuRenderer)
   check "sentinel: unmasked layer after masked ones is byte-identical to the layer alone"
     regionSame
 
+/-- ⑲ true backdrop blur (Wave 3): a `drawBackdrop` panel splits the frame —
+the prefix renders into the snapshot, the panel's region blurs at a
+downsampled resolution, and the composite draws it masked by the rounded
+clip. Over a red/blue seam base: outside the panel the 1:1 blit keeps the
+base byte-exact, the culled rounded corner shows the *crisp* base (a white
+marker square), constant regions survive the downsample→blur→upsample chain
+(≈ identity), the seam frosts to a monotonic red↔blue ramp, and text/image
+prims on both sides of the split keep the resolve/encode walks in lockstep
+(the suffix draws crisp, on top). A second scene runs σ = 40 — the
+two-halving path — where a small white marker must dilute to ≈ the
+background (the blur really ran at quarter resolution). -/
+private def probeBackdrop (r : Compose.Draw.Gpu.GpuRenderer)
+    (engine : Sdl.Ttf.TextEngine) (font : Sdl.Ttf.Font)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  say "⑲ backdrop panels → snapshot split + region blurs → offscreen pixels"
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (bs : ByteArray) (w x y : Nat) =>
+    let o := (y * w + x) * 4
+    if bgra then (bs.get! (o+2), bs.get! (o+1), bs.get! o, bs.get! (o+3))
+    else (bs.get! o, bs.get! (o+1), bs.get! (o+2), bs.get! (o+3))
+  -- Scene 1: red|blue seam at x = 100, a white 6×6 marker on the panel's
+  -- rounded corner, text + image prims before AND after the backdrop.
+  let img ← ImageBitmap.ofPixels 2 2 fun x y =>
+    match x, y with
+    | 0, 0 => .red
+    | 1, 0 => .green
+    | 0, 1 => .blue
+    | _, _ => .white
+  let preText ← engine.createText font "Hi"
+  let postText ← engine.createText font "Hi"
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawRect (.solid .red) ⟨0, 0⟩ ⟨100, 140⟩
+    DrawScope.drawRect (.solid .blue) ⟨100, 0⟩ ⟨120, 140⟩
+    DrawScope.drawRect (.solid .white) ⟨40, 20⟩ ⟨6, 6⟩
+    DrawScope.drawText { text := preText, string := "Hi", color := .white } ⟨10, 110⟩
+    DrawScope.drawImage img ⟨190, 105, 214, 129⟩ (sampling := .nearest)
+    DrawScope.clipRoundRect (RoundRect.circular ⟨40, 20, 120, 100⟩ 16) do
+      DrawScope.drawBackdrop ⟨40, 20, 120, 100⟩ 8
+    DrawScope.drawText { text := postText, string := "Hi", color := .black } ⟨70, 55⟩
+    DrawScope.drawImage img ⟨130, 105, 154, 129⟩ (sampling := .nearest)
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 220 140
+  let p := px bytes 220
+  check "blit: outside the panel the base is byte-exact (red @20,60)"
+    (p 20 60 == (255, 0, 0, 255))
+  check "blit: and on the blue side (@200,60)" (p 200 60 == (0, 0, 255, 255))
+  check s!"mask: rounded corner culled — the marker stays crisp white (got {p 43 23})"
+    ((p 43 23).1 ≥ 250 && (p 43 23).2.1 ≥ 250 && (p 43 23).2.2.1 ≥ 250)
+  check s!"frost: just inside the mask the marker smears (g = {(p 48 26).2.1})"
+    (4 ≤ (p 48 26).2.1.toNat && (p 48 26).2.1.toNat ≤ 100)
+  check s!"frost: constant region ≈ identity through the chain (got {p 55 88})"
+    ((p 55 88).1.toNat ≥ 245 && (p 55 88).2.1.toNat ≤ 8 && (p 55 88).2.2.1.toNat ≤ 8)
+  let seam := p 100 90
+  check s!"frost: seam center is the red/blue mix (r={seam.1} b={seam.2.2.1})"
+    (90 ≤ seam.1.toNat && seam.1.toNat ≤ 170
+      && 85 ≤ seam.2.2.1.toNat && seam.2.2.1.toNat ≤ 170)
+  check s!"frost: monotonic ramp across the seam ({(p 88 90).1} > {seam.1} > {(p 112 90).1})"
+    ((p 88 90).1 > seam.1 && seam.1 > (p 112 90).1
+      && (p 88 90).1.toNat ≥ 175 && (p 112 90).1.toNat ≤ 80)
+  let mut preLit := 0
+  for x in [10:40] do
+    for y in [110:130] do
+      if (p x y).2.1 > 100 then preLit := preLit + 1
+  check s!"lockstep: prefix text blitted through the snapshot ({preLit} lit px)" (preLit > 10)
+  let mut postDark := 0
+  for x in [70:100] do
+    for y in [55:75] do
+      if (p x y).1 < 120 then postDark := postDark + 1
+  check s!"lockstep: suffix text drew crisp over the frost ({postDark} dark px)" (postDark > 10)
+  check "lockstep: prefix image quadrant (red @196,111)" (p 196 111 == (255, 0, 0, 255))
+  check "lockstep: prefix image quadrant (white @208,123)" (p 208 123 == (255, 255, 255, 255))
+  check "lockstep: suffix image quadrant (red @136,111)" (p 136 111 == (255, 0, 0, 255))
+  check "lockstep: suffix image quadrant (white @148,123)" (p 148 123 == (255, 255, 255, 255))
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: one backdrop, two images, snapshot in the pool"
+    (stats.backdrops == 1 && stats.images == 2 && stats.poolTextures ≥ 3)
+  -- Scene 2: σ = 40 (the two-halving path) over a mid-gray base — a 10×10
+  -- white marker under the panel must dilute to ≈ the background (its whole
+  -- mass spreads over (3σ)²), while a marker outside the panel stays crisp.
+  let (list2, _) ← DrawScope.record {} do
+    DrawScope.drawRect (.solid .white) ⟨105, 65⟩ ⟨10, 10⟩
+    DrawScope.drawRect (.solid .white) ⟨10, 10⟩ ⟨10, 10⟩
+    DrawScope.clipRoundRect (RoundRect.circular ⟨40, 20, 180, 120⟩ 8) do
+      DrawScope.drawBackdrop ⟨40, 20, 180, 120⟩ 40
+  let bytes2 ← r.renderOffscreen ⟨0.5, 0.5, 0.5, 1⟩ list2 220 140
+  let q := px bytes2 220
+  check s!"σ=40: the marker dilutes into the frost (got {(q 110 70).1})"
+    (110 ≤ (q 110 70).1.toNat && (q 110 70).1.toNat ≤ 150)
+  check s!"σ=40: constant gray survives the two-halving chain (got {(q 60 90).1})"
+    (((((q 60 90).1.toNat : Int)) - 128).natAbs ≤ 8)
+  check "σ=40: marker outside the panel stays crisp white via the blit"
+    (q 15 15 == (255, 255, 255, 255))
+  let stats2 ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats2.brief}"
+  check "frame stats: the σ=40 panel is one backdrop" (stats2.backdrops == 1)
+
 /-- ⑮ fractional-origin text (M-j): both backends snap run origins through
 the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
 byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
@@ -1033,6 +1129,7 @@ def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
   probeBlur gpuRenderer swapchainFmt
   probeStretch gpuRenderer swapchainFmt
   probeLayerClip gpuRenderer swapchainFmt
+  probeBackdrop gpuRenderer engine font swapchainFmt
   probeFractionalText gpuRenderer engine font
   probeInvalidate gpuRenderer
   match raw with

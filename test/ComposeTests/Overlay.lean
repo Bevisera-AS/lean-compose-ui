@@ -649,7 +649,8 @@ private def alertDialogBasics : IO Unit := do
         withGroup 2 (pure ()))
   r.settle
   -- The dialog surface is a centered light card over the dimmed backdrop.
-  check "alert: surface drawn in the center" (near (← r.pixel 150 150) L.surface 6)
+  check "alert: surface drawn in the center"
+    (near (← r.pixel 150 150) L.surfaceContainerHigh 6)
   check "alert: scrim outside" (near (← r.pixel 20 280) (overWhite dialogScrimColor) 6)
   -- Find the confirm button by probing for primary-colored label pixels is
   -- brittle; click via the surface's bottom-right action row instead.
@@ -707,7 +708,7 @@ private def menuMouse : IO Unit := do
   check "menu: expanded" ((← f.expanded.cell.get) == true)
   -- The menu surface now covers the area below the anchor.
   check s!"menu: items drawn over the content ({showColor (← r.pixel 80 80)})"
-    (near (← r.pixel 80 80) L.surface 8)
+    (near (← r.pixel 80 80) L.surfaceContainer 8)
   -- First item ≈ y 51..87 (border 1 + vertical padding 8, item ≥ 36 tall).
   r.click 60 65
   r.settle

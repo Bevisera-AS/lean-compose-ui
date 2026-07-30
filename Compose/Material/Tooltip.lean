@@ -88,10 +88,12 @@ composable def TooltipSurface (text : String) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
   let typo ← MaterialTheme.typography
+  let tokens ← MaterialTheme.tokens
   Surface (modifier := Modifier.padding (horizontal := some 8) (vertical := some 4))
       (shape := shapes.extraSmall) (color := some colors.surfaceVariant)
       (border := some { width := 1, color := colors.outlineVariant })
-      (elevation := 2) do
+      (elevation := tokens.elevations.tooltip)
+      (material := some tokens.materials.chrome) do
     Text text (style := typo.bodyMedium)
 
 /-- `TooltipArea` with the default `TooltipSurface` body — the common

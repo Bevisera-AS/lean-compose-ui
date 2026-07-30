@@ -48,7 +48,8 @@ composable def TopAppBar (title : String) (modifier : Modifier := {})
     (actions : Option (Composable Unit) := none) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let typo ← MaterialTheme.typography
-  Surface (modifier := modifier.fillMaxWidth) (color := some colors.surface) do
+  Surface (modifier := modifier.fillMaxWidth) (color := some colors.surface)
+      (material := some (← MaterialTheme.tokens).materials.bars) do
     Row (modifier := Modifier.fillMaxWidth.height 64
           |>.padding (horizontal := some 8))
         (horizontalArrangement := .spacedBy 8)

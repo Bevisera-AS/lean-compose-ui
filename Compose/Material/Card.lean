@@ -23,12 +23,14 @@ composable def Card (content : Composable Unit := pure ())
   let colors ← MaterialTheme.colorScheme
   Surface content modifier (shape := (← MaterialTheme.shapes).medium)
     (color := some colors.surfaceVariant)
+    (material := some (← MaterialTheme.tokens).materials.chrome)
 
-/-- Elevated card: surface container with a 1dp shadow. -/
+/-- Elevated card: surface container with the theme's card shadow. -/
 composable def ElevatedCard (content : Composable Unit := pure ())
     (modifier : Modifier := {}) : Composable Unit := do
+  let tokens ← MaterialTheme.tokens
   Surface content modifier (shape := (← MaterialTheme.shapes).medium)
-    (elevation := 1)
+    (elevation := tokens.elevations.card) (material := some tokens.materials.chrome)
 
 /-- Outlined card: surface container with an `outline` hairline. -/
 composable def OutlinedCard (content : Composable Unit := pure ())
@@ -36,6 +38,7 @@ composable def OutlinedCard (content : Composable Unit := pure ())
   let colors ← MaterialTheme.colorScheme
   Surface content modifier (shape := (← MaterialTheme.shapes).medium)
     (border := some { width := 1, color := colors.outline })
+    (material := some (← MaterialTheme.tokens).materials.chrome)
 
 end Compose
 

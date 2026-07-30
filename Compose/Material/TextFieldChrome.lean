@@ -366,12 +366,15 @@ composable def TextFieldToolbar (anchor : Rect) (canPaste : Bool)
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
+  let tokens ← MaterialTheme.tokens
   let density ← LocalDensity.current
   Popup (anchor := some anchor) (preferAbove := true)
       (offset := ⟨0, density.dpRoundToPx chromeToolbarGap⟩) do
     Surface (modifier := modifier.focusNeutral) (shape := shapes.small)
+        (color := some colors.surfaceContainer)
         (border := some { width := 1, color := colors.outline })
-        (elevation := 3) do
+        (elevation := tokens.elevations.menu)
+        (material := some tokens.materials.chrome) do
       Row do
         toolbarButton "Cut" onCut
         toolbarButton "Copy" onCopy

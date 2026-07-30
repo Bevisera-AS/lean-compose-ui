@@ -45,6 +45,9 @@ composable def ModalBottomSheet (onDismissRequest : IO Unit)
     (content : Composable Unit := pure ()) (modifier : Modifier := {})
     (blurBehind : Dp := 0) : Composable Unit := do
   let density ← LocalDensity.current
+  -- The themed scrim (`MaterialTheme` provides it as `colors.scrim` at
+  -- `tokens.scrimAlpha`), like `Dialog` — not a hardcoded black.
+  let scrim ← LocalScrimColor.current
   let dismissRef ← rememberUpdatedRef onDismissRequest
   -- Downward drag displacement, px. A plain state: dragging writes it every
   -- move; release either dismisses or snaps back.
@@ -55,9 +58,10 @@ composable def ModalBottomSheet (onDismissRequest : IO Unit)
   overlayImpl (anchor := none) (alignment := .bottomCenter) (offset := ⟨0, 0⟩)
     (onDismissRequest := some (do (← dismissRef.get)))
     (focusable := true) (onKeyEvent := fun _ => pure false)
-    (scrimColor := some dialogScrimColor) (modal := true) (interactive := true)
+    (scrimColor := some scrim) (modal := true) (interactive := true)
     (blurBehind := blurBehind) do
     let colors ← MaterialTheme.colorScheme
+    let tokens ← MaterialTheme.tokens
     let dragPx ← drag.get
     AnimatedVisibility (← shown.get)
       (enter := slideInVertically (initialOffsetY := 1.0))
@@ -74,7 +78,9 @@ composable def ModalBottomSheet (onDismissRequest : IO Unit)
                   else
                     drag.set 0)
                 (onDragCancel := drag.set 0)))
-          (shape := .roundedCorners 28 28 0 0) (color := some colors.surface) do
+          (shape := .roundedCorners 28 28 0 0)
+          (color := some colors.surfaceContainerLow)
+          (material := some tokens.materials.chrome) do
           Column (modifier := Modifier.fillMaxWidth) do
             sheetHandle
             content)

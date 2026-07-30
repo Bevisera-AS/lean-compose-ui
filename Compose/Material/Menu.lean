@@ -157,6 +157,7 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
+  let tokens ← MaterialTheme.tokens
   let density ← LocalDensity.current
   -- Width: the anchor's (exposed dropdown) or the widest item's — never the
   -- window's (the overlay measures popup content with window-sized max
@@ -197,9 +198,10 @@ composable def DropdownMenu (expanded : Bool) (onDismissRequest : IO Unit)
           (enter := fadeIn (spec := some animSpec) ++ expandVertically (spec := some animSpec))
           (exit := fadeOut (spec := some animSpec) ++ shrinkVertically (spec := some animSpec)) do
         Surface (modifier := modifier.then widthMod |>.sizeIn (minWidth := some 112))
-            (shape := shapes.medium) (color := some colors.surface)
+            (shape := shapes.medium) (color := some colors.surfaceContainer)
             (border := some { width := 1, color := colors.outline })
-            (elevation := 3) do
+            (elevation := tokens.elevations.menu)
+            (material := some tokens.materials.chrome) do
           CompositionLocalProvider LocalMenuState (some menu) <|
             Column content (modifier := Modifier.padding (vertical := some 8))
 
@@ -338,12 +340,17 @@ composable def ExposedDropdownMenuField (scope : ExposedDropdownMenuBoxScope)
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
+  let tokens ← MaterialTheme.tokens
   let source ← rememberInteractionSource
   let focused ← source.focused.get
-  let m := modifier
-    |>.sizeIn (minWidth := some 160) (minHeight := some 40)
-    |>.clickable scope.toggle (source := some source)
-    |>.background colors.surface shapes.extraSmall
+  -- An anchored *field*, not floating chrome: it keeps the plain `surface`
+  -- role (M3 gives outlined fields no container tier) but still builds its
+  -- background through the material seam.
+  let m := tokens.materials.chrome.backgroundModifier colors.surface
+      shapes.extraSmall 0
+      (modifier
+        |>.sizeIn (minWidth := some 160) (minHeight := some 40)
+        |>.clickable scope.toggle (source := some source))
     |>.border (if focused then 2 else 1)
         (if focused then colors.primary else colors.outline) shapes.extraSmall
     |>.padding (horizontal := some 12) (vertical := some 8)

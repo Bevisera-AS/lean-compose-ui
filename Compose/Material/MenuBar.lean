@@ -159,10 +159,12 @@ private def menuBarDropdown (menu : MenuState) (items : Array MenuElement)
     (openIndex : MutableState (Option Nat)) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shapes ← MaterialTheme.shapes
+  let tokens ← MaterialTheme.tokens
   Surface (modifier := Modifier.widthIntrinsicMax |>.sizeIn (minWidth := some 112))
       (shape := shapes.medium)
-      (color := some colors.surface)
-      (border := some { width := 1, color := colors.outline }) do
+      (color := some colors.surfaceContainer)
+      (border := some { width := 1, color := colors.outline })
+      (material := some tokens.materials.chrome) do
     CompositionLocalProvider LocalMenuState (some menu) <|
       Column (modifier := Modifier.padding (vertical := some 8)) do
         for h in [0:items.size] do
@@ -221,8 +223,10 @@ composable def MenuBar (menus : Array MenuBarMenu) : Composable Unit := do
           handler := menuBarKeyHandler openIndex menuState countRef }
       return ctx.unregisterKeyHandler handlerId
     | none => return pure ()
-  -- The bar strip: labels + a bottom divider, on the theme surface.
-  Column (modifier := Modifier.fillMaxWidth |>.background colors.surface) do
+  -- The bar strip: labels + a bottom divider, on the theme surface in the
+  -- theme's *bars* material (anchored chrome, not floating).
+  Column (modifier := (← MaterialTheme.tokens).materials.bars.backgroundModifier
+      colors.surface .rectangle 0 Modifier.fillMaxWidth) do
     Row (modifier := Modifier.fillMaxWidth |>.height menuBarHeight) do
       for i in [0:menus.size] do
         if let some rs := rects[i]? then

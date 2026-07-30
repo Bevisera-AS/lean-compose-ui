@@ -33,10 +33,13 @@ composable def AlertDialog (onDismissRequest : IO Unit) (title : String)
   let colors ← MaterialTheme.colorScheme
   let typo ← MaterialTheme.typography
   let shapes ← MaterialTheme.shapes
+  let tokens ← MaterialTheme.tokens
   Dialog onDismissRequest (blurBehind := blurBehind) do
     Surface (modifier := modifier.semantics (role := some .dialog)
         |>.sizeIn (minWidth := some 280) (maxWidth := some 560))
-      (shape := shapes.large) (color := some colors.surface) (elevation := 6) do
+      (shape := shapes.large) (color := some colors.surfaceContainerHigh)
+      (elevation := tokens.elevations.dialog)
+      (material := some tokens.materials.chrome) do
       Column (modifier := Modifier.padding (all := 24))
           (verticalArrangement := .spacedBy 16) do
         Text title (style := typo.titleLarge)

@@ -435,17 +435,19 @@ private def rrQuad (rr : RoundRect) : Offset × Size × (Float32 × Float32 × F
 the mesh-tessellation path (arcs, angled lines, the clipped ripple, non-quad
 brushes; strokes take only solid brushes — a gradient stroke tessellates). -/
 private def lowerShape : ShapeSpec → Option QuadInstance
-  | .rrFill rr brush => do
+  | .rrFill rr brush style => do
     let p ← quadBrush brush
     let (o, sz, (tl, tr, br, bl)) := rrQuad rr
     some (p.fill { origin := o, size := sz, radiusTL := tl, radiusTR := tr
-                   radiusBR := br, radiusBL := bl })
-  | .rrStroke rr width brush =>
+                   radiusBR := br, radiusBL := bl
+                   cornerStyle := if style == .continuous then 1 else 0 })
+  | .rrStroke rr width brush style =>
     match brush with
     | .solid c =>
       let (o, sz, (tl, tr, br, bl)) := rrQuad rr
       some { origin := o, size := sz, radiusTL := tl, radiusTR := tr
-             radiusBR := br, radiusBL := bl, borderColor := c, borderWidth := width }
+             radiusBR := br, radiusBL := bl, borderColor := c, borderWidth := width
+             cornerStyle := if style == .continuous then 1 else 0 }
     | _ => none
   | .circleFill center radius brush => do
     let p ← quadBrush brush
@@ -711,6 +713,24 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
       .shape {} (.rrStroke rr 2 (.solid .black)) none] #[]
   r.quadCount == 2 && r.cmds.size == 3
     && r.meshIdxCount > 0 && r.meshVerts.size == r.meshVertCount * meshVertexStride
+-- Continuous (squircle) corners ride the quad instance's `cornerStyle` pad
+-- (the fragment picks `squircle_sdf`); circular stays 0. Stroke too.
+#guard
+  let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8
+  let sq := encode #[.shape {} (.rrFill rr (.solid .red) .continuous) none] #[]
+  let ci := encode #[.shape {} (.rrFill rr (.solid .red)) none] #[]
+  let want (style : Float32) : QuadInstance :=
+    { origin := ⟨0, 0⟩, size := ⟨40, 40⟩, radiusTL := 8, radiusTR := 8
+      radiusBR := 8, radiusBL := 8, bg0 := .red, bg1 := .red, cornerStyle := style }
+  sq.quads == (want 1).pack .empty && ci.quads == (want 0).pack .empty
+#guard
+  let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8
+  let r := encode #[.shape {} (.rrStroke rr 2 (.solid .black) .continuous) none] #[]
+  let want : QuadInstance :=
+    { origin := ⟨0, 0⟩, size := ⟨40, 40⟩, radiusTL := 8, radiusTR := 8
+      radiusBR := 8, radiusBL := 8, borderColor := .black, borderWidth := 2
+      cornerStyle := 1 }
+  r.quadCount == 1 && r.quads == want.pack .empty
 -- A two-stop gradient fill stays on the quad path; three stops tessellate.
 #guard
   let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8

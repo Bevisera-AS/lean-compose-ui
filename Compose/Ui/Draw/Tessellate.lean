@@ -64,6 +64,40 @@ def cornerSegments (r : Float32) : Nat :=
 #guard cornerSegments 4 == 4          -- ⌈π/2·4/2⌉ = ⌈π⌉ = 4
 #guard cornerSegments 100 == 79       -- ⌈π/2·100/2⌉ = ⌈78.5…⌉ = 79
 
+/-- Corner curvature of a rounded rect's fill or stroke. `.circular` is the
+classic quarter-circle arc; `.continuous` is the Apple-style **squircle** —
+the superellipse `|x/r|⁴ + |y/r|⁴ = 1` in the corner box, whose curvature
+vanishes where it meets the straight edges (a G² join, no visible curvature
+kink). Threaded `Shape → ShapeSpec → QuadInstance`; both backends draw the
+same curve — this tessellator samples it parametrically, the GPU quad
+shader evaluates its SDF (`Gpu.Sdf.squircleSdf`). Ambient rounded *clips*,
+backdrop-frost masks, and the analytic shadow stay circular-cornered
+(documented approximation, DESIGN.md — the styles differ only in a corner
+sliver ≤ 0.2 r deep). -/
+inductive CornerStyle where
+  | circular
+  | continuous
+  deriving Repr, BEq, Inhabited
+
+/-- Point on the corner superellipse `|dx/rx|⁴ + |dy/ry|⁴ = 1` at parameter
+angle `a` — the squircle twin of `ellipsePt`, via the standard superellipse
+parametrization `d = (±rx·|cos a|^½, ±ry·|sin a|^½)`; it meets the same
+quadrant-boundary endpoints as the circular arc. -/
+private def squirclePt (c : Offset) (rx ry a : Float32) : Offset :=
+  let ca := Float.cos a.toFloat
+  let sa := Float.sin a.toFloat
+  let px := (Float.sqrt ca.abs).toFloat32 * (if ca < 0 then -1 else 1)
+  let py := (Float.sqrt sa.abs).toFloat32 * (if sa < 0 then -1 else 1)
+  ⟨c.x + rx * px, c.y + ry * py⟩
+
+/-- Outward unit normal of the corner superellipse at displacement `d` from
+the corner center: `∇(|dx/rx|⁴ + |dy/ry|⁴) ∝ (dx³/rx⁴, dy³/ry⁴)`. At the
+quadrant boundaries one component vanishes, so the normal degenerates to
+the adjacent edge's axis normal — the smooth join. -/
+private def squircleNormal (d : Offset) (rx ry : Float32) : Offset :=
+  norm ⟨d.x * d.x * d.x / (rx * rx * rx * rx),
+        d.y * d.y * d.y / (ry * ry * ry * ry)⟩
+
 /-! ## Convex-polygon fill with feathered edge -/
 
 /-- Fill a convex polygon (given by its ordered silhouette `pts`) with a 1-px
@@ -187,8 +221,11 @@ diagonal offset `⟨±1, ±1⟩` — magnitude `√2 = 1/cos 45°`, so an offset
 (`strokeSilhouette`'s `±n·w/2` then produces full-width edges and sharp
 mitered corners, matching the GPU backend's SDF rect stroke). Consumers that
 need positions only (`roundRectFill`) are unaffected — the sample *points*
-are the exact corners either way. -/
-def roundRectSilhouette (rr : RoundRect) : Array (Offset × Offset) := Id.run do
+are the exact corners either way. `.continuous` corners sample the
+superellipse (`squirclePt`) with its own outward normals instead of the
+circular arc. -/
+def roundRectSilhouette (rr : RoundRect)
+    (style : CornerStyle := .circular) : Array (Offset × Offset) := Id.run do
   let r := rr.rect
   let mut out : Array (Offset × Offset) := #[]
   -- (centerx, centery, rx, ry, startAngle, mitered offset for the zero case)
@@ -204,10 +241,15 @@ def roundRectSilhouette (rr : RoundRect) : Array (Offset × Offset) := Id.run do
       let segs := cornerSegments (max rx ry)
       for k in [0:segs + 1] do
         let a := a0 + piF / 2 * (k.toFloat32 / segs.toFloat32)
-        let p := ellipsePt ⟨cx, cy⟩ rx ry a
-        -- radial outward normal on the ellipse boundary
-        let nrm := norm ⟨(Float.cos a.toFloat).toFloat32, (Float.sin a.toFloat).toFloat32⟩
-        out := out.push (p, nrm)
+        match style with
+        | .circular =>
+          let p := ellipsePt ⟨cx, cy⟩ rx ry a
+          -- radial outward normal on the ellipse boundary
+          let nrm := norm ⟨(Float.cos a.toFloat).toFloat32, (Float.sin a.toFloat).toFloat32⟩
+          out := out.push (p, nrm)
+        | .continuous =>
+          let p := squirclePt ⟨cx, cy⟩ rx ry a
+          out := out.push (p, squircleNormal (p - ⟨cx, cy⟩) rx ry)
   return out
 
 /-- Circle silhouette (`4 · cornerSegments` samples) as `(point, radial normal)`,
@@ -228,15 +270,37 @@ def circleSilhouette (center : Offset) (radius : Float32) : Array (Offset × Off
 /-- Filled rounded rectangle (radii normalized first). Mirrors
 `DrawScope.drawRoundRect` with `Fill` style. A rect with zero radii passes
 through as a 4-point polygon fill. Empty rect → `Mesh.empty`. -/
-def roundRectFill (rr : RoundRect) (color : Color) : Mesh :=
+def roundRectFill (rr : RoundRect) (color : Color)
+    (style : CornerStyle := .circular) : Mesh :=
   if rr.rect.isEmpty then .empty
-  else fillPolygon ((roundRectSilhouette rr.normalize).map (·.1)) color
+  else fillPolygon ((roundRectSilhouette rr.normalize style).map (·.1)) color
 
 /-- Stroked rounded rectangle, `width` centered on the boundary, feathered both
 sides. Mirrors `DrawScope.drawRoundRect` with `Stroke` style. -/
-def roundRectStroke (rr : RoundRect) (width : Float32) (color : Color) : Mesh :=
+def roundRectStroke (rr : RoundRect) (width : Float32) (color : Color)
+    (style : CornerStyle := .circular) : Mesh :=
   if rr.rect.isEmpty then .empty
-  else strokeSilhouette (roundRectSilhouette rr.normalize) width color (closed := true)
+  else strokeSilhouette (roundRectSilhouette rr.normalize style) width color (closed := true)
+
+-- The squircle silhouette: same sample count, meets the circular arc at the
+-- quadrant endpoints (the edge joins, with ≈ the edge's axis normal — the
+-- √|sin| parametrization turns the endpoint angle's float error ε into a
+-- √ε ≈ 3e-4 px wobble, invisible but not exactly zero), every corner sample
+-- sits 4-norm-exactly on r, and mid-corner it bulges beyond the circle.
+#guard
+  let sil := roundRectSilhouette (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .continuous
+  let silC := roundRectSilhouette (RoundRect.circular ⟨0, 0, 40, 40⟩ 8)
+  sil.size == silC.size
+    && (sil[0]!.1 - silC[0]!.1).x.abs < 1e-2 && (sil[0]!.1 - silC[0]!.1).y.abs < 1e-2
+    && (sil[0]!.2.x + 1).abs < 1e-3 && sil[0]!.2.y.abs < 1e-2
+#guard
+  let sil := roundRectSilhouette (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) .continuous
+  -- the first 8 samples are the top-left corner (`cornerSegments 8 = 7`)
+  let pts := (sil.extract 0 8).map (·.1 - (⟨8, 8⟩ : Offset))
+  pts.all (fun d =>
+      let n4 := (d.x*d.x*d.x*d.x + d.y*d.y*d.y*d.y).sqrt.sqrt
+      (n4 - 8).abs < 1e-3)
+    && pts.any (fun d => (d.x*d.x + d.y*d.y).sqrt > 9.4)
 
 /-- Filled circle. Mirrors `DrawScope.drawCircle` with `Fill` style.
 Radius `≤ 0` → `Mesh.empty`. -/
@@ -443,11 +507,13 @@ is still valid", which also makes it the draw walk's per-node mesh-cache key
 `Modifier.background`/`Modifier.border` cache in `drawWithCache` until size or
 shape changes. -/
 inductive ShapeSpec where
-  /-- A filled rounded rect (`roundRectFill`). -/
-  | rrFill (rr : RoundRect) (brush : Brush)
+  /-- A filled rounded rect (`roundRectFill`); `style` picks circular or
+  squircle corners. -/
+  | rrFill (rr : RoundRect) (brush : Brush) (style : CornerStyle := .circular)
   /-- A stroked rounded rect of pixel `width`, centered on the boundary
-  (`roundRectStroke`). -/
+  (`roundRectStroke`); `style` picks circular or squircle corners. -/
   | rrStroke (rr : RoundRect) (width : Float32) (brush : Brush)
+      (style : CornerStyle := .circular)
   /-- A filled circle (`circleFill`). -/
   | circleFill (center : Offset) (radius : Float32) (brush : Brush)
   /-- A filled circle geometrically clipped to a rounded rect — the bounded
@@ -481,8 +547,8 @@ inductive ShapeSpec where
 /-- Tessellate the mesh a `ShapeSpec` describes (a pure function — the spec
 *is* the tessellation's full input). -/
 def ShapeSpec.tessellate : ShapeSpec → Mesh
-  | .rrFill rr brush => shapeMesh brush (roundRectFill rr)
-  | .rrStroke rr width brush => shapeMesh brush (roundRectStroke rr width)
+  | .rrFill rr brush style => shapeMesh brush (roundRectFill rr · style)
+  | .rrStroke rr width brush style => shapeMesh brush (roundRectStroke rr width · style)
   | .circleFill center radius brush => shapeMesh brush (Compose.Draw.circleFill center radius)
   | .circleFillClipped center radius rr brush =>
     shapeMesh brush (circleFillClippedToRoundRect center radius rr)
@@ -522,8 +588,8 @@ margin (the feather ring outside on SDL, the quad's inflated SDF edge on the
 GPU). A shadow reaches `3σ + 1` beyond its displaced rect (the tessellator's
 outermost ring / the shadow shader's vertex inflation). -/
 def ShapeSpec.bounds : ShapeSpec → Rect
-  | .rrFill rr _ => rr.rect.inflate 1
-  | .rrStroke rr w _ => rr.rect.inflate (w / 2 + 1)
+  | .rrFill rr _ _ => rr.rect.inflate 1
+  | .rrStroke rr w _ _ => rr.rect.inflate (w / 2 + 1)
   | .circleFill c r _ => (Rect.mk (c.x - r) (c.y - r) (c.x + r) (c.y + r)).inflate 1
   | .circleFillClipped c r rr _ =>
     ((Rect.mk (c.x - r) (c.y - r) (c.x + r) (c.y + r)).intersect rr.rect).inflate 1

@@ -224,7 +224,9 @@ private def brushModifiers : IO Unit := do
       Box (modifier := Modifier.size 40 20
         |>.backgroundBrush (.gradient .black .white ⟨0, 0⟩ ⟨0, 1⟩) (.rounded 4))
       Box (modifier := Modifier.size 40 20
-        |>.borderBrush 2 (.gradient .black .white ⟨0, 0⟩ ⟨0, 1⟩) (.rounded 4)))
+        |>.borderBrush 2 (.gradient .black .white ⟨0, 0⟩ ⟨0, 1⟩) (.rounded 4))
+      Box (modifier := Modifier.size 40 20
+        |>.background Color.red (.continuous 4)))
     do
       awaitIdle
       let t ← uiTest
@@ -235,6 +237,8 @@ private def brushModifiers : IO Unit := do
         (briefs.any (· == "shape @(0,0) rrFill rr(0,0,40,20)r4 grad[2](0,0)→(0,20) cached"))
       check "borderBrush records the size-scaled gradient rrStroke just inside the bounds"
         (briefs.any (· == "shape @(0,20) rrStroke rr(1,1,39,19)r3 w=2 grad[2](0,0)→(0,20) cached"))
+      check "a .continuous shape threads the squircle corner style into the spec"
+        (briefs.any (· == "shape @(0,40) rrFill rr(0,0,40,20)r4 squircle #ff0000ff cached"))
 
 private def backdropPanels : IO Unit := do
   -- `drawBackdrop` records the backdrop prim with the ambient rounded clip

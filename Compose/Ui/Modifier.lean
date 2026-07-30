@@ -136,6 +136,7 @@ time (radii are `Dp`, resolved against the ambient density). Mirrors
 inductive Shape where
   | rectangle
   | roundedCorners (topLeft topRight bottomRight bottomLeft : Dp)
+      (style : Draw.CornerStyle := .circular)
   | circle
   deriving Repr, BEq, Inhabited
 
@@ -144,13 +145,26 @@ namespace Shape
 /-- Uniform rounded corners. Mirrors `RoundedCornerShape(radius)`. -/
 def rounded (radius : Dp) : Shape := .roundedCorners radius radius radius radius
 
+/-- Uniform **continuous** (Apple-squircle) corners: the curvature vanishes
+where the corner meets the straight edges, so backgrounds and borders drawn
+in this shape read as one smooth curve. Clips, frost masks, and the
+elevation shadow stay circular-cornered (documented, DESIGN.md). -/
+def continuous (radius : Dp) : Shape :=
+  .roundedCorners radius radius radius radius .continuous
+
+/-- The shape's corner style (`.circular` for everything but a
+`.continuous`-styled `roundedCorners`). -/
+def cornerStyle : Shape → Draw.CornerStyle
+  | .roundedCorners _ _ _ _ style => style
+  | _ => .circular
+
 /-- Resolve the shape to a `RoundRect` covering `⟨0, 0⟩ … size` (px), with
 radii resolved via `density` and normalized so adjacent corners never
 overlap. Mirrors `Shape.createOutline`. -/
 def toRoundRect (s : Shape) (size : Size) (density : Density) : RoundRect :=
   match s with
   | .rectangle => .ofRect (Rect.ofSize size)
-  | .roundedCorners tl tr br bl =>
+  | .roundedCorners tl tr br bl _ =>
     RoundRect.normalize
       { rect := Rect.ofSize size
         topLeft := .circular (density.dpToPx tl)
@@ -164,6 +178,13 @@ def toRoundRect (s : Shape) (size : Size) (density : Density) : RoundRect :=
 #guard circle.toRoundRect ⟨40, 20⟩ {} == RoundRect.circular ⟨0, 0, 40, 20⟩ 10
 -- normalization: radii larger than the sides are scaled down
 #guard (rounded 30).toRoundRect ⟨40, 40⟩ {} == RoundRect.circular ⟨0, 0, 40, 40⟩ 20
+-- Continuous corners resolve to the same RoundRect (the curve difference
+-- lives in `cornerStyle`, threaded into the ShapeSpec) and compare distinct
+-- from circular ones.
+#guard (continuous 4).toRoundRect ⟨40, 20⟩ {} == (rounded 4).toRoundRect ⟨40, 20⟩ {}
+#guard (continuous 4).cornerStyle == .continuous && (rounded 4).cornerStyle == .circular
+#guard Shape.continuous 4 != Shape.rounded 4
+#guard Shape.circle.cornerStyle == .circular
 
 end Shape
 

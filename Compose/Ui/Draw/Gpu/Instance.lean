@@ -74,6 +74,11 @@ structure QuadInstance where
   radial (`Gpu.Sdf.radialT`), 2 sweep (`Gpu.Sdf.sweepT`). Packed into the
   `borderWidth` attribute's pad — the stride stays 144. -/
   gradKind : Float32 := 0
+  /-- Corner curvature of the shape SDF: 0 circular arcs, 1 the continuous
+  squircle (`Gpu.Sdf.squircleSdf`). Packed into the `borderWidth`
+  attribute's second pad — the stride stays 144. The *clip* mask's corners
+  are always circular (documented, DESIGN.md). -/
+  cornerStyle : Float32 := 0
   /-- Rounded clip mask in target px (a huge rect when unclipped). -/
   clipOrigin : Offset := ⟨-1e8, -1e8⟩
   clipSize : Size := ⟨2e8, 2e8⟩
@@ -96,7 +101,7 @@ def QuadInstance.pack (q : QuadInstance) (b : ByteArray) : ByteArray := Id.run d
   b := pushColor b q.bg1
   b := pushF32 (pushF32 (pushF32 (pushF32 b q.gradStart.x) q.gradStart.y) q.gradDir.x) q.gradDir.y
   b := pushColor b q.borderColor
-  b := pushF32 (pushF32 (pushF32 (pushF32 b q.borderWidth) q.gradKind) 0) 0
+  b := pushF32 (pushF32 (pushF32 (pushF32 b q.borderWidth) q.gradKind) q.cornerStyle) 0
   b := pushF32 (pushF32 (pushF32 (pushF32 b q.clipOrigin.x) q.clipOrigin.y) q.clipSize.width) q.clipSize.height
   b := pushF32 (pushF32 (pushF32 (pushF32 b q.clipRadiusTL) q.clipRadiusTR) q.clipRadiusBR) q.clipRadiusBL
   return b

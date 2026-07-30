@@ -160,6 +160,19 @@ def run : IO UInt32 := do
       DrawScope.drawLine (.solid .white) ⟨90, 110⟩ ⟨150, 85⟩ 3)
     (meanTol := 2.0) (grossTol := 0.02)
 
+  -- Squircle (continuous) corners: the CPU superellipse tessellation vs the
+  -- GPU 4-norm SDF — the same curve drawn two ways, so the edges disagree
+  -- only by the usual feather-vs-SDF phase (the "aa shapes" tolerance
+  -- family). A circular control shape shares the scene.
+  scene "squircle corners" ⟨0.1, 0.1, 0.1, 1⟩
+    (do
+      DrawScope.drawRoundRect (.solid .blue) (RoundRect.circular ⟨10, 10, 90, 70⟩ 24)
+        (corners := .continuous)
+      DrawScope.drawRoundRect (.solid .white) (RoundRect.circular ⟨110, 10, 190, 70⟩ 24)
+        (.stroke 3) (corners := .continuous)
+      DrawScope.drawRoundRect (.solid .yellow) (RoundRect.circular ⟨200, 100, 250, 150⟩ 16))
+    (meanTol := 2.0) (grossTol := 0.02)
+
   -- Gradients: a 2-stop (GPU quad path) and a 3-stop (identical tessellated
   -- mesh on both backends).
   scene "gradients" ⟨0, 0, 0, 1⟩

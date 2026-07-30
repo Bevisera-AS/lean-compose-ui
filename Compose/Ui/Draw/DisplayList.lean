@@ -266,10 +266,13 @@ def Brush.brief : Brush → String
   | .sweepGradient stops center startAngle =>
     s!"sweep[{stops.size}]{fmtOff center} a0={fmtF startAngle}"
 
-/-- One-line golden form of a shape spec. -/
+/-- One-line golden form of a shape spec (`.continuous` corners tag on a
+` squircle` marker; circular briefs stay stable). -/
 def ShapeSpec.brief : ShapeSpec → String
-  | .rrFill rr b => s!"rrFill {fmtRR rr} {b.brief}"
-  | .rrStroke rr w b => s!"rrStroke {fmtRR rr} w={fmtF w} {b.brief}"
+  | .rrFill rr b style =>
+    s!"rrFill {fmtRR rr}{if style == .continuous then " squircle" else ""} {b.brief}"
+  | .rrStroke rr w b style =>
+    s!"rrStroke {fmtRR rr}{if style == .continuous then " squircle" else ""} w={fmtF w} {b.brief}"
   | .circleFill c r b => s!"circleFill c={fmtOff c} r={fmtF r} {b.brief}"
   | .circleFillClipped c r rr b => s!"circleFillClipped c={fmtOff c} r={fmtF r} {fmtRR rr} {b.brief}"
   | .circleStroke c r w b => s!"circleStroke c={fmtOff c} r={fmtF r} w={fmtF w} {b.brief}"
@@ -339,6 +342,10 @@ partial def Prim.brief : Prim → String
 #guard (Prim.shape { clip := some ⟨0, 0, 40, 40⟩ }
           (.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .blue)) none).brief
         == "shape @(0,0) clip=(0,0,40,40) rrFill rr(0,0,40,40)r8 #0000ffff"
+#guard (ShapeSpec.rrFill (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) (.solid .blue) .continuous).brief
+        == "rrFill rr(0,0,40,40)r8 squircle #0000ffff"
+#guard (ShapeSpec.rrStroke (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) 2 (.solid .blue) .continuous).brief
+        == "rrStroke rr(0,0,40,40)r8 squircle w=2 #0000ffff"
 #guard (Prim.layer {} ⟨0, 0, 20, 20⟩ { effect := .blur 4 } #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]).brief
         == "layer @(0,0) bounds=(0,0,20,20) a=1 blur=4\n  rect @(0,0) #ff0000ff tl=(0,0) sz=4x4"
 #guard (Prim.layer {} ⟨0, 0, 20, 20⟩ { effect := .stretch 0 0.5 }

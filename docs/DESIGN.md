@@ -328,6 +328,25 @@ sweeps fall back to the per-vertex mesh path) and dithers gradient fills
 with interleaved gradient noise (±½ of an 8-bit step, gated on
 `bg0 ≠ bg1` so solid fills stay byte-stable).
 
+**Squircle corners** (`CornerStyle`, both backends): `Shape.continuous
+(radius)` (or `.roundedCorners … .continuous`) draws backgrounds and
+borders with Apple-style continuous-curvature corners — the superellipse
+`|x|⁴ + |y|⁴ = r⁴` in the corner box, whose curvature vanishes at the edge
+joins (a G² join, no visible kink where corner meets edge). The style
+threads `Shape → ShapeSpec.rrFill/rrStroke → QuadInstance.cornerStyle`
+(the `borderWidth` attribute's second pad — the 144-byte stride is
+unchanged), and both backends draw the *same curve*: the GPU quad fragment
+flips to `squircle_sdf` (the 4-norm in the corner region; twin
+`Gpu.Sdf.squircleSdf`; not exact Euclidean distance there — gradient
+magnitude ∈ [2^−¼, 1] — fine for 1-px AA), while the SDL tessellator
+samples the superellipse parametrically with its analytic normals
+(`squirclePt`/`squircleNormal`), gated cross-backend by the `gpu-parity`
+"squircle corners" scene and pixel-level by `gpu-probe` ㉑. Documented
+approximations: ambient rounded *clips*, backdrop-frost masks, and the
+analytic elevation shadow stay circular-cornered (the styles differ only
+in a corner sliver ≤ 0.19 r deep, invisible under a soft shadow and
+avoided under clips by insetting content).
+
 **Vector paths** (`Path.lean`, `PathFill.lean`): a `Path` is an immutable
 verb array (`moveTo/lineTo/quadTo/cubicTo/close`, absolute coordinates) plus
 a `FillRule` (`nonZero`/`evenOdd`), built with the `Path.build` `StateM`

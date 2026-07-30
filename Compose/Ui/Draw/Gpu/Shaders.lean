@@ -84,6 +84,22 @@ static inline float rrect_sdf(float2 p, float4 bounds, float4 radii) {
   float2 d = abs(p - center) - hs + r;
   return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r;
 }
+
+// Twin of Gpu.Sdf.squircleSdf — the .continuous corner style: the corner
+// region measures the 4-norm, whose zero set is the superellipse
+// |x|^4 + |y|^4 = r^4 (curvature-continuous edge joins); edges match
+// rrect_sdf exactly.
+static inline float squircle_sdf(float2 p, float4 bounds, float4 radii) {
+  float2 hs = bounds.zw * 0.5;
+  float2 center = bounds.xy + hs;
+  float r = pick_radius(p, center, radii);
+  float2 d = abs(p - center) - hs + r;
+  if (d.x > 0.0 && d.y > 0.0) {
+    float2 d2 = d * d;
+    return sqrt(sqrt(dot(d2, d2))) - r;
+  }
+  return max(d.x, d.y) - r;
+}
 "
 
 /-- The quad pipeline's MSL: instance-rate attributes, unit-quad corners from
@@ -123,6 +139,7 @@ struct QuadOut {
   float4 border     [[flat]];
   float  borderW    [[flat]];
   float  gradKind   [[flat]];
+  float  cornerStyle [[flat]];
   float4 clipBounds [[flat]];
   float4 clipRadii  [[flat]];
 };
@@ -143,13 +160,17 @@ vertex QuadOut quad_vertex(QuadIn in [[stage_in]], uint vid [[vertex_id]],
   out.border = in.border;
   out.borderW = in.borderW.x;
   out.gradKind = in.borderW.y;
+  out.cornerStyle = in.borderW.z;
   out.clipBounds = in.clipBounds;
   out.clipRadii = in.clipRadii;
   return out;
 }
 
 fragment float4 quad_fragment(QuadOut in [[stage_in]]) {
-  float sdf = rrect_sdf(in.world, in.bounds, in.radii);
+  // cornerStyle picks the shape SDF (0 circular, 1 continuous/squircle);
+  // the clip mask's corners are always circular.
+  float sdf = in.cornerStyle > 0.5 ? squircle_sdf(in.world, in.bounds, in.radii)
+                                   : rrect_sdf(in.world, in.bounds, in.radii);
   float clip = saturate(0.5 - rrect_sdf(in.world, in.clipBounds, in.clipRadii));
   float4 src;
   float cov;

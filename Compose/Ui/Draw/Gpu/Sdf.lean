@@ -51,6 +51,27 @@ def rrectSdf (p o : Offset) (size : Size) (tl tr br bl : Float32) : Float32 :=
 full one pixel inside, zero one pixel outside, linear across the boundary. -/
 def coverage (sdf : Float32) : Float32 := saturate (0.5 - sdf)
 
+/-- Signed distance to a **squircle**-cornered rounded rect (the
+`.continuous` corner style): identical to `rrectSdf` along the edges, but
+the corner region measures the 4-norm `(dx⁴ + dy⁴)^¼` instead of the
+Euclidean distance — its zero set in the corner box is the superellipse
+`|x|⁴ + |y|⁴ = r⁴`, whose curvature vanishes at the edge joins
+(curvature-continuous, the Apple squircle; the tessellator's `squirclePt`
+samples the same curve). Not an exact Euclidean distance inside the corner
+(the gradient magnitude ranges over `[2^(−¼), 1]`), which is fine for the
+≤ 1-px AA coverage band. -/
+def squircleSdf (p o : Offset) (size : Size) (tl tr br bl : Float32) : Float32 :=
+  let hw := size.width / 2
+  let hh := size.height / 2
+  let center : Offset := ⟨o.x + hw, o.y + hh⟩
+  let r := pickRadius p center tl tr br bl
+  let dx := (p.x - center.x).abs - hw + r
+  let dy := (p.y - center.y).abs - hh + r
+  if dx > 0 && dy > 0 then
+    (dx * dx * dx * dx + dy * dy * dy * dy).sqrt.sqrt - r
+  else
+    max dx dy - r
+
 -- Rect SDF (radius 0): inside is negative, boundary zero, outside positive.
 #guard rrectSdf ⟨5, 5⟩ ⟨0, 0⟩ ⟨10, 10⟩ 0 0 0 0 == -5
 #guard rrectSdf ⟨0, 5⟩ ⟨0, 0⟩ ⟨10, 10⟩ 0 0 0 0 == 0
@@ -68,6 +89,25 @@ def coverage (sdf : Float32) : Float32 := saturate (0.5 - sdf)
 #guard coverage (-5) == 1
 #guard coverage 5 == 0
 #guard coverage 0 == 0.5
+-- squircleSdf: identical to rrectSdf outside the corner region (edges,
+-- interior, corner-arc endpoints) …
+#guard squircleSdf ⟨20, 0⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8
+        == rrectSdf ⟨20, 0⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8
+#guard squircleSdf ⟨20, 20⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8
+        == rrectSdf ⟨20, 20⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8
+#guard squircleSdf ⟨0, 8⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8 == 0
+#guard squircleSdf ⟨-3, 20⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8 == 3
+-- … but in the corner box its boundary is the superellipse: the diagonal
+-- point at 4-norm r (Euclidean r·2^¼ ≈ 1.19 r from the corner center) is on
+-- the squircle boundary while the circle already excludes it — the bulge.
+#guard
+  let t : Float32 := 8 / (2 : Float32).sqrt.sqrt   -- 4-norm 8 on the diagonal (2^¼)
+  let p : Offset := ⟨8 - t, 8 - t⟩
+  (squircleSdf p ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8).abs < 1e-3
+    && rrectSdf p ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8 > 1.4
+-- The sharp outer corner is nearer in the 4-norm than in the Euclidean one.
+#guard squircleSdf ⟨0, 0⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8
+        < rrectSdf ⟨0, 0⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8
 
 /-! ## Gradient parameters + dither (the quad shader's M-h additions) -/
 

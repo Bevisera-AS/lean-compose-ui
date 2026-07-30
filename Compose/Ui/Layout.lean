@@ -131,7 +131,7 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
         -- Unit-space brush → element-size px here (`Brush.scaleTo`), so the
         -- recorded element stays structurally comparable.
         let spec : Draw.ShapeSpec :=
-          .rrFill (shape.toRoundRect sz ctx.density) (brush.scaleTo sz)
+          .rrFill (shape.toRoundRect sz ctx.density) (brush.scaleTo sz) shape.cornerStyle
         let mesh ← n.cachedMesh rd.elemIdx spec
         DrawScope.translate off (DrawScope.drawShape spec (some mesh))
         cont
@@ -139,7 +139,7 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
         let wpx := ctx.density.dpToPx w
         let spec : Draw.ShapeSpec :=
           .rrStroke (rrInset (shape.toRoundRect sz ctx.density) (wpx / 2)) wpx
-            (brush.scaleTo sz)
+            (brush.scaleTo sz) shape.cornerStyle
         let mesh ← n.cachedMesh rd.elemIdx spec
         DrawScope.translate off (DrawScope.drawShape spec (some mesh))
         cont

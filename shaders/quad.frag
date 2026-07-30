@@ -20,11 +20,15 @@ layout(location = 7) flat in float borderW;
 layout(location = 8) flat in float gradKind;
 layout(location = 9) flat in vec4 clipBounds;
 layout(location = 10) flat in vec4 clipRadii;
+layout(location = 11) flat in float cornerStyle;
 
 layout(location = 0) out vec4 fragColor;
 
 void main() {
-  float sdf = rrect_sdf(world, bounds, radii);
+  // cornerStyle picks the shape SDF (0 circular, 1 continuous/squircle);
+  // the clip mask's corners are always circular.
+  float sdf = cornerStyle > 0.5 ? squircle_sdf(world, bounds, radii)
+                                : rrect_sdf(world, bounds, radii);
   float clip = saturate(0.5 - rrect_sdf(world, clipBounds, clipRadii));
   vec4 src;
   float cov;

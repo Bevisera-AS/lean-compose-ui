@@ -27,6 +27,7 @@ layout(location = 7) flat out float borderW;
 layout(location = 8) flat out float gradKind;
 layout(location = 9) flat out vec4 clipBounds;
 layout(location = 10) flat out vec4 clipRadii;
+layout(location = 11) flat out float cornerStyle;
 
 void main() {
   float inflate = inBorderW.x * 0.5 + 1.0;
@@ -45,4 +46,5 @@ void main() {
   gradKind = inBorderW.y;
   clipBounds = inClipBounds;
   clipRadii = inClipRadii;
+  cornerStyle = inBorderW.z;
 }

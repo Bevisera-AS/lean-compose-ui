@@ -210,12 +210,14 @@ def drawRect (brush : Brush) (topLeft : Offset) (size : Size)
     drawShape (.rrStroke (RoundRect.ofRect (Rect.ofOffsetSize topLeft size)) w brush)
 
 /-- Draw a rounded rectangle (fill or stroke) via the feathered tessellator.
+`corners` picks circular or continuous (squircle) corner curvature.
 Mirrors `DrawScope.drawRoundRect`. -/
-def drawRoundRect (brush : Brush) (rr : RoundRect) (style : DrawStyle := .fill) : DrawM Unit := do
+def drawRoundRect (brush : Brush) (rr : RoundRect) (style : DrawStyle := .fill)
+    (corners : CornerStyle := .circular) : DrawM Unit := do
   countTessellation
   match style with
-  | .fill => drawShape (.rrFill rr brush)
-  | .stroke w => drawShape (.rrStroke rr w brush)
+  | .fill => drawShape (.rrFill rr brush corners)
+  | .stroke w => drawShape (.rrStroke rr w brush corners)
 
 /-- Draw a circle (fill or stroke). A filled circle inside a `clipRoundRect`
 geometrically clips to that shape (the bounded Material ripple). Mirrors

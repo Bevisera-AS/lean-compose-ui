@@ -1097,6 +1097,45 @@ private def probeRefraction (r : Compose.Draw.Gpu.GpuRenderer)
   check "chroma: outside the panel stays neutral white"
     (q 200 60 == (255, 255, 255, 255))
 
+/-- ㉑ squircle (continuous) corners: `cornerStyle` rides the quad
+instance's pad float and flips the fragment SDF to `squircle_sdf` — for a
+white rect ⟨10,10,90,90⟩ r 16 the diagonal **bulge** pixel (13,13) lies
+inside the superellipse (4-norm 14.9 < 16) but outside the circle
+(Euclidean 17.7 > 16), so it fills for `.continuous` and stays background
+for `.circular`; further out (11,11) is beyond both; edge midpoints match
+byte-exactly; and a `.continuous` *stroke* passes through the diagonal
+boundary pixel (12,12) that the circular stroke leaves empty. -/
+private def probeSquircle (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  say "㉑ squircle corners → 4-norm SDF pixels"
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (bs : ByteArray) (x y : Nat) =>
+    let o := (y * 100 + x) * 4
+    if bgra then (bs.get! (o+2), bs.get! (o+1), bs.get! o, bs.get! (o+3))
+    else (bs.get! o, bs.get! (o+1), bs.get! (o+2), bs.get! (o+3))
+  let rr := RoundRect.circular ⟨10, 10, 90, 90⟩ 16
+  let render (corners : Draw.CornerStyle) (style : Draw.DrawStyle) : IO ByteArray := do
+    let (list, _) ← DrawScope.record {} do
+      DrawScope.drawRoundRect (.solid .white) rr style corners
+    r.renderOffscreen ⟨0, 0, 0, 1⟩ list 100 100
+  let sq ← render .continuous .fill
+  let ci ← render .circular .fill
+  check s!"fill: the corner bulge pixel fills for continuous (got {(px sq 13 13).1})"
+    ((px sq 13 13).1.toNat ≥ 250)
+  check s!"fill: … and stays background for circular (got {(px ci 13 13).1})"
+    ((px ci 13 13).1.toNat ≤ 5)
+  check "fill: beyond the superellipse both are background"
+    ((px sq 11 11).1.toNat ≤ 5 && (px ci 11 11).1.toNat ≤ 5)
+  check "fill: edge midpoints are byte-identical across styles"
+    (px sq 50 11 == px ci 50 11 && px sq 10 50 == px ci 10 50
+      && px sq 50 50 == px ci 50 50)
+  let sqs ← render .continuous (.stroke 3)
+  let cis ← render .circular (.stroke 3)
+  check s!"stroke: the squircle band passes the diagonal boundary pixel (got {(px sqs 12 12).1})"
+    ((px sqs 12 12).1.toNat ≥ 250)
+  check s!"stroke: … which the circular band leaves empty (got {(px cis 12 12).1})"
+    ((px cis 12 12).1.toNat ≤ 5)
+
 /-- ⑮ fractional-origin text (M-j): both backends snap run origins through
 the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
 byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
@@ -1202,6 +1241,7 @@ def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
   probeLayerClip gpuRenderer swapchainFmt
   probeBackdrop gpuRenderer engine font swapchainFmt
   probeRefraction gpuRenderer swapchainFmt
+  probeSquircle gpuRenderer swapchainFmt
   probeFractionalText gpuRenderer engine font
   probeInvalidate gpuRenderer
   match raw with

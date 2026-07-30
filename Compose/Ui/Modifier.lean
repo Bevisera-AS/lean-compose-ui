@@ -244,12 +244,13 @@ instance : BEq LayoutElem where
 /-- A draw-affecting modifier element: contributes drawing at its wrapper's
 coordinates, before the content. Mirrors the `DrawModifier` family. -/
 inductive DrawElem where
-  /-- Fill the wrapper bounds with `color` clipped to `shape`. Mirrors
-  `Modifier.background`. -/
-  | background (color : Color) (shape : Shape)
-  /-- Stroke `shape` just inside the wrapper bounds. Mirrors
-  `Modifier.border`. -/
-  | border (width : Dp) (color : Color) (shape : Shape)
+  /-- Fill the wrapper bounds with `brush` clipped to `shape`. Gradient
+  brushes are **unit-space** — scaled to the wrapper size at draw time via
+  `Brush.scaleTo`. Mirrors `Modifier.background`. -/
+  | background (brush : Draw.Brush) (shape : Shape)
+  /-- Stroke `shape` just inside the wrapper bounds with `brush` (unit-space,
+  like `background`). Mirrors `Modifier.border`. -/
+  | border (width : Dp) (brush : Draw.Brush) (shape : Shape)
   /-- A Material elevation shadow under `shape` at the wrapper bounds
   (drop offset `elevation / 2` down, blur `elevation`). Mirrors
   `Modifier.shadow`. -/
@@ -304,8 +305,10 @@ instance : BEq DrawElem where
 #guard (DrawElem.blur 4) != (DrawElem.blur 8)
 #guard (DrawElem.stretchLayer 7 (pure (0, 0))) == (DrawElem.stretchLayer 7 (pure (1, 1)))
 #guard (DrawElem.stretchLayer 7 (pure (0, 0))) != (DrawElem.stretchLayer 8 (pure (0, 0)))
-#guard (DrawElem.background .red .rectangle) == (DrawElem.background .red .rectangle)
-#guard (DrawElem.background .red .rectangle) != (DrawElem.background .blue .rectangle)
+#guard (DrawElem.background (.solid .red) .rectangle) == (DrawElem.background (.solid .red) .rectangle)
+#guard (DrawElem.background (.solid .red) .rectangle) != (DrawElem.background (.solid .blue) .rectangle)
+#guard (DrawElem.background (.solid .red) .rectangle)
+        != (DrawElem.background (Draw.Brush.gradient .red .red ⟨0, 0⟩ ⟨0, 1⟩) .rectangle)
 #guard (DrawElem.shadow 2 .rectangle .black) == (DrawElem.shadow 2 .rectangle .black)
 #guard (DrawElem.shadow 2 .rectangle .black) != (DrawElem.shadow 3 .rectangle .black)
 #guard (DrawElem.clip .circle) != (DrawElem.alpha 1)
@@ -555,12 +558,26 @@ def customLayout (key : UInt64) (block : CustomLayout) (m : Modifier := {}) : Mo
 /-- Fill the bounds with `color`, clipped to `shape`. Mirrors
 `Modifier.background`. -/
 def background (color : Color) (shape : Shape := .rectangle) (m : Modifier := {}) : Modifier :=
-  m.append (.draw (.background color shape))
+  m.append (.draw (.background (.solid color) shape))
+
+/-- Fill the bounds with a **unit-space** `brush` (gradient coordinates in
+`[0, 1]` per axis, scaled to the element size at draw time — see
+`Brush.scaleTo`), clipped to `shape`. Mirrors `Modifier.background(brush)`. -/
+def backgroundBrush (brush : Draw.Brush) (shape : Shape := .rectangle)
+    (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.background brush shape))
 
 /-- Stroke `shape` just inside the bounds. Mirrors `Modifier.border`. -/
 def border (width : Dp) (color : Color) (shape : Shape := .rectangle)
     (m : Modifier := {}) : Modifier :=
-  m.append (.draw (.border width color shape))
+  m.append (.draw (.border width (.solid color) shape))
+
+/-- Stroke `shape` just inside the bounds with a **unit-space** `brush`
+(scaled like `backgroundBrush`'s — the glass rim gradient's spelling).
+Mirrors `Modifier.border(width, brush, shape)`. -/
+def borderBrush (width : Dp) (brush : Draw.Brush) (shape : Shape := .rectangle)
+    (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.border width brush shape))
 
 /-- Draw a Material elevation shadow under `shape` at this element's bounds:
 a Gaussian drop shadow displaced `elevation / 2` down with a blur of
@@ -820,8 +837,13 @@ def semanticsProps (m : Modifier) : Option SemanticsProps :=
         == #[.layout (.padding 4 2 4 8)]
 -- chaining appends innermost-last, both spellings
 #guard (padding (all := 2) |>.background .red |>.size 10 10).elems
-        == #[.layout (.padding 2 2 2 2), .draw (.background .red .rectangle),
+        == #[.layout (.padding 2 2 2 2), .draw (.background (.solid .red) .rectangle),
              .layout (.size (some 10) (some 10))]
+-- Brush combinators record the brush verbatim (unit-space; scaled at draw).
+#guard (backgroundBrush (.gradient .black .white ⟨0, 0⟩ ⟨0, 1⟩) (.rounded 4)).elems
+        == #[.draw (.background (.gradient .black .white ⟨0, 0⟩ ⟨0, 1⟩) (.rounded 4))]
+#guard (borderBrush 1 (.solid .red) .circle).elems
+        == #[.draw (.border 1 (.solid .red) .circle)]
 #guard («then» (size 1 2) (padding (all := 3))).elems
         == (size 1 2).elems ++ (padding (all := 3)).elems
 #guard (size 1 2 |>.then (padding (all := 3))).elems

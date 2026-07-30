@@ -114,6 +114,21 @@ def isSolid (b : Brush) : Bool :=
   | .solid _ => true
   | _ => false
 
+/-- Map a **unit-space** brush onto a `size`-px box: points scale per axis
+(`⟨0.5, 1⟩` → bottom center), a radial radius by the larger dimension (so a
+unit radius from a corner reaches across a wide panel), angles unchanged.
+Theme-level brushes (`GlassSpec`) are unit-space and scaled here at draw
+time, keeping the recorded `DrawElem`/`ShapeSpec` structurally comparable
+per element size. Solid brushes are unaffected. -/
+def scaleTo (b : Brush) (size : Size) : Brush :=
+  let pt (p : Offset) : Offset := ⟨p.x * size.width, p.y * size.height⟩
+  match b with
+  | .solid c => .solid c
+  | .linearGradient stops start stop => .linearGradient stops (pt start) (pt stop)
+  | .radialGradient stops center radius =>
+    .radialGradient stops (pt center) (radius * max size.width size.height)
+  | .sweepGradient stops center startAngle => .sweepGradient stops (pt center) startAngle
+
 #guard (Brush.solid .red).colorAt ⟨5, 5⟩ == .red
 #guard (Brush.solid .red).isSolid
 #guard !(Brush.gradient .black .white ⟨0, 0⟩ ⟨10, 0⟩).isSolid
@@ -163,6 +178,19 @@ def isSolid (b : Brush) : Bool :=
   (below.r - 1).abs < 0.01 && ((b.colorAt ⟨100, 0.01⟩).r < 0.01)
 #guard !(Brush.sweepGradient #[(0, .red), (1, .blue)] ⟨0, 0⟩).isSolid
 #guard (Brush.sweepGradient #[(0, .red), (1, .blue)] ⟨0, 0⟩).primaryColor == .red
+-- scaleTo: solids are untouched; gradient points scale per axis.
+#guard (Brush.solid .red).scaleTo ⟨40, 20⟩ == .solid .red
+#guard (Brush.gradient .black .white ⟨0, 0⟩ ⟨1, 1⟩).scaleTo ⟨40, 20⟩
+        == Brush.gradient .black .white ⟨0, 0⟩ ⟨40, 20⟩
+-- A vertical unit gradient spans the box height regardless of width.
+#guard (Brush.gradient .black .white ⟨0.5, 0⟩ ⟨0.5, 1⟩).scaleTo ⟨40, 20⟩
+        == Brush.gradient .black .white ⟨20, 0⟩ ⟨20, 20⟩
+-- Radial: center scales per axis, the radius by the larger dimension.
+#guard (Brush.radial .red .blue ⟨0.5, 0.5⟩ 0.5).scaleTo ⟨40, 20⟩
+        == Brush.radial .red .blue ⟨20, 10⟩ 20
+-- Sweep: center scales, the start angle is untouched.
+#guard (Brush.sweepGradient #[(0, .red), (1, .blue)] ⟨0.5, 1⟩ 2).scaleTo ⟨40, 20⟩
+        == Brush.sweepGradient #[(0, .red), (1, .blue)] ⟨20, 20⟩ 2
 
 end Brush
 

@@ -110,7 +110,7 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
       let sz := rd.size.toSize
       let off := rd.offset.toOffset
       match de with
-      | .background color .rectangle =>
+      | .background (.solid color) .rectangle =>
         match ctx.clipShape with
         | some rr =>
           if rr.rect == Rect.ofOffsetSize off sz then
@@ -127,15 +127,19 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
           -- Crisp axis-aligned fast path.
           DrawScope.drawRect (.solid color) off sz
         cont
-      | .background color shape =>
-        let spec : Draw.ShapeSpec := .rrFill (shape.toRoundRect sz ctx.density) (.solid color)
+      | .background brush shape =>
+        -- Unit-space brush → element-size px here (`Brush.scaleTo`), so the
+        -- recorded element stays structurally comparable.
+        let spec : Draw.ShapeSpec :=
+          .rrFill (shape.toRoundRect sz ctx.density) (brush.scaleTo sz)
         let mesh ← n.cachedMesh rd.elemIdx spec
         DrawScope.translate off (DrawScope.drawShape spec (some mesh))
         cont
-      | .border w color shape =>
+      | .border w brush shape =>
         let wpx := ctx.density.dpToPx w
         let spec : Draw.ShapeSpec :=
-          .rrStroke (rrInset (shape.toRoundRect sz ctx.density) (wpx / 2)) wpx (.solid color)
+          .rrStroke (rrInset (shape.toRoundRect sz ctx.density) (wpx / 2)) wpx
+            (brush.scaleTo sz)
         let mesh ← n.cachedMesh rd.elemIdx spec
         DrawScope.translate off (DrawScope.drawShape spec (some mesh))
         cont

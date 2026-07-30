@@ -215,6 +215,27 @@ private def composedScene : IO Unit := do
           b.startsWith "layer @(0,0) bounds=(0,0,30,20) a=1 blur=4"
             && (b.splitOn "\n").any (·.trimAscii == "rect @(0,0) #ff0000ff tl=(0,0) sz=30x20"))
 
+private def brushModifiers : IO Unit := do
+  -- `Modifier.backgroundBrush`/`borderBrush` through the real draw walk:
+  -- unit-space gradients scale to the element size at draw time
+  -- (`Brush.scaleTo`), recording cached rrFill/rrStroke shape specs.
+  runComposeTest
+    (Column do
+      Box (modifier := Modifier.size 40 20
+        |>.backgroundBrush (.gradient .black .white ⟨0, 0⟩ ⟨0, 1⟩) (.rounded 4))
+      Box (modifier := Modifier.size 40 20
+        |>.borderBrush 2 (.gradient .black .white ⟨0, 0⟩ ⟨0, 1⟩) (.rounded 4)))
+    do
+      awaitIdle
+      let t ← uiTest
+      let density ← t.ctx.density
+      let (list, _) ← DrawScope.record density t.ctx.root.drawTree
+      let briefs := list.map (·.brief)
+      check "backgroundBrush records the size-scaled gradient rrFill"
+        (briefs.any (· == "shape @(0,0) rrFill rr(0,0,40,20)r4 grad[2](0,0)→(0,20) cached"))
+      check "borderBrush records the size-scaled gradient rrStroke just inside the bounds"
+        (briefs.any (· == "shape @(0,20) rrStroke rr(1,1,39,19)r3 w=2 grad[2](0,0)→(0,20) cached"))
+
 /-- The DisplayList group. -/
 def run : IO Unit := do
   scenario "record: basic ops and the crisp-rect fast path" basicOps
@@ -223,5 +244,6 @@ def run : IO Unit := do
   scenario "record: well-formedness invariants" wellFormedness
   scenario "record: conservative damage bounds" damageBounds
   scenario "record: composed scene emits rects, cached shapes, text" composedScene
+  scenario "record: brush modifiers scale unit-space gradients" brushModifiers
 
 end Tests.DisplayList

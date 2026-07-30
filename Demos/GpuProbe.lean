@@ -1026,6 +1026,77 @@ private def probeBackdrop (r : Compose.Draw.Gpu.GpuRenderer)
   note s!"frame stats: {stats2.brief}"
   check "frame stats: the σ=40 panel is one backdrop" (stats2.backdrops == 1)
 
+/-- ⑳ refractive glass composite (Wave 4): a backdrop panel whose
+`Refraction` is on routes through the **glass** pipeline — sample positions
+displace outward along the panel SDF's gradient near the rim
+(`strength · (1 − smoothstep 0 band depth)`, twins `Gpu.Sdf.rrectGrad` /
+`refractShift`), pulling backdrop content inward like a lens. Over a
+red|blue seam 5 px inside the panel's right edge (σ = 1 keeps the frost
+sharp enough to localize the bend): a midline pixel in the bend band
+samples from *beyond* the seam (blue where the unwarped frost is red), the
+bend stays confined to the band (15 px further in the frost is still local
+red), the deep interior is identity, and the culled rounded corner plus
+everything outside the panel stay byte-exact base. A second scene sets
+`chroma` over a black|white seam — the red channel samples further along
+the outward gradient than the blue one, so a mid-ramp pixel splits warm. -/
+private def probeRefraction (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  say "⑳ refracting backdrop panels → glass pipeline pixels"
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (bs : ByteArray) (w x y : Nat) =>
+    let o := (y * w + x) * 4
+    if bgra then (bs.get! (o+2), bs.get! (o+1), bs.get! o, bs.get! (o+3))
+    else (bs.get! o, bs.get! (o+1), bs.get! (o+2), bs.get! (o+3))
+  let refr : Draw.Refraction := { strength := 12, band := 16 }
+  -- Scene 1: red|blue seam at x = 155, panel right rim at x = 160.
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawRect (.solid .red) ⟨0, 0⟩ ⟨155, 140⟩
+    DrawScope.drawRect (.solid .blue) ⟨155, 0⟩ ⟨65, 140⟩
+    DrawScope.clipRoundRect (RoundRect.circular ⟨60, 20, 160, 100⟩ 12) do
+      DrawScope.drawBackdrop ⟨60, 20, 160, 100⟩ 1 refr
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 220 140
+  let p := px bytes 220
+  check "blit: outside the panel stays byte-exact (red @30,60)"
+    (p 30 60 == (255, 0, 0, 255))
+  check "blit: and past the panel on the blue side (@200,60)"
+    (p 200 60 == (0, 0, 255, 255))
+  check "blit: between rim and window edge (@170,60)" (p 170 60 == (0, 0, 255, 255))
+  check "mask: the glass pipeline culls the rounded corner to the crisp base (@62,22)"
+    (p 62 22 == (255, 0, 0, 255))
+  let deep := p 110 60
+  check s!"identity: deep interior (past the band) is the local red (r={deep.1})"
+    (deep.1.toNat ≥ 250 && deep.2.2.1.toNat ≤ 5)
+  -- Frag (153.5, 60.5): depth 6.5 ⟹ shift 12·0.639 ≈ 7.7 px outward — the
+  -- sample lands ≈ 6 px past the seam, on pure blue (Gpu.Sdf.refractShift's
+  -- pinned operating point).
+  let bent := p 153 60
+  check s!"bend: in the rim band the sample crosses the seam (r={bent.1} b={bent.2.2.1})"
+    (bent.2.2.1.toNat ≥ 200 && bent.1.toNat ≤ 60)
+  -- Frag (145.5, 60.5): depth 14.5 ⟹ shift ≈ 0.3 px — still local red.
+  let confined := p 145 60
+  check s!"bend: confined to the band — 15 px inside is still red (r={confined.1})"
+    (confined.1.toNat ≥ 240 && confined.2.2.1.toNat ≤ 15)
+  let leftRim := p 66 60
+  check s!"bend: the far rim pulls only local red (r={leftRim.1})" (leftRim.1.toNat ≥ 240)
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: one refracting backdrop" (stats.backdrops == 1)
+  -- Scene 2: chroma over a black|white seam. Frag (151.5, 60.5): depth 8.5
+  -- ⟹ falloff 0.453, bend ≈ 5.4 px, split ±3·0.453 ≈ ±1.4 px — the red
+  -- sample lands on pure white, the blue one back on the ramp.
+  let (list2, _) ← DrawScope.record {} do
+    DrawScope.drawRect (.solid .black) ⟨0, 0⟩ ⟨155, 140⟩
+    DrawScope.drawRect (.solid .white) ⟨155, 0⟩ ⟨65, 140⟩
+    DrawScope.clipRoundRect (RoundRect.circular ⟨60, 20, 160, 100⟩ 12) do
+      DrawScope.drawBackdrop ⟨60, 20, 160, 100⟩ 1 { refr with chroma := 3 }
+  let bytes2 ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list2 220 140
+  let q := px bytes2 220
+  let split := q 151 60
+  check s!"chroma: a mid-ramp pixel splits warm (r={split.1} b={split.2.2.1})"
+    (split.1.toNat ≥ split.2.2.1.toNat + 30)
+  check "chroma: outside the panel stays neutral white"
+    (q 200 60 == (255, 255, 255, 255))
+
 /-- ⑮ fractional-origin text (M-j): both backends snap run origins through
 the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
 byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
@@ -1130,6 +1201,7 @@ def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
   probeStretch gpuRenderer swapchainFmt
   probeLayerClip gpuRenderer swapchainFmt
   probeBackdrop gpuRenderer engine font swapchainFmt
+  probeRefraction gpuRenderer swapchainFmt
   probeFractionalText gpuRenderer engine font
   probeInvalidate gpuRenderer
   match raw with

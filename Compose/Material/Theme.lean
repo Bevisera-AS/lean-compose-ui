@@ -262,6 +262,11 @@ structure GlassSpec where
   sheen : Option Draw.Brush := none
   /-- Backdrop Gaussian blur radius (σ = radius/2 px). -/
   blurRadius : Dp := 48
+  /-- Refractive edge bend of the frost (`Modifier.backdropBlur`'s `refr`):
+  the backdrop pulls inward like a lens near the rim. On by default — it is
+  what makes glass read as glass rather than acrylic; set
+  `{ strength := 0 }` for plain frost. -/
+  refraction : BackdropRefraction := { strength := 6, band := 28 }
   rim : Option RimSpec := some {}
   elevation : Dp := 24
   deriving Repr, BEq, Inhabited

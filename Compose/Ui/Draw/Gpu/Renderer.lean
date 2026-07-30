@@ -27,8 +27,9 @@ one clear-and-replay pass; with them, the **snapshot split** — the target
 list's prefix replays into a full-screen snapshot texture, each panel's
 region is downsampled (once, twice past σ 32) and separably blurred, and
 the target pass clears, blits the snapshot 1:1 nearest, and replays the
-suffix, whose `.backdrop` commands composite the blurred panel quads →
-submit (present is implicit).
+suffix, whose `.backdrop` commands composite the blurred panel quads
+(through the refracting glass pipeline when the panel's `Refraction` is
+on) → submit (present is implicit).
 
 Layer textures come from a per-window pool: dimensions quantized up to 64 px,
 best-fit ≥ the request, entries released after sitting idle for
@@ -493,7 +494,7 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
     (imageTexs : Array Texture) (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
   let full : Sdl.Rect := ⟨0, 0, w, h⟩
   -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 5 image / 6 stretch /
-  -- 7 backdrop / 9 none
+  -- 7 backdrop / 8 glass (refracting backdrop) / 9 none
   let mut kind : Nat := 9
   let mut scissor : Option Sdl.Rect := none
   let mut atlas : Option Nat := none
@@ -502,11 +503,14 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
   let mut boundBackdrop : Option Nat := none
   -- What the layer pipeline's `LayerClip` fragment uniform currently holds:
   -- `none` = unknown (nothing pushed yet this replay, or clobbered by a
-  -- stretch draw's `StretchParams` — same slot 0), `some rc` = `rc` pushed
-  -- (`some none` = the unmasked sentinel). Fresh per replay entry: push
-  -- uniforms persist on the command buffer across passes, so a new pass
-  -- never trusts the slot's previous content.
+  -- stretch draw's `StretchParams` or a glass draw's `GlassParams` — same
+  -- slot 0), `some rc` = `rc` pushed (`some none` = the unmasked sentinel).
+  -- Fresh per replay entry: push uniforms persist on the command buffer
+  -- across passes, so a new pass never trusts the slot's previous content.
   let mut pushedClip : Option (Option RoundRect) := none
+  -- Which backdrop's `GlassParams` slot 0 holds (`none` = clobbered by any
+  -- other slot-0 push, or nothing yet) — the glass twin of `pushedClip`.
+  let mut pushedGlass : Option Nat := none
   for cmd in cmds do
     let want := match cmd with
       | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ _ s
@@ -577,6 +581,7 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
               (l.bounds.width / Float32.ofNat lt.w.toNat)
               (l.bounds.height / Float32.ofNat lt.h.toNat))
             pushedClip := none    -- StretchParams clobbered slot 0
+            pushedGlass := none
         rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
       | none =>
         if kind != 4 then
@@ -597,20 +602,26 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
         if pushedClip != some rc then
           cb.pushFragmentUniformData 0 (packLayerClip rc)
           pushedClip := some rc
+          pushedGlass := none
         rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
     | .backdrop idx _ =>
-      -- Backdrop panel composite: rides the layer pipeline over the shared
-      -- composite quad buffers, sampling the panel's blurred region texture
-      -- linearly (low-res → panel-res upsample), masked by the record-site
-      -- rounded clip. The quad sits at the fixed slot
-      -- `layers.size + 3 idx + 3` (see `layerComposites`).
-      if kind != 7 then
-        rp.bindPipeline r.pipelines.layer
+      -- Backdrop panel composite: rides the layer pipeline (or the glass
+      -- pipeline when the panel refracts) over the shared composite quad
+      -- buffers, sampling the panel's blurred region texture linearly
+      -- (low-res → panel-res upsample), masked by the record-site rounded
+      -- clip. The quad sits at the fixed slot `layers.size + 3 idx + 3`
+      -- (see `layerComposites`).
+      let refracting : Bool := match backdrops[idx]? with
+        | some b => decide (b.refr.strength > 0)
+        | none => false
+      let wantKind := if refracting then 8 else 7
+      if kind != wantKind then
+        rp.bindPipeline (if refracting then r.pipelines.glass else r.pipelines.layer)
         if let some s := bufs.layerV then
           rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
         if let some s := bufs.layerI then
           rp.bindIndexBuffer { buffer := s.buffer } .u32
-        kind := 7
+        kind := wantKind
         boundBackdrop := none
       if boundBackdrop != some idx then
         if let some bt := backdropTexs[idx]? then
@@ -618,10 +629,34 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
           let (tex, _, _) := bt.final levels
           rp.bindFragmentSamplers 0 #[{ texture := tex, sampler := r.samplerLinear }]
           boundBackdrop := some idx
-      let rc := backdrops[idx]?.bind (·.rounded)
-      if pushedClip != some rc then
-        cb.pushFragmentUniformData 0 (packLayerClip rc)
-        pushedClip := some rc
+      if refracting then
+        -- `GlassParams`: the panel's mask/refraction shape (its rounded
+        -- clip, or the panel rect itself when unclipped — refraction needs
+        -- a rim), the px→UV affine of the blurred region at its final
+        -- downsample level, and the half-texel-inset valid-UV clamp.
+        if pushedGlass != some idx then
+          if let some b := backdrops[idx]? then
+            if let some bt := backdropTexs[idx]? then
+              let rr := b.rounded.getD (.ofRect b.panel)
+              let scale := Float32.ofNat (2 ^ b.levels)
+              let (_, ew, eh) := bt.final b.levels
+              let ewf := Float32.ofNat ew.toNat
+              let ehf := Float32.ofNat eh.toNat
+              let sx := 1 / (scale * ewf)
+              let sy := 1 / (scale * ehf)
+              let wl := backdropLevelDim b.region.width b.levels
+              let hl := backdropLevelDim b.region.height b.levels
+              cb.pushFragmentUniformData 0 (packGlassParams rr
+                sx sy (-b.region.left * sx) (-b.region.top * sy) b.refr
+                (0.5 / ewf) (0.5 / ehf) ((wl - 0.5) / ewf) ((hl - 0.5) / ehf))
+              pushedGlass := some idx
+              pushedClip := none
+      else
+        let rc := backdrops[idx]?.bind (·.rounded)
+        if pushedClip != some rc then
+          cb.pushFragmentUniformData 0 (packLayerClip rc)
+          pushedClip := some rc
+          pushedGlass := none
       rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * (layers.size + 3 * idx + 3)))
     | .image first count tex linear _ =>
       -- Rides the layer pipeline (premultiplied sample × alpha) with its own
@@ -638,6 +673,7 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
       if pushedClip != some none then
         cb.pushFragmentUniformData 0 (packLayerClip none)
         pushedClip := some none
+        pushedGlass := none
       if boundImage != some (tex, linear) then
         if let some t := imageTexs[tex]? then
           rp.bindFragmentSamplers 0

@@ -241,6 +241,20 @@ instance : BEq LayoutElem where
 #guard (LayoutElem.custom 7 default) == (LayoutElem.custom 7 default)
 #guard (LayoutElem.custom 7 default) != (LayoutElem.custom 8 default)
 
+/-- The refractive edge bend of a `backdropBlur` frost, in `Dp` (the
+density-independent face of `Draw.Refraction`): sampling displaces outward
+along the panel shape's SDF gradient by up to `strength` at the rim, falling
+to zero `band` inside it; `chroma` adds a red/blue split on the same
+falloff. `strength = 0` (the default) is plain frost. -/
+structure BackdropRefraction where
+  /-- Max displacement at the rim; `0` = no refraction. -/
+  strength : Dp := 0
+  /-- Depth inside the rim over which the bend falls to zero. -/
+  band : Dp := 24
+  /-- Red/blue channel split riding the same falloff (`0` = none). -/
+  chroma : Dp := 0
+  deriving Repr, BEq, Inhabited
+
 /-- A draw-affecting modifier element: contributes drawing at its wrapper's
 coordinates, before the content. Mirrors the `DrawModifier` family. -/
 inductive DrawElem where
@@ -272,9 +286,10 @@ inductive DrawElem where
   /-- Frost this element's backdrop: everything already drawn behind it is
   Gaussian-blurred (σ = `radius / 2` px, the `blur` convention, capped at
   σ 64) and redrawn clipped to `shape` at the wrapper bounds — the glass-
-  panel frost. GPU-only; the SDL backend draws nothing. No Compose analog
-  (Skia's backdrop filters are out of Compose's modifier surface). -/
-  | backdropBlur (radius : Dp) (shape : Shape)
+  panel frost — optionally lens-bent near the rim (`refr`). GPU-only; the
+  SDL backend draws nothing. No Compose analog (Skia's backdrop filters are
+  out of Compose's modifier surface). -/
+  | backdropBlur (radius : Dp) (shape : Shape) (refr : BackdropRefraction)
   /-- Composite the content (and everything inner) through an offscreen layer
   warped by `LayerEffect.stretch`, with the signed per-axis intensity read
   from `intensity` at draw time — the raw element behind foundation's stretch
@@ -304,16 +319,18 @@ instance : BEq DrawElem where
     | .alpha a, .alpha a' => a == a'
     | .graphicsLayer g, .graphicsLayer g' => g == g'
     | .blur r, .blur r' => r == r'
-    | .backdropBlur r s, .backdropBlur r' s' => r == r' && s == s'
+    | .backdropBlur r s f, .backdropBlur r' s' f' => r == r' && s == s' && f == f'
     | .stretchLayer k _, .stretchLayer k' _ => k == k'
     | _, _ => false
 
 #guard (DrawElem.blur 4) == (DrawElem.blur 4)
 #guard (DrawElem.blur 4) != (DrawElem.blur 8)
-#guard (DrawElem.backdropBlur 48 (.rounded 16)) == (DrawElem.backdropBlur 48 (.rounded 16))
-#guard (DrawElem.backdropBlur 48 (.rounded 16)) != (DrawElem.backdropBlur 24 (.rounded 16))
-#guard (DrawElem.backdropBlur 48 (.rounded 16)) != (DrawElem.backdropBlur 48 .rectangle)
-#guard (DrawElem.backdropBlur 48 .rectangle) != (DrawElem.blur 48)
+#guard (DrawElem.backdropBlur 48 (.rounded 16) {}) == (DrawElem.backdropBlur 48 (.rounded 16) {})
+#guard (DrawElem.backdropBlur 48 (.rounded 16) {}) != (DrawElem.backdropBlur 24 (.rounded 16) {})
+#guard (DrawElem.backdropBlur 48 (.rounded 16) {}) != (DrawElem.backdropBlur 48 .rectangle {})
+#guard (DrawElem.backdropBlur 48 (.rounded 16) {})
+        != (DrawElem.backdropBlur 48 (.rounded 16) { strength := 6 })
+#guard (DrawElem.backdropBlur 48 .rectangle {}) != (DrawElem.blur 48)
 #guard (DrawElem.stretchLayer 7 (pure (0, 0))) == (DrawElem.stretchLayer 7 (pure (1, 1)))
 #guard (DrawElem.stretchLayer 7 (pure (0, 0))) != (DrawElem.stretchLayer 8 (pure (0, 0)))
 #guard (DrawElem.background (.solid .red) .rectangle) == (DrawElem.background (.solid .red) .rectangle)
@@ -643,11 +660,13 @@ per-panel backdrop blur, the glass-panel frost (`Modifier.glass` slots it
 under the tint). **GPU backend only**: the SDL backend draws nothing and the
 panel shows the unfrosted backdrop; under an offscreen-layer ancestor
 (`alpha`/`blur`/`graphicsLayer`) the GPU encoder drops it too (both
-documented, DESIGN.md). `radius ≤ 0` records nothing. Compared structurally,
-so animating the radius invalidates exactly this element's draw. -/
+documented, DESIGN.md). `radius ≤ 0` records nothing. `refr` bends the
+frost near the rim like a lens (`BackdropRefraction`; off by default).
+Compared structurally, so animating the radius invalidates exactly this
+element's draw. -/
 def backdropBlur (radius : Dp) (shape : Shape := .rectangle)
-    (m : Modifier := {}) : Modifier :=
-  m.append (.draw (.backdropBlur radius shape))
+    (refr : BackdropRefraction := {}) (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.backdropBlur radius shape refr))
 
 /-- Composite content and children through an offscreen layer warped by the
 Android-12 overscroll stretch, reading the signed per-axis intensity from

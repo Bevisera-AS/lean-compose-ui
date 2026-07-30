@@ -24,9 +24,11 @@ Every glass panel frosts for real: the treatment slots a
 its window renders Gaussian-blurred through the GPU backend's snapshot
 split (σ = `blurRadius / 2` px, up to 64 — Phase B; the SDL backend keeps
 the Phase-A tint-only degrade, and so does glass composited through an
-offscreen layer, e.g. under a `Modifier.alpha` fade). Dialogs may still
-pair with `blurBehind` when the *whole window* should frost, not just the
-panel.
+offscreen layer, e.g. under a `Modifier.alpha` fade). The frost also
+*refracts* by default (`GlassSpec.refraction`): the blurred backdrop bends
+inward near the rim like a lens — the Phase-C touch that makes the panel
+read as glass rather than acrylic. Dialogs may still pair with
+`blurBehind` when the *whole window* should frost, not just the panel.
 
 `GlassSpec.forScheme` picks light or dark treatment by the scheme's surface
 luminance; `Theme.liquidGlass` bundles it into a complete theme whose
@@ -74,13 +76,14 @@ namespace Modifier
 
 /-- The glass *background* chain (no clip — the `SurfaceMaterial` seam's
 arm, where the caller owns border/clip): drop shadow (when the spec elevates)
-→ backdrop frost (`Modifier.backdropBlur` at `blurRadius`, masked by
-`shape`; GPU-only) → tint wash → optional sheen → specular rim, every brush
-scaled from unit space at draw time. -/
+→ backdrop frost (`Modifier.backdropBlur` at `blurRadius` with the spec's
+refractive edge bend, masked by `shape`; GPU-only) → tint wash → optional
+sheen → specular rim, every brush scaled from unit space at draw time. -/
 def glassBackground (spec : GlassSpec := {}) (shape : Shape := .rounded 16)
     (m : Modifier := {}) : Modifier :=
   let m := if spec.elevation > 0 then m.shadow spec.elevation shape else m
-  let m := if spec.blurRadius > 0 then m.backdropBlur spec.blurRadius shape else m
+  let m := if spec.blurRadius > 0 then
+    m.backdropBlur spec.blurRadius shape spec.refraction else m
   let m := m.backgroundBrush spec.tint shape
   let m := match spec.sheen with
     | some b => m.backgroundBrush b shape
@@ -102,11 +105,18 @@ def glass (spec : GlassSpec := {}) (shape : Shape := .rounded 16)
   let spec : GlassSpec := { sheen := some (.solid .white), elevation := 2 }
   (Modifier.glass spec (.rounded 8)).elems ==
     #[.draw (.shadow 2 (.rounded 8) (Color.black.withAlpha 0.25)),
-      .draw (.backdropBlur (GlassSpec.blurRadius {}) (.rounded 8)),
+      .draw (.backdropBlur (GlassSpec.blurRadius {}) (.rounded 8) (GlassSpec.refraction {})),
       .draw (.background spec.tint (.rounded 8)),
       .draw (.background (.solid .white) (.rounded 8)),
       .draw (.border 1 (RimSpec.brush {}) (.rounded 8)),
       .draw (.clip (.rounded 8))]
+-- Glass defaults to a refracting frost; the spec can turn the bend off.
+#guard (GlassSpec.refraction {}).strength > 0
+#guard
+  let spec : GlassSpec := { elevation := 0, rim := none, refraction := { strength := 0 } }
+  (Modifier.glassBackground spec (.rounded 8)).elems ==
+    #[.draw (.backdropBlur (GlassSpec.blurRadius {}) (.rounded 8) { strength := 0 }),
+      .draw (.background spec.tint (.rounded 8))]
 #guard (Modifier.glass { elevation := 0, rim := none, blurRadius := 0 } .circle).elems ==
     #[.draw (.background (GlassSpec.tint {}) .circle), .draw (.clip .circle)]
 

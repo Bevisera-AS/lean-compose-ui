@@ -196,6 +196,71 @@ def stretchPos (p s : Float32) : Float32 :=
 #guard (stretchPos 0.5 0.032 - 0.479180).abs < 1e-4
 #guard (stretchPos 0.5 (-0.032) - 0.520820).abs < 1e-4
 
+/-! ## Backdrop refraction (the Wave-4 glass composite pipeline) -/
+
+/-- `smoothstep` (Hermite ramp between the edges), as in MSL/GLSL —
+requires `e0 < e1` (the shader-spec precondition; both twins call it with
+`(0, band)` and `band ≥ 1`). -/
+def smoothstep (e0 e1 x : Float32) : Float32 :=
+  let t := saturate ((x - e0) / (e1 - e0))
+  t * t * (3 - 2 * t)
+
+/-- Analytic gradient of `rrectSdf` (unit outward normal): the corner region
+(both box deltas positive) normalizes the delta vector, edge regions pick
+the dominant axis — exactly the piecewise structure of the SDF itself. The
+degenerate corner center (zero-length delta) guards to a tiny denominator
+(the glass fragment never has magnitude there: depth ≥ radius ≥ band). -/
+def rrectGrad (p o : Offset) (size : Size) (tl tr br bl : Float32) : Offset :=
+  let hw := size.width / 2
+  let hh := size.height / 2
+  let center : Offset := ⟨o.x + hw, o.y + hh⟩
+  let r := pickRadius p center tl tr br bl
+  let qx := p.x - center.x
+  let qy := p.y - center.y
+  let sx : Float32 := if qx >= 0 then 1 else -1
+  let sy : Float32 := if qy >= 0 then 1 else -1
+  let dx := qx.abs - hw + r
+  let dy := qy.abs - hh + r
+  if dx > 0 && dy > 0 then
+    let len := max ((dx * dx + dy * dy).sqrt) 1e-6
+    ⟨sx * dx / len, sy * dy / len⟩
+  else if dx > dy then ⟨sx, 0⟩ else ⟨0, sy⟩
+
+/-- The refraction displacement magnitude at signed distance `sdf` from the
+panel rim: `strength · (1 − smoothstep 0 band (−sdf))` — full `strength` on
+the rim, zero at `band` px inside, a lens-like bend confined to the edge
+band. Sampling displaces by `rrectGrad · refractShift` (outward — content
+pulls inward). -/
+def refractShift (strength band sdf : Float32) : Float32 :=
+  strength * (1 - smoothstep 0 band (-sdf))
+
+-- smoothstep: pinned endpoints, exact midpoint, and the probe-⑳ operating
+-- point (t = 0.40625 ⟹ 0.361023).
+#guard smoothstep 0 16 0 == 0
+#guard smoothstep 0 16 16 == 1
+#guard smoothstep 0 16 8 == 0.5
+#guard (smoothstep 0 16 6.5 - 0.361023).abs < 1e-4
+-- rrectGrad: axis units on edge midpoints, the diagonal on a circle's 45°,
+-- and agreement with a central finite difference of rrectSdf.
+#guard rrectGrad ⟨39, 20⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8 == ⟨1, 0⟩
+#guard rrectGrad ⟨1, 20⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8 == ⟨-1, 0⟩
+#guard rrectGrad ⟨20, 1⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8 == ⟨0, -1⟩
+#guard rrectGrad ⟨20, 39⟩ ⟨0, 0⟩ ⟨40, 40⟩ 8 8 8 8 == ⟨0, 1⟩
+#guard
+  let g := rrectGrad ⟨30, 10⟩ ⟨0, 0⟩ ⟨40, 40⟩ 20 20 20 20
+  (g.x - 0.7071).abs < 1e-3 && (g.y + 0.7071).abs < 1e-3
+#guard
+  let fd := (rrectSdf ⟨30.01, 10⟩ ⟨0, 0⟩ ⟨40, 40⟩ 20 20 20 20
+             - rrectSdf ⟨29.99, 10⟩ ⟨0, 0⟩ ⟨40, 40⟩ 20 20 20 20) / 0.02
+  ((rrectGrad ⟨30, 10⟩ ⟨0, 0⟩ ⟨40, 40⟩ 20 20 20 20).x - fd).abs < 1e-2
+-- refractShift: full strength on the rim, zero past the band, exact half at
+-- half depth, and the probe-⑳ operating point (12 · 0.638977).
+#guard refractShift 12 16 0 == 12
+#guard refractShift 12 16 (-16) == 0
+#guard refractShift 12 16 (-20) == 0
+#guard refractShift 12 16 (-8) == 6
+#guard (refractShift 12 16 (-6.5) - 7.66772).abs < 1e-3
+
 /-! ## Analytic Gaussian shadow (Evan Wallace) -/
 
 /-- The Gaussian PDF with standard deviation `sigma`. -/

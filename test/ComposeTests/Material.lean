@@ -621,6 +621,8 @@ private def surfaceGlassMaterial : IO Unit := do
   check "glass surface: records the shape-masked backdrop frost at σ = blurRadius/2"
     (briefs.any fun b => b.startsWith "backdrop "
       && (b.splitOn "rounded=").length > 1 && (b.splitOn "sigma=24").length > 1)
+  check "glass surface: the default spec's refractive edge bend rides the prim"
+    (briefs.any fun b => b.startsWith "backdrop " && (b.splitOn " refr=").length > 1)
   check "glass surface: records the vertical gradient tint"
     (briefs.any fun b => (b.splitOn "rrFill").length > 1 && (b.splitOn "grad[2]").length > 1)
   check "glass surface: records the radial sheen"

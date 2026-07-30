@@ -246,23 +246,30 @@ private def backdropPanels : IO Unit := do
         DrawScope.drawBackdrop ⟨0, 0, 40, 40⟩ 12
     DrawScope.drawBackdrop ⟨0, 0, 20, 20⟩ 99
     DrawScope.drawBackdrop ⟨0, 0, 20, 20⟩ 0    -- dropped
+    -- Refraction rides the prim (shown in the brief only when on); a
+    -- zero-strength spec normalizes away entirely.
+    DrawScope.drawBackdrop ⟨0, 0, 20, 20⟩ 8 { strength := 6, band := 20, chroma := 1 }
+    DrawScope.drawBackdrop ⟨0, 0, 20, 20⟩ 8 { strength := 0, chroma := 9 }
   checkBriefs "drawBackdrop" l
     [ "backdrop @(10,0) clip=(10,0,50,40) rounded=rr(10,0,50,40)r8 bounds=(0,0,40,40) sigma=12"
-    , "backdrop @(0,0) bounds=(0,0,20,20) sigma=64" ]
+    , "backdrop @(0,0) bounds=(0,0,20,20) sigma=64"
+    , "backdrop @(0,0) bounds=(0,0,20,20) sigma=8 refr=6/20+c1"
+    , "backdrop @(0,0) bounds=(0,0,20,20) sigma=8" ]
   -- `Modifier.backdropBlur` through the real draw walk: the prim records
   -- under the panel shape's rounded clip (radius 16 normalizes to 15 on the
-  -- 30-tall box), σ = radius/2 px (density 1).
+  -- 30-tall box), σ = radius/2 px (density 1); the Dp-space refraction spec
+  -- converts to px on the same density.
   runComposeTest
-    (Box (modifier := Modifier.backdropBlur 48 (.rounded 16) |>.size 40 30
-      |>.background Color.red)) do
+    (Box (modifier := Modifier.backdropBlur 48 (.rounded 16) { strength := 6, band := 28 }
+      |>.size 40 30 |>.background Color.red)) do
     awaitIdle
     let t ← uiTest
     let density ← t.ctx.density
     let (list, _) ← DrawScope.record density t.ctx.root.drawTree
-    check "Modifier.backdropBlur records the masked backdrop prim"
+    check "Modifier.backdropBlur records the masked refracting backdrop prim"
       ((list.map (·.brief)).any
         (· == "backdrop @(0,0) clip=(0,0,40,30) rounded=rr(0,0,40,30)r15 \
-               bounds=(0,0,40,30) sigma=24"))
+               bounds=(0,0,40,30) sigma=24 refr=6/28"))
 
 /-- The DisplayList group. -/
 def run : IO Unit := do

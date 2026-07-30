@@ -31,6 +31,7 @@ STAGES=(
   "texVert    tex.vert"
   "glyphFrag  glyph.frag"
   "layerFrag  layer.frag"
+  "glassFrag  glass.frag"
   "blurVert   blur.vert"
   "blurFrag   blur.frag"
   "stretchFrag stretch.frag"

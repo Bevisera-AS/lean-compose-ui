@@ -264,13 +264,17 @@ def drawPath (brush : Brush) (path : Path) (style : PathStyle := .fill) : DrawM 
 primitive in the main target inside `bounds` (local coordinates) is
 Gaussian-blurred at `sigma` (device px, capped at `backdropSigmaMax`) and
 redrawn as the panel's background, masked by the ambient rounded clip
-(record under `clipRoundRect` for a rounded panel). GPU-only: the SDL
-backend draws nothing, and the GPU encoder drops a backdrop recorded inside
-an offscreen layer (both documented, DESIGN.md). `σ ≤ 0` records nothing.
+(record under `clipRoundRect` for a rounded panel). `refr` optionally bends
+the frost near the rim (`Refraction`; normalized off when `strength ≤ 0` so
+records stay canonical). GPU-only: the SDL backend draws nothing, and the
+GPU encoder drops a backdrop recorded inside an offscreen layer (both
+documented, DESIGN.md). `σ ≤ 0` records nothing.
 Backs `Modifier.backdropBlur`. -/
-def drawBackdrop (bounds : Rect) (sigma : Float32) : DrawM Unit := do
+def drawBackdrop (bounds : Rect) (sigma : Float32) (refr : Refraction := {}) :
+    DrawM Unit := do
   if sigma <= 0 then return
-  emit (.backdrop · bounds (min sigma backdropSigmaMax))
+  let refr := if refr.strength > 0 then refr else {}
+  emit (.backdrop · bounds (min sigma backdropSigmaMax) refr)
 
 /-- Draw (a `src` portion of) an image stretched onto the `dst` rectangle
 (local coordinates; `src` defaults to the whole image). The ambient alpha

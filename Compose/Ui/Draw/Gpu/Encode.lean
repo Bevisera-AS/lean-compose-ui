@@ -132,6 +132,12 @@ structure BackdropEnc where
   composite masks against it in the layer fragment (`LayerClip`); `none`
   composites unmasked. -/
   rounded : Option RoundRect := none
+  /-- Normalized refractive edge bend (`Refraction`, device px): `strength`
+  capped at 32, `band` floored at 1, `chroma` in `[0, 8]` — or all-off `{}`.
+  When on, the composite runs the **glass** pipeline (SDF-gradient UV warp)
+  instead of the plain layer composite, and `region` grows by
+  `strength + chroma` so warped samples stay on real blurred content. -/
+  refr : Refraction := {}
   deriving Repr, BEq, Inhabited
 
 /-- A backdrop region extent downsampled by `k` halvings (whole px, ≥ 1) —
@@ -589,21 +595,30 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
     | some texIdx =>
       pushImage st texIdx img src (dst.translate (s.origin + shift))
         (sampling == .linear) (s.alpha * extraAlpha) (scissorAt s.clip shift)
-  | .backdrop s bounds sigma =>
+  | .backdrop s bounds sigma refr =>
     -- Inside an offscreen layer's pass there is no "scene behind" to
     -- snapshot: drop the panel (documented v1 constraint — glass under an
     -- alpha/blur/transform layer keeps its tint without frost).
     if inLayer then st else Id.run do
     let sigma := min sigma backdropSigmaMax
     if sigma <= 0 then return st
+    -- Normalize the refraction: off unless strength > 0; strength/chroma
+    -- capped so the region margin stays bounded, band floored at 1 (the
+    -- falloff divides by it).
+    let refr : Refraction :=
+      if refr.strength > 0 then
+        { strength := min refr.strength 32, band := max refr.band 1
+          chroma := min (max refr.chroma 0) 8 }
+      else {}
     -- The visible panel: recorded bounds ∩ clip, snapped outward to whole px.
     let p := bounds.translate (s.origin + shift)
     let p := match s.clip with | some c => Rect.intersect p c | none => p
     let panel : Rect := ⟨p.left.floor, p.top.floor, p.right.ceil, p.bottom.ceil⟩
     if panel.width < 1 || panel.height < 1 then return st
     -- Blur-source region: the taps' full-res reach (3σ) plus the downsample
-    -- halvings' bilinear bleed (≤ 4 px at two levels).
-    let m := 3 * sigma + 4
+    -- halvings' bilinear bleed (≤ 4 px at two levels), plus the refraction's
+    -- outward sampling reach when the bend is on.
+    let m := 3 * sigma + 4 + refr.strength + refr.chroma
     let region : Rect := ⟨(panel.left - m).floor, (panel.top - m).floor,
                           (panel.right + m).ceil, (panel.bottom + m).ceil⟩
     let idx := st.backdrops.size
@@ -613,7 +628,8 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
       backdrops := st.backdrops.push
         { region, panel, sigma
           levels := if sigma > 32 then 2 else 1
-          rounded := s.rounded.map (·.translate shift) } }
+          rounded := s.rounded.map (·.translate shift)
+          refr } }
   | .layer s bounds props content =>
     let effect := props.effect.normalize
     if props.transform.isNone && props.alpha ≥ 1.0 && effect == .none then
@@ -902,6 +918,21 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
 #guard
   let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 99] #[]
   r.backdrops[0]!.sigma == 64 && r.backdrops[0]!.levels == 2
+-- Refraction rides the BackdropEnc normalized (strength ≤ 32, band ≥ 1,
+-- chroma ∈ [0, 8]) and grows the region margin by strength + chroma; a
+-- zero-strength spec normalizes to all-off `{}` and leaves the margin alone.
+#guard
+  let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 8 { strength := 10, band := 20 }] #[]
+  r.backdrops[0]!.refr == { strength := 10, band := 20 }
+    && r.backdrops[0]!.region == (⟨-38, -38, 88, 88⟩ : Rect)   -- 3·8 + 4 + 10
+#guard
+  let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 8
+    { strength := 99, band := 0, chroma := 99 }] #[]
+  r.backdrops[0]!.refr == { strength := 32, band := 1, chroma := 8 }
+#guard
+  let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 8 { strength := 0, chroma := 5 }] #[]
+  r.backdrops[0]!.refr == ({} : Refraction)
+    && r.backdrops[0]!.region == (⟨-28, -28, 78, 78⟩ : Rect)
 #guard
   let clipped : PrimState := { clip := some ⟨100, 100, 100, 100⟩ }
   let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 0,

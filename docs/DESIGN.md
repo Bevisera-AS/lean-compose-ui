@@ -475,6 +475,27 @@ regions ≈ identity through the downsample chain, a monotonic seam ramp,
 the σ = 40 two-halving path, and text/image prims on both sides of the
 split keeping the resolve/encode walks in lockstep).
 
+**Refraction** (`Refraction` on the backdrop prim, GPU-only): a panel whose
+refraction `strength > 0` composites through the **glass** pipeline instead
+of the plain layer pipeline — the fragment displaces its sample position
+outward along the panel rounded rect's analytic SDF gradient by
+`strength · (1 − smoothstep(0, band, depth))` px (full at the rim, zero
+`band` px inside; twins `Gpu.Sdf.rrectGrad`/`refractShift`), pulling
+blurred backdrop content inward like a lens — the bend that makes Liquid
+Glass read as glass rather than acrylic. An optional `chroma` splits the
+red/blue channels ±chroma px along the same gradient on the same falloff.
+Parameters ride the 80-byte `GlassParams` fragment uniform
+(`packGlassParams`: mask/shape rect, the px→UV affine of the blurred
+region texture, the normalized spec, and a valid-UV clamp); the encoder
+normalizes (strength ≤ 32, band ≥ 1, chroma ≤ 8) and grows the blur region
+by `strength + chroma` so warped samples stay on real content.
+`GlassSpec.refraction` defaults the bend **on** for glass surfaces
+(`strength 6, band 28` dp); `Modifier.backdropBlur (refr := …)` exposes it
+directly. Same SDL no-op and parity exclusion as the frost. Verified by
+`gpu-probe` ⑳ (a seam-crossing bend at the pinned `refractShift` operating
+point, band confinement, deep-interior identity, corner culling on the
+glass pipeline, and the chromatic split).
+
 **Blur-behind** (whole-window frost): `Popup`/`Dialog` (and the Material
 wrappers) take `blurBehind : Dp`, and while such an overlay is open the
 window's *base* content composes under an always-present wrapper node that

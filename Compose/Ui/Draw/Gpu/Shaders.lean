@@ -1,5 +1,7 @@
 module
 
+public import Compose.Ui.Draw.DisplayList
+public meta import Compose.Ui.Draw.DisplayList
 public import Compose.Ui.Draw.Gpu.Instance
 public meta import Compose.Ui.Draw.Gpu.Instance
 public import Compose.Ui.Draw.Gpu.SpirvBlobs
@@ -18,7 +20,7 @@ dialect twin in `shaders/` compiled to SPIR-V and embedded via
 `Gpu/SpirvBlobs.lean` (`scripts/gen-shaders.sh`) — `Pipelines.create` picks
 the dialect the device accepts (Metal → MSL, Vulkan → SPIR-V). Keep the two
 dialects in lockstep; both cite the `#guard`-tested formula twins in
-`Gpu/Sdf.lean`. The seven pipelines:
+`Gpu/Sdf.lean`. The eight pipelines:
 
 - **quad**: instanced unit triangle strips (corners from `vertex_id`, all
   attributes instance-rate at `quadStride`), SDF fill/stroke coverage plus a
@@ -31,6 +33,11 @@ dialects in lockstep; both cite the `#guard`-tested formula twins in
 - **layer**: indexed textured triangles compositing an offscreen layer — the
   texel is already premultiplied, so the fragment just scales by the group
   alpha carried in the vertex color.
+- **glass**: the refractive backdrop-panel composite — the layer composite
+  with the sample position displaced outward along the panel rect's SDF
+  gradient near the rim (twins `Gpu.Sdf.rrectGrad`/`refractShift`), plus an
+  optional red/blue chromatic split; parameters from the `GlassParams`
+  fragment uniform pushed per composite draw.
 - **blur**: one direction of a separable Gaussian over a layer texture
   (`LayerEffect.blur`) — vertex-buffer-free, geometry from a vertex uniform,
   kernel parameters from a fragment uniform.
@@ -352,6 +359,87 @@ fragment float4 layer_fragment(TexOut in [[stage_in]],
 }
 "
 
+/-- The glass-composite pipeline's MSL: the layer pipeline's vertex layout
+and premultiplied-composite fragment, with the sample position displaced
+outward along the panel rounded rect's SDF gradient before UV lookup — the
+refractive edge bend of a liquid-glass panel. `rrect_grad`/the falloff are
+twins of `Gpu.Sdf.rrectGrad`/`refractShift`: displacement is
+`strength · (1 − smoothstep(0, band, depth))` px — full at the rim, zero
+`band` px inside — and a positive `chroma` splits the red/blue channels
+±chroma px along the same gradient on the same falloff. The fragment
+reconstructs the blurred region texture's UV from the pixel position via
+`uvMap` (`uv = p·xy + zw`) and clamps to `uvClamp` (the region's real
+texels, never pooled slack). `GlassParams` arrives via
+`pushFragmentUniformData` before each composite draw (`packGlassParams`). -/
+private def glassMsl : String := mslPrelude ++ "
+struct TexIn {
+  float2 pos   [[attribute(0)]];
+  float2 uv    [[attribute(1)]];
+  float4 color [[attribute(2)]];
+};
+
+struct TexOut {
+  float4 pos [[position]];
+  float2 uv;
+  float4 color;
+};
+
+struct GlassParams {
+  float4 clipBounds;  // the panel rounded rect: mask AND refraction shape
+  float4 clipRadii;
+  float4 uvMap;       // xy = px→UV scale, zw = UV at the pass origin
+  float4 refr;        // x strength px, y band px (≥ 1), z chroma px, w unused
+  float4 uvClamp;     // xy min, zw max — the region's valid UV rect
+};
+
+vertex TexOut glass_vertex(TexIn in [[stage_in]],
+                           constant Globals& g [[buffer(0)]]) {
+  TexOut out;
+  out.pos = to_ndc(in.pos, g.viewport);
+  out.uv = in.uv;
+  out.color = in.color;
+  return out;
+}
+
+// Gpu.Sdf.rrectGrad — the SDF's piecewise-analytic unit outward normal.
+static inline float2 rrect_grad(float2 p, float4 bounds, float4 radii) {
+  float2 hs = bounds.zw * 0.5;
+  float2 center = bounds.xy + hs;
+  float r = pick_radius(p, center, radii);
+  float2 q = p - center;
+  float2 s = float2(q.x >= 0.0 ? 1.0 : -1.0, q.y >= 0.0 ? 1.0 : -1.0);
+  float2 d = abs(q) - hs + r;
+  if (d.x > 0.0 && d.y > 0.0) {
+    return s * d / max(length(d), 1e-6);
+  }
+  return d.x > d.y ? float2(s.x, 0.0) : float2(0.0, s.y);
+}
+
+static inline float2 warp_uv(float2 pw, constant GlassParams& gp) {
+  return clamp(pw * gp.uvMap.xy + gp.uvMap.zw, gp.uvClamp.xy, gp.uvClamp.zw);
+}
+
+fragment float4 glass_fragment(TexOut in [[stage_in]],
+                               constant GlassParams& gp [[buffer(0)]],
+                               texture2d<float> layer [[texture(0)]],
+                               sampler smp [[sampler(0)]]) {
+  float2 p = in.pos.xy;
+  float sdf = rrect_sdf(p, gp.clipBounds, gp.clipRadii);
+  float clip = saturate(0.5 - sdf);
+  float2 g = rrect_grad(p, gp.clipBounds, gp.clipRadii);
+  // Gpu.Sdf.refractShift — falloff shared by the bend and the chroma split.
+  float fall = 1.0 - smoothstep(0.0, gp.refr.y, -sdf);
+  float2 pw = p + g * (gp.refr.x * fall);
+  float4 t = layer.sample(smp, warp_uv(pw, gp));
+  float ch = gp.refr.z * fall;
+  if (ch > 0.0) {
+    t.r = layer.sample(smp, warp_uv(pw + g * ch, gp)).r;
+    t.b = layer.sample(smp, warp_uv(pw - g * ch, gp)).b;
+  }
+  return t * (in.color.a * clip);
+}
+"
+
 /-- The stretch-composite pipeline's MSL: the layer pipeline's vertex layout
 and premultiplied-composite fragment, with the AOSP/Flutter overscroll warp
 (twins `Gpu.Sdf.stretchPosUp`/`stretchPos`; the `0.7` is
@@ -525,9 +613,35 @@ def packLayerClip (rr : Option Compose.RoundRect) : ByteArray := Id.run do
     b := pushF32 b v
   return b
 
+/-- The 80-byte `GlassParams` fragment uniform (five std140 `vec4`s): the
+panel's rounded rect (mask + refraction shape, bounds `(x, y, w, h)` +
+per-corner radii, pass px), the px→UV affine of the blurred region texture
+(`uv = p · scale + off`), the normalized `Refraction` (+ pad), and the
+region's valid-UV clamp rect. -/
+def packGlassParams (rr : Compose.RoundRect)
+    (uvScaleX uvScaleY uvOffX uvOffY : Float32) (refr : Refraction)
+    (uvMinX uvMinY uvMaxX uvMaxY : Float32) : ByteArray := Id.run do
+  let rr := rr.normalize
+  let vals : List Float32 :=
+    [rr.rect.left, rr.rect.top, rr.rect.width, rr.rect.height,
+     rr.topLeft.x, rr.topRight.x, rr.bottomRight.x, rr.bottomLeft.x,
+     uvScaleX, uvScaleY, uvOffX, uvOffY,
+     refr.strength, refr.band, refr.chroma, 0,
+     uvMinX, uvMinY, uvMaxX, uvMaxY]
+  let mut b := ByteArray.emptyWithCapacity 80
+  for v in vals do
+    b := pushF32 b v
+  return b
+
 #guard (packBlurVert 256 128 80 40 0.3125 0.3125).size == 32
 #guard (packBlurParams 0.00390625 0 4 12).size == 16
 #guard (packStretchParams 0.032 0 0.8 0.625).size == 16
+#guard (packGlassParams (.circular ⟨10, 20, 50, 60⟩ 8) 0.01 0.01 (-0.1) (-0.2)
+          { strength := 8, band := 20 } 0 0 0.5 0.5).size == 80
+-- The first two vec4s pack exactly like `packLayerClip`'s rounded arm.
+#guard (packGlassParams (.circular ⟨10, 20, 50, 60⟩ 8) 0.01 0.01 (-0.1) (-0.2)
+          { strength := 8, band := 20 } 0 0 0.5 0.5).extract 0 32
+        == packLayerClip (some (.circular ⟨10, 20, 50, 60⟩ 8))
 #guard (packLayerClip none).size == 32
 #guard (packLayerClip (some (.circular ⟨10, 20, 50, 60⟩ 8))).size == 32
 -- Bounds pack as (x, y, w, h); the sentinel starts with the huge rect.
@@ -557,13 +671,16 @@ structure Pipelines where
   glyph : GraphicsPipeline
   /-- Indexed premultiplied layer-composite quads. -/
   layer : GraphicsPipeline
+  /-- The layer composite with the refractive edge bend on its sample
+  positions (backdrop panels whose `Refraction` is on). -/
+  glass : GraphicsPipeline
   /-- Vertex-buffer-free separable Gaussian blur (one direction per pass,
   no blending — overwrites its cleared target). -/
   blur : GraphicsPipeline
   /-- The layer composite with the overscroll stretch warp on its UVs. -/
   stretch : GraphicsPipeline
 
-/-- Build the seven pipelines against `target` (the swapchain's native format
+/-- Build the eight pipelines against `target` (the swapchain's native format
 for on-screen rendering; rgba8 for offscreen targets later), compiling the
 shader dialect the device accepts: MSL source where available (Metal —
 desktop path unchanged), else the embedded SPIR-V blobs from
@@ -667,6 +784,23 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
       targetInfo }
   layerVs.release
   layerFs.release
+  -- glass: the layer vertex layout + the refracting composite fragment
+  -- (its `GlassParams` fragment uniform is pushed per composite draw)
+  let glassVs ← shader glassMsl texVertSpv "glass_vertex" .vertex (uniforms := 1)
+  let glassFs ← shader glassMsl glassFragSpv "glass_fragment" .fragment
+    (samplers := 1) (uniforms := 1)
+  let glass ← dev.createGraphicsPipeline
+    { vertexShader := glassVs, fragmentShader := glassFs
+      vertexInputState :=
+        { vertexBufferDescriptions :=
+            #[{ slot := 0, pitch := UInt32.ofNat texVertexStride }]
+          vertexAttributes :=
+            #[{ location := 0, bufferSlot := 0, format := .float2, offset := 0 },
+              { location := 1, bufferSlot := 0, format := .float2, offset := 8 },
+              { location := 2, bufferSlot := 0, format := .float4, offset := 16 }] }
+      targetInfo }
+  glassVs.release
+  glassFs.release
   -- stretch: the layer vertex layout + the UV-warping composite fragment
   -- (its `StretchParams` fragment uniform is pushed per composite draw)
   let stretchVs ← shader stretchMsl texVertSpv "stretch_vertex" .vertex (uniforms := 1)
@@ -696,7 +830,7 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   blurVs.release
   blurFs.release
   return { quad := quad, shadow := shadow, mesh := mesh, glyph := glyph
-           layer := layer, blur := blur, stretch := stretch }
+           layer := layer, glass := glass, blur := blur, stretch := stretch }
 
 end Compose.Draw.Gpu
 

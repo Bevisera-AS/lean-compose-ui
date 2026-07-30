@@ -147,6 +147,23 @@ def snapTextOrigin (origin shift : Offset) : Offset :=
 #guard snapTextOrigin ⟨2.5, -2.5⟩ .zero == ⟨3, -3⟩
 #guard snapTextOrigin ⟨15.4, 40.6⟩ ⟨3, -7⟩ == snapTextOrigin ⟨15.4, 40.6⟩ .zero + ⟨3, -7⟩
 
+/-- The refractive edge bend of a backdrop-frost panel (all device px):
+sample positions displace outward along the panel shape's SDF gradient by
+`strength · (1 − smoothstep 0 band depth)` — full `strength` at the rim,
+zero at `band` px inside — pulling backdrop content inward like a lens.
+`chroma > 0` additionally splits the red/blue channels ±`chroma` px along
+the same gradient (a subtle prismatic fringe), scaled by the same falloff.
+`strength ≤ 0` disables refraction entirely (the default). GPU-only, like
+the frost itself. -/
+structure Refraction where
+  /-- Max displacement at the rim (px); `≤ 0` = no refraction. -/
+  strength : Float32 := 0
+  /-- Depth inside the rim (px) over which the bend falls to zero. -/
+  band : Float32 := 24
+  /-- Red/blue channel split (px) riding the same falloff (`0` = none). -/
+  chroma : Float32 := 0
+  deriving Repr, BEq, Inhabited
+
 /-- One backend-neutral draw primitive. The draw origin for `rect`/`shape`/
 `mesh` is `st.origin` plus the primitive's own local coordinates; a `text`
 run's `st.origin` is the run's top-left directly. -/
@@ -183,12 +200,14 @@ inductive Prim where
   primitive in the main target inside `bounds` (local coordinates) is
   Gaussian-blurred at `sigma` (device px, capped at `backdropSigmaMax` when
   recorded) and redrawn as the panel's background, masked by the ambient
-  rounded clip (`PrimState.rounded`). GPU-only — the renderer splits the
+  rounded clip (`PrimState.rounded`). `refr` optionally bends the blurred
+  backdrop near the rim (`Refraction`). GPU-only — the renderer splits the
   frame at the first backdrop into a snapshot pass and blurs per-panel
   regions off the snapshot; the SDL backend draws nothing (glass keeps its
   tint/rim treatment), and the GPU encoder drops a backdrop recorded inside
   an offscreen layer (both documented, DESIGN.md). -/
   | backdrop (st : PrimState) (bounds : Rect) (sigma : Float32)
+      (refr : Refraction := {})
 
 instance : Inhabited Prim := ⟨.mesh {} .empty⟩
 
@@ -303,8 +322,12 @@ partial def Prim.brief : Prim → String
           | .none => "")
       ++ "\n"
       ++ String.intercalate "\n" (content.map (fun p => "  " ++ p.brief)).toList
-  | .backdrop st bounds sigma =>
+  | .backdrop st bounds sigma refr =>
     s!"backdrop {st.brief} bounds={fmtRect bounds} sigma={fmtF sigma}"
+      ++ (if refr.strength > 0 then
+            s!" refr={fmtF refr.strength}/{fmtF refr.band}"
+              ++ (if refr.chroma > 0 then s!"+c{fmtF refr.chroma}" else "")
+          else "")
 
 #guard (Brush.radialGradient #[(0, .red), (1, .blue)] ⟨20, 20⟩ 10).brief
         == "radial[2](20,20) r=10"
@@ -325,6 +348,14 @@ partial def Prim.brief : Prim → String
 #guard (Prim.backdrop { rounded := some (RoundRect.circular ⟨2, 2, 30, 30⟩ 8) }
           ⟨2, 2, 30, 30⟩ 12).brief
         == "backdrop @(0,0) rounded=rr(2,2,30,30)r8 bounds=(2,2,30,30) sigma=12"
+-- Refraction shows in the brief only when on (strength > 0), chroma only
+-- when set — briefs of refraction-free panels stay Wave-3-stable.
+#guard (Prim.backdrop {} ⟨0, 0, 30, 30⟩ 12 { strength := 8, band := 20 }).brief
+        == "backdrop @(0,0) bounds=(0,0,30,30) sigma=12 refr=8/20"
+#guard (Prim.backdrop {} ⟨0, 0, 30, 30⟩ 12 { strength := 8, chroma := 1.5 }).brief
+        == s!"backdrop @(0,0) bounds=(0,0,30,30) sigma=12 refr=8/24+c{fmtF 1.5}"
+#guard (Prim.backdrop {} ⟨0, 0, 30, 30⟩ 12 { strength := 0, chroma := 2 }).brief
+        == "backdrop @(0,0) bounds=(0,0,30,30) sigma=12"
 
 /-- All primitives (including layer content, recursively) satisfy `p` —
 the well-formedness walker the IR test group uses. -/
@@ -359,7 +390,7 @@ partial def Prim.bounds : Prim → Option Rect
   | .image st _ _ dst _ => some (clipBounds st (dst.translate st.origin))
   -- The blurred panel repaints exactly its own quad (the blur *reads*
   -- outside it but draws nothing there).
-  | .backdrop st bounds _ => some (clipBounds st (bounds.translate st.origin))
+  | .backdrop st bounds _ _ => some (clipBounds st (bounds.translate st.origin))
   | .layer st _ props content => Id.run do
     let mut acc : Option Rect := none
     for p in content do

@@ -2,6 +2,8 @@ module
 
 public import Compose.Material.Theme
 public meta import Compose.Material.Theme
+public import Compose.Material.Glass
+public meta import Compose.Material.Glass
 public import Compose.Foundation.Layouts
 public meta import Compose.Foundation.Layouts
 
@@ -37,20 +39,19 @@ the drop shadow (only when `elevation > 0`) then the container fill clipped to
 a `SurfaceMaterial` swap reaches widgets that build their background from raw
 modifiers as well as those that use `Surface`.
 
-`.glass` currently renders **exactly** like `.opaque` — a deliberate
-placeholder. The translucent treatment (backdrop blur, tint wash, specular
-rim) lands with `Compose.Material.Glass` and will replace that arm; until
-then a glass-themed app is pixel-identical to an opaque one. -/
+`.glass` renders the spec's translucent treatment (`Modifier.glassBackground`
+— tint wash, sheen, rim; `Compose.Material.Glass`) instead of the opaque
+fill, with the *widget's* elevation replacing the spec's own (chrome keeps
+its Material shadow scale; the spec elevation is for standalone panels).
+The container `color` is ignored by design — content-color resolution still
+runs on it (see `Surface`). -/
 def SurfaceMaterial.backgroundModifier (m : SurfaceMaterial) (color : Color)
     (shape : Shape) (elevation : Dp) (base : Modifier := {}) : Modifier :=
   match m with
-  | .opaque => classic
-  | .glass _ => classic
-where
-  /-- The classic opaque Material chain. -/
-  classic : Modifier :=
+  | .opaque =>
     (if elevation > 0 then base.shadow elevation shape else base)
       |>.background color shape
+  | .glass spec => Modifier.glassBackground { spec with elevation } shape base
 
 /-- A shaped, colored container providing the content color for what's
 inside. `color` defaults to the theme's `surface`; `contentColor` defaults to

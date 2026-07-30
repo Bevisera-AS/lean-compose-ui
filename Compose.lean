@@ -162,6 +162,8 @@ public import Compose.Material.Theme
 public meta import Compose.Material.Theme
 public import Compose.Material.StateLayer
 public meta import Compose.Material.StateLayer
+public import Compose.Material.Glass
+public meta import Compose.Material.Glass
 public import Compose.Material.Surface
 public meta import Compose.Material.Surface
 public import Compose.Material.Button

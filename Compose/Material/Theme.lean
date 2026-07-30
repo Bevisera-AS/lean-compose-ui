@@ -257,6 +257,9 @@ Data only — rendering (and light/dark-adaptive defaults) live in
 structure GlassSpec where
   /-- Unit-space translucent tint over the blurred backdrop. -/
   tint : Draw.Brush := .solid (Color.white.withAlpha 0.45)
+  /-- Optional second unit-space wash painted between tint and rim (the
+  light treatment's faint radial sheen). -/
+  sheen : Option Draw.Brush := none
   /-- Backdrop Gaussian blur radius (σ = radius/2 px). -/
   blurRadius : Dp := 48
   rim : Option RimSpec := some {}

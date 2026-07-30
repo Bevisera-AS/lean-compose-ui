@@ -559,11 +559,13 @@ private def surfaceShapePixels : IO Unit := do
     (near corner .white)
   check "surface shape: opposite corner too" (near (← r.pixel 78 78) .white)
 
-/-- The `.glass` surface material is a **placeholder** that renders exactly
-like `.opaque` until `Compose.Material.Glass` lands: same pixels (shadow
-included) and the same content color. Pins the seam so the renderer swap is
-the visible change, not this wave. -/
-private def surfaceGlassPlaceholder : IO Unit := do
+/-- The `.glass` surface material renders the translucent treatment
+(`Compose.Material.Glass`): visibly different pixels from `.opaque` — the
+default white tint wash over the white background instead of the container
+role — while the content-color contract still resolves on the untinted
+role. A `GlassSurface` records the full adaptive chain: shadow, gradient
+tint, radial sheen, gradient rim, clip. -/
+private def surfaceGlassMaterial : IO Unit := do
   -- An elevated, rounded, shadowed Surface — every arm of the background
   -- chain `backgroundModifier` builds.
   let scene (material : Option SurfaceMaterial) : Composable Unit :=
@@ -575,20 +577,22 @@ private def surfaceGlassPlaceholder : IO Unit := do
   let plainShot ← (← plainRig.ctx.sdlRenderer).readPixels
   let glassShot ← (← glassRig.ctx.sdlRenderer).readPixels
   let mut diffs := 0
-  let mut sampled := 0
   for y in [0:53] do
     for x in [0:80] do
       let a ← plainShot.readPixel (Int32.ofNat (x * 3)) (Int32.ofNat (y * 3))
       let b ← glassShot.readPixel (Int32.ofNat (x * 3)) (Int32.ofNat (y * 3))
-      sampled := sampled + 1
       unless a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a do
         diffs := diffs + 1
-  check s!"glass placeholder: {sampled} sampled pixels identical to opaque"
-    (diffs == 0 && sampled > 0)
-  -- Premise: the rig actually drew the surface and its shadow (otherwise
-  -- "identical" would be two identical blank frames).
-  check "glass placeholder: premise — the container is drawn"
-    (near (← glassRig.pixel 40 30) L.primary)
+  check s!"glass: renders visibly differently from opaque ({diffs} pixels differ)"
+    (diffs > 0)
+  -- The glass interior is the translucent white wash over the backdrop
+  -- (which includes the panel's own shadow — a translucent fill no longer
+  -- covers the umbra) — a bright near-white, NOT the container role.
+  let interior ← glassRig.pixel 40 30
+  check s!"glass: interior is the light tint wash, not the container role \
+           ({interior.r},{interior.g},{interior.b})"
+    (interior.r.toNat ≥ 200 && interior.g.toNat ≥ 200 && interior.b.toNat ≥ 200
+      && !near interior L.primary 12)
   -- Content color is unaffected: translucency is a rendering treatment, not
   -- a role change.
   let root ← LayoutNode.create
@@ -597,9 +601,28 @@ private def surfaceGlassPlaceholder : IO Unit := do
     Surface (color := some L.primary) (material := some (.glass {})) do
       cap.set (some (← LocalContentColor.current, (← LocalTextStyle.current).color))
   let some (cc, tc) ← cap.get | throw (IO.userError "glass capture missing")
-  check "glass placeholder: content color still the untinted role pair"
-    (cc == L.onPrimary)
-  check "glass placeholder: text style recolored to it too" (tc == L.onPrimary)
+  check "glass: content color still the untinted role pair" (cc == L.onPrimary)
+  check "glass: text style recolored to it too" (tc == L.onPrimary)
+  -- GlassSurface: content color defaults to onSurface, and the recorded
+  -- chain is shadow → gradient tint → radial sheen → gradient rim (the
+  -- light adaptive spec) with the content clipped to the shape.
+  let gcap ← IO.mkRef (none : Option Compose.Color)
+  let gRig ← mboot <| themed <|
+    Box (modifier := Modifier.fillMaxSize |>.background .white) <|
+      GlassSurface (modifier := Modifier.size 80 60) (shape := .rounded 12) do
+        gcap.set (some (← LocalContentColor.current))
+  check "glass surface: content color defaults to onSurface"
+    ((← gcap.get) == some L.onSurface)
+  let (list, _) ← Compose.Draw.DrawScope.record {} gRig.ctx.root.drawTree
+  let briefs := (list.map (·.brief)).toList
+  check "glass surface: records the elevation shadow"
+    (briefs.any fun b => (b.splitOn "rrShadow").length > 1)
+  check "glass surface: records the vertical gradient tint"
+    (briefs.any fun b => (b.splitOn "rrFill").length > 1 && (b.splitOn "grad[2]").length > 1)
+  check "glass surface: records the radial sheen"
+    (briefs.any fun b => (b.splitOn "rrFill").length > 1 && (b.splitOn "radial[2]").length > 1)
+  check "glass surface: records the gradient rim stroke"
+    (briefs.any fun b => (b.splitOn "rrStroke").length > 1 && (b.splitOn "grad[2]").length > 1)
 
 /-- Themed `ThemeTokens` reach the widgets: a distinctive
 `interactions.disabledContentAlpha` changes the content color a disabled
@@ -645,7 +668,7 @@ def run : IO Unit := do
   themeBundle
   surfaceContentColor
   surfaceShapePixels
-  surfaceGlassPlaceholder
+  surfaceGlassMaterial
   themedTokensFlow
   buttonBasics
   buttonHoverLayer

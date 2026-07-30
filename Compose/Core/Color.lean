@@ -46,6 +46,13 @@ def lerp (x y : Color) (t : Float32) : Color :=
   let f (a b : Float32) : Float32 := a + (b - a) * t
   { r := f x.r y.r, g := f x.g y.g, b := f x.b y.b, a := f x.a y.a }
 
+/-- Relative luminance, Rec. 709 weights applied to the stored channels
+directly (no sRGB linearization — a documented approximation, fine for its
+one job: picking a light-vs-dark *treatment*, never color math). White = 1,
+black = 0; ≥ 0.5 reads as a light surface. -/
+def luminance (c : Color) : Float32 :=
+  0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+
 /-- Source-over compositing of `fg` onto an opaque-or-not `bg`
 (non-premultiplied inputs and output). -/
 def compositeOver (fg bg : Color) : Color :=
@@ -73,6 +80,11 @@ def magenta : Color := hex 0xFFFF00FF
 #guard (rgb8 255 0 0).toBytes == (255, 0, 0, 255)
 #guard (lerp black white 0.0) == black
 #guard (lerp black white 1.0) == white
+#guard (white.luminance - 1).abs < 1e-6
+#guard black.luminance == 0
+-- Green dominates; a light and a dark gray land on the expected sides of 0.5.
+#guard green.luminance > red.luminance && red.luminance > blue.luminance
+#guard lightGray.luminance ≥ 0.5 && darkGray.luminance < 0.5
 #guard (lerp black white 2.0) == white
 #guard (compositeOver (white.withAlpha 0.0) black) == black
 #guard (compositeOver white black) == white

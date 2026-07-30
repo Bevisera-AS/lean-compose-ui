@@ -269,6 +269,12 @@ inductive DrawElem where
   layer (σ = `radius / 2` px). GPU-only; the SDL backend renders unblurred.
   Mirrors `Modifier.blur`. -/
   | blur (radius : Dp)
+  /-- Frost this element's backdrop: everything already drawn behind it is
+  Gaussian-blurred (σ = `radius / 2` px, the `blur` convention, capped at
+  σ 64) and redrawn clipped to `shape` at the wrapper bounds — the glass-
+  panel frost. GPU-only; the SDL backend draws nothing. No Compose analog
+  (Skia's backdrop filters are out of Compose's modifier surface). -/
+  | backdropBlur (radius : Dp) (shape : Shape)
   /-- Composite the content (and everything inner) through an offscreen layer
   warped by `LayerEffect.stretch`, with the signed per-axis intensity read
   from `intensity` at draw time — the raw element behind foundation's stretch
@@ -298,11 +304,16 @@ instance : BEq DrawElem where
     | .alpha a, .alpha a' => a == a'
     | .graphicsLayer g, .graphicsLayer g' => g == g'
     | .blur r, .blur r' => r == r'
+    | .backdropBlur r s, .backdropBlur r' s' => r == r' && s == s'
     | .stretchLayer k _, .stretchLayer k' _ => k == k'
     | _, _ => false
 
 #guard (DrawElem.blur 4) == (DrawElem.blur 4)
 #guard (DrawElem.blur 4) != (DrawElem.blur 8)
+#guard (DrawElem.backdropBlur 48 (.rounded 16)) == (DrawElem.backdropBlur 48 (.rounded 16))
+#guard (DrawElem.backdropBlur 48 (.rounded 16)) != (DrawElem.backdropBlur 24 (.rounded 16))
+#guard (DrawElem.backdropBlur 48 (.rounded 16)) != (DrawElem.backdropBlur 48 .rectangle)
+#guard (DrawElem.backdropBlur 48 .rectangle) != (DrawElem.blur 48)
 #guard (DrawElem.stretchLayer 7 (pure (0, 0))) == (DrawElem.stretchLayer 7 (pure (1, 1)))
 #guard (DrawElem.stretchLayer 7 (pure (0, 0))) != (DrawElem.stretchLayer 8 (pure (0, 0)))
 #guard (DrawElem.background (.solid .red) .rectangle) == (DrawElem.background (.solid .red) .rectangle)
@@ -624,6 +635,19 @@ DESIGN.md). Compared structurally, so animating the radius invalidates
 exactly this element's draw. Mirrors `Modifier.blur`. -/
 def blur (radius : Dp) (m : Modifier := {}) : Modifier :=
   m.append (.draw (.blur radius))
+
+/-- Frost this element's backdrop: everything already drawn behind it is
+Gaussian-blurred (σ = `radius / 2` px, the `Modifier.blur` convention, capped
+at σ 64) and redrawn clipped to `shape` at the element bounds — true
+per-panel backdrop blur, the glass-panel frost (`Modifier.glass` slots it
+under the tint). **GPU backend only**: the SDL backend draws nothing and the
+panel shows the unfrosted backdrop; under an offscreen-layer ancestor
+(`alpha`/`blur`/`graphicsLayer`) the GPU encoder drops it too (both
+documented, DESIGN.md). `radius ≤ 0` records nothing. Compared structurally,
+so animating the radius invalidates exactly this element's draw. -/
+def backdropBlur (radius : Dp) (shape : Shape := .rectangle)
+    (m : Modifier := {}) : Modifier :=
+  m.append (.draw (.backdropBlur radius shape))
 
 /-- Composite content and children through an offscreen layer warped by the
 Android-12 overscroll stretch, reading the signed per-axis intensity from

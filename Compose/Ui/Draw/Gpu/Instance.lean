@@ -189,6 +189,12 @@ inductive DrawCmd where
   linear or nearest sampler. Rides the layer pipeline — image textures hold
   premultiplied pixels. -/
   | image (first count : Nat) (tex : Nat) (linear : Bool) (scissor : Option Sdl.Rect)
+  /-- Composite backdrop panel `idx` (an index into the frame's
+  `EncodeResult.backdrops`) as one premultiplied textured quad at the panel
+  bounds, sampling its blurred region texture linearly, masked by the
+  panel's rounded clip (`LayerClip`). Rides the layer pipeline; only ever
+  appears in the target list at or after `snapshotSplit`. -/
+  | backdrop (idx : Nat) (scissor : Option Sdl.Rect)
   deriving Repr, BEq, Inhabited
 
 /-! ## Resolved text input

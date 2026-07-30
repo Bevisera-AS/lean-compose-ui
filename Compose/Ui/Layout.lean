@@ -172,6 +172,15 @@ private partial def drawResolved (n : LayoutNode) (d : LayoutNodeData) (k : Nat)
         -- (σ = radius/2 px, the shadow convention; GPU-only — SDL flattens
         -- unblurred).
         DrawScope.withBlur (Rect.ofOffsetSize off sz) (ctx.density.dpToPx radius / 2) cont
+      | .backdropBlur radius shape =>
+        -- Backdrop frost: recorded under the panel's rounded clip so the GPU
+        -- masks the blurred composite exactly (σ = radius/2 px, the blur
+        -- convention; the SDL backend executes the prim as a no-op).
+        let sigma := ctx.density.dpToPx radius / 2
+        if sigma > 0 then
+          DrawScope.clipRoundRect ((shape.toRoundRect sz ctx.density).translate off)
+            (DrawScope.drawBackdrop (Rect.ofOffsetSize off sz) sigma)
+        cont
       | .stretchLayer _ intensity =>
         -- Overscroll stretch: the intensity is read fresh each draw (a plain
         -- IO read — the scroll owner's observed reads drive invalidation);

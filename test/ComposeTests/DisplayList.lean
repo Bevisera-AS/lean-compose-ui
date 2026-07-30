@@ -236,6 +236,34 @@ private def brushModifiers : IO Unit := do
       check "borderBrush records the size-scaled gradient rrStroke just inside the bounds"
         (briefs.any (· == "shape @(0,20) rrStroke rr(1,1,39,19)r3 w=2 grad[2](0,0)→(0,20) cached"))
 
+private def backdropPanels : IO Unit := do
+  -- `drawBackdrop` records the backdrop prim with the ambient rounded clip
+  -- riding the state (the GPU composite mask); σ normalizes at record
+  -- (≤ 0 drops, caps at `backdropSigmaMax` 64).
+  let l ← rec do
+    DrawScope.translate ⟨10, 0⟩ do
+      DrawScope.clipRoundRect (RoundRect.circular ⟨0, 0, 40, 40⟩ 8) do
+        DrawScope.drawBackdrop ⟨0, 0, 40, 40⟩ 12
+    DrawScope.drawBackdrop ⟨0, 0, 20, 20⟩ 99
+    DrawScope.drawBackdrop ⟨0, 0, 20, 20⟩ 0    -- dropped
+  checkBriefs "drawBackdrop" l
+    [ "backdrop @(10,0) clip=(10,0,50,40) rounded=rr(10,0,50,40)r8 bounds=(0,0,40,40) sigma=12"
+    , "backdrop @(0,0) bounds=(0,0,20,20) sigma=64" ]
+  -- `Modifier.backdropBlur` through the real draw walk: the prim records
+  -- under the panel shape's rounded clip (radius 16 normalizes to 15 on the
+  -- 30-tall box), σ = radius/2 px (density 1).
+  runComposeTest
+    (Box (modifier := Modifier.backdropBlur 48 (.rounded 16) |>.size 40 30
+      |>.background Color.red)) do
+    awaitIdle
+    let t ← uiTest
+    let density ← t.ctx.density
+    let (list, _) ← DrawScope.record density t.ctx.root.drawTree
+    check "Modifier.backdropBlur records the masked backdrop prim"
+      ((list.map (·.brief)).any
+        (· == "backdrop @(0,0) clip=(0,0,40,30) rounded=rr(0,0,40,30)r15 \
+               bounds=(0,0,40,30) sigma=24"))
+
 /-- The DisplayList group. -/
 def run : IO Unit := do
   scenario "record: basic ops and the crisp-rect fast path" basicOps
@@ -245,5 +273,6 @@ def run : IO Unit := do
   scenario "record: conservative damage bounds" damageBounds
   scenario "record: composed scene emits rects, cached shapes, text" composedScene
   scenario "record: brush modifiers scale unit-space gradients" brushModifiers
+  scenario "record: backdrop panels ride the rounded clip" backdropPanels
 
 end Tests.DisplayList

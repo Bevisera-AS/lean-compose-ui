@@ -231,6 +231,11 @@ private partial def execPrim (r : Renderer) (applied : IO.Ref (Option Rect))
     let d := dst.translate (st.origin + shift)
     let toF (x : Rect) : Sdl.FRect := ⟨x.left, x.top, x.width, x.height⟩
     r.texture tex (src.map toF) (some (toF d))
+  | .backdrop .. =>
+    -- True backdrop blur is GPU-only: the software backend draws nothing —
+    -- glass panels keep their tint/rim/shadow treatment over an unfrosted
+    -- backdrop (the established blur degrade, DESIGN.md).
+    pure ()
   | .layer st bounds props content => do
     -- The stretch approximation (Flutter's non-shader fallback, AOSP's
     -- `StretchEffect.makeLinearStretch`): a uniform scale `(1 + |s|)`

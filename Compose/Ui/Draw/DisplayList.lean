@@ -49,8 +49,8 @@ structure PrimState where
 /-- A pixel effect applied to a layer's texture before it is composited.
 Rendered by the GPU backend only (separable Gaussian render passes); the SDL
 backend draws the content unblurred — a documented approximation, like its
-rounded-clip story. Backdrop blur (sampling what's *behind* the layer) is out
-of scope. -/
+rounded-clip story. Backdrop blur (sampling what's *behind* a panel) is not a
+layer effect — it is its own primitive, `Prim.backdrop`. -/
 inductive LayerEffect where
   /-- No effect — the texture composites as rendered. -/
   | none
@@ -179,13 +179,28 @@ inductive Prim where
   double-blend approximation) and renders transformed layers to a real
   offscreen target. -/
   | layer (st : PrimState) (bounds : Rect) (props : LayerProps) (content : Array Prim)
+  /-- A backdrop-frost panel: everything already drawn *behind* this
+  primitive in the main target inside `bounds` (local coordinates) is
+  Gaussian-blurred at `sigma` (device px, capped at `backdropSigmaMax` when
+  recorded) and redrawn as the panel's background, masked by the ambient
+  rounded clip (`PrimState.rounded`). GPU-only — the renderer splits the
+  frame at the first backdrop into a snapshot pass and blurs per-panel
+  regions off the snapshot; the SDL backend draws nothing (glass keeps its
+  tint/rim treatment), and the GPU encoder drops a backdrop recorded inside
+  an offscreen layer (both documented, DESIGN.md). -/
+  | backdrop (st : PrimState) (bounds : Rect) (sigma : Float32)
 
 instance : Inhabited Prim := ⟨.mesh {} .empty⟩
+
+/-- The largest backdrop-blur σ (device px): the renderer downsamples the
+panel region by one halving (two past σ 32), so the separable passes never
+exceed the blur pipeline's 48-tap reach. -/
+def backdropSigmaMax : Float32 := 64
 
 /-- The ambient state stamped on a primitive. -/
 def Prim.state : Prim → PrimState
   | .rect st .. | .shape st .. | .mesh st .. | .text st .. | .image st ..
-  | .layer st .. => st
+  | .layer st .. | .backdrop st .. => st
 
 /-- A recorded frame: primitives in paint order (back to front). -/
 abbrev DisplayList := Array Prim
@@ -288,6 +303,8 @@ partial def Prim.brief : Prim → String
           | .none => "")
       ++ "\n"
       ++ String.intercalate "\n" (content.map (fun p => "  " ++ p.brief)).toList
+  | .backdrop st bounds sigma =>
+    s!"backdrop {st.brief} bounds={fmtRect bounds} sigma={fmtF sigma}"
 
 #guard (Brush.radialGradient #[(0, .red), (1, .blue)] ⟨20, 20⟩ 10).brief
         == "radial[2](20,20) r=10"
@@ -305,6 +322,9 @@ partial def Prim.brief : Prim → String
           #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]).brief
         == s!"layer @(0,0) bounds=(0,0,20,20) a=1 stretch=(0,{fmtF 0.5})\n"
             ++ "  rect @(0,0) #ff0000ff tl=(0,0) sz=4x4"
+#guard (Prim.backdrop { rounded := some (RoundRect.circular ⟨2, 2, 30, 30⟩ 8) }
+          ⟨2, 2, 30, 30⟩ 12).brief
+        == "backdrop @(0,0) rounded=rr(2,2,30,30)r8 bounds=(2,2,30,30) sigma=12"
 
 /-- All primitives (including layer content, recursively) satisfy `p` —
 the well-formedness walker the IR test group uses. -/
@@ -337,6 +357,9 @@ partial def Prim.bounds : Prim → Option Rect
     | none => some .zero          -- no vertices: draws nothing
   | .text st _ => st.clip
   | .image st _ _ dst _ => some (clipBounds st (dst.translate st.origin))
+  -- The blurred panel repaints exactly its own quad (the blur *reads*
+  -- outside it but draws nothing there).
+  | .backdrop st bounds _ => some (clipBounds st (bounds.translate st.origin))
   | .layer st _ props content => Id.run do
     let mut acc : Option Rect := none
     for p in content do
@@ -391,6 +414,9 @@ def DisplayList.bounds (list : DisplayList) : Option Rect := Id.run do
 #guard (Prim.layer {} ⟨0, 0, 50, 50⟩
           { transform := some (.translation ⟨5, 0⟩), effect := .blur 1 }
           #[.rect {} .red ⟨10, 10⟩ ⟨20, 20⟩]).bounds == some ⟨11, 6, 39, 34⟩
+-- A backdrop panel damages its own quad only (∩ clip), like a rect.
+#guard (Prim.backdrop { origin := ⟨5, 5⟩, clip := some ⟨0, 0, 20, 20⟩ } ⟨0, 0, 30, 30⟩ 8).bounds
+        == some ⟨5, 5, 20, 20⟩
 #guard DisplayList.bounds #[.rect {} .red ⟨0, 0⟩ ⟨10, 10⟩, .rect {} .blue ⟨40, 40⟩ ⟨10, 10⟩]
         == some ⟨0, 0, 50, 50⟩
 #guard DisplayList.bounds #[] == some .zero

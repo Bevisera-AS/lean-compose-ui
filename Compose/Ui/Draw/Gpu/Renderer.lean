@@ -14,14 +14,21 @@ public section
 
 Per-window GPU state and the frame lifecycle: resolve text + images (IO —
 uncached bitmaps upload into a process-wide texture cache) → encode
-(pure) → acquire layer textures from the pool + grow GPU buffers (2×, never
-shrink) → one transfer-buffer write + copy pass (`cycle := true` throughout —
-probe-verified to preserve in-flight data) → acquire the swapchain texture
-(blocking or not per `mayBlock`; `none` still submits the copy work and
-reports a skipped frame) → one render pass per offscreen layer
-(innermost-first, cleared transparent; blurred layers append two separable
-Gaussian passes bouncing through a second pooled texture) then the target
-pass, each replaying its command list → submit (present is implicit).
+(pure) → acquire the frame's pooled textures (layers, and — when the frame
+has backdrop panels — the full-screen snapshot plus two downsample textures
+per panel) + grow GPU buffers (2×, never shrink) → one transfer-buffer
+write + copy pass (`cycle := true` throughout — probe-verified to preserve
+in-flight data) → acquire the swapchain texture (blocking or not per
+`mayBlock`; `none` still submits the copy work and reports a skipped
+frame) → one render pass per offscreen layer (innermost-first, cleared
+transparent; blurred layers append two separable Gaussian passes bouncing
+through a second pooled texture) → then the target work: without backdrops,
+one clear-and-replay pass; with them, the **snapshot split** — the target
+list's prefix replays into a full-screen snapshot texture, each panel's
+region is downsampled (once, twice past σ 32) and separably blurred, and
+the target pass clears, blits the snapshot 1:1 nearest, and replays the
+suffix, whose `.backdrop` commands composite the blurred panel quads →
+submit (present is implicit).
 
 Layer textures come from a per-window pool: dimensions quantized up to 64 px,
 best-fit ≥ the request, entries released after sitting idle for
@@ -190,6 +197,32 @@ private structure LayerTex where
   blurW : UInt32 := 0
   blurH : UInt32 := 0
 
+/-- The two pooled textures one backdrop panel's downsample/blur chain
+bounces through, both sized for the region's first halving. The chain ends
+where it started an H/V round-trip: level 1 ends in `a`, level 2 in `b`
+(`BackdropTex.final`). -/
+private structure BackdropTex where
+  a : Texture
+  aw : UInt32
+  ah : UInt32
+  b : Texture
+  bw : UInt32
+  bh : UInt32
+
+/-- The texture the composite samples: where the copy chain ended (odd
+halvings → `a`, even → `b`) — the H/V blur round-trip returns there. -/
+private def BackdropTex.final (bt : BackdropTex) (levels : Nat) :
+    Texture × UInt32 × UInt32 :=
+  if levels % 2 == 1 then (bt.a, bt.aw, bt.ah) else (bt.b, bt.bw, bt.bh)
+
+/-- Every pooled texture backing one frame: per-layer content (+ blur ping)
+textures, the full-screen snapshot (only when the frame splits at a
+backdrop), and each backdrop panel's downsample pair. -/
+private structure FrameTextures where
+  layers : Array LayerTex := #[]
+  snapshot : Option (Texture × UInt32 × UInt32) := none
+  backdrops : Array BackdropTex := #[]
+
 /-- Per-window GPU renderer state. -/
 structure GpuRenderer where
   /-- The shared device. -/
@@ -295,13 +328,16 @@ private def poolAcquire (dev : Device) (fmt : TextureFormat) (pool : Array PoolE
       width := w, height := h }
   return (pool.push { tex, w, h, used := true }, tex, w, h)
 
-/-- Acquire the pooled textures of every encoded layer (blurred layers take a
-second, ping texture for the separable passes), then age and trim the pool:
-entries idle past `poolTrimAge` frames are released. Parallel to `layers`. -/
-private def acquireLayerTextures (r : GpuRenderer) (fmt : TextureFormat)
-    (layers : Array LayerEnc) : IO (Array LayerTex) := do
+/-- Acquire every pooled texture the frame needs — per-layer content (+ ping
+for blurred layers), the full-screen snapshot when `snapshotDims` is set
+(a frame with backdrop panels), and each backdrop's downsample pair (both at
+the region's first halving, `backdropLevelDim`) — then age and trim the
+pool: entries idle past `poolTrimAge` frames are released. -/
+private def acquireFrameTextures (r : GpuRenderer) (fmt : TextureFormat)
+    (layers : Array LayerEnc) (snapshotDims : Option (UInt32 × UInt32))
+    (backdrops : Array BackdropEnc) : IO FrameTextures := do
   let mut pool := (← r.pool.get).map fun e => { e with used := false }
-  let mut out : Array LayerTex := Array.emptyWithCapacity layers.size
+  let mut lts : Array LayerTex := Array.emptyWithCapacity layers.size
   for l in layers do
     let w := quantize64 l.bounds.width
     let h := quantize64 l.bounds.height
@@ -310,9 +346,23 @@ private def acquireLayerTextures (r : GpuRenderer) (fmt : TextureFormat)
     if l.sigma > 0 then
       let (pool'', btex, bw, bh) ← poolAcquire r.dev fmt pool w h
       pool := pool''
-      out := out.push { tex, w := tw, h := th, blurTex := some btex, blurW := bw, blurH := bh }
+      lts := lts.push { tex, w := tw, h := th, blurTex := some btex, blurW := bw, blurH := bh }
     else
-      out := out.push { tex, w := tw, h := th }
+      lts := lts.push { tex, w := tw, h := th }
+  let mut snapshot : Option (Texture × UInt32 × UInt32) := none
+  if let some (tw, th) := snapshotDims then
+    let (pool', tex, sw, sh) ← poolAcquire r.dev fmt pool
+      (quantize64 (Float32.ofNat tw.toNat)) (quantize64 (Float32.ofNat th.toNat))
+    pool := pool'
+    snapshot := some (tex, sw, sh)
+  let mut bts : Array BackdropTex := Array.emptyWithCapacity backdrops.size
+  for b in backdrops do
+    let w1 := quantize64 (backdropLevelDim b.region.width 1)
+    let h1 := quantize64 (backdropLevelDim b.region.height 1)
+    let (pool', ta, aw, ah) ← poolAcquire r.dev fmt pool w1 h1
+    let (pool'', tb, bw, bh) ← poolAcquire r.dev fmt pool' w1 h1
+    pool := pool''
+    bts := bts.push { a := ta, aw, ah, b := tb, bw, bh }
   let mut kept : Array PoolEntry := #[]
   for e in pool do
     if e.used then
@@ -322,18 +372,46 @@ private def acquireLayerTextures (r : GpuRenderer) (fmt : TextureFormat)
     else
       kept := kept.push { e with idle := e.idle + 1 }
   r.pool.set kept
-  return out
+  return { layers := lts, snapshot, backdrops := bts }
 
-/-- The packed composite quads of the frame's layers: layer `i` owns vertices
-`4i..4i+3` and indices `6i..6i+5` (so `DrawCmd.layer i` draws at a fixed
-offset), positioned at the layer bounds' corners mapped through the composite
-transform (a transformed layer renders axis-aligned into its texture; only
-this quad rotates/scales), with UVs covering the content's fraction of the
-pooled texture and the group alpha in the vertex color. -/
+/-- The packed composite quads of the frame, at fixed slots so replay draws
+by arithmetic offset. Layer `i` owns vertices `4i..4i+3` and indices
+`6i..6i+5` (`DrawCmd.layer i`), positioned at the layer bounds' corners
+mapped through the composite transform (a transformed layer renders
+axis-aligned into its texture; only this quad rotates/scales), with UVs
+covering the content's fraction of the pooled texture and the group alpha in
+the vertex color.
+
+When the frame splits at a backdrop (`snapshot` set, carrying the target
+extent and the snapshot texture's pool dimensions), the build appends — with
+`L = layers.size` — the 1:1 snapshot **blit** quad at slot `L`, and per
+backdrop `i` three slots: the first **downsample** quad at `L + 1 + 3i`
+(the region's fraction of the snapshot → the level-1 extent at the origin),
+the second at `L + 2 + 3i` (level 1 → level 2; packed but undrawn for
+one-halving panels), and the **panel** composite at `L + 3 + 3i` (the panel
+rect, UVs addressing it inside the blurred region at the final level). -/
 private def layerComposites (layers : Array LayerEnc)
-    (texs : Array LayerTex) : ByteArray × ByteArray := Id.run do
+    (texs : Array LayerTex)
+    (snapshot : Option (Float32 × Float32 × UInt32 × UInt32) := none)
+    (backdrops : Array BackdropEnc := #[])
+    (btexs : Array BackdropTex := #[]) : ByteArray × ByteArray := Id.run do
   let mut verts := ByteArray.empty
   let mut idx := ByteArray.empty
+  let mut quads := 0
+  -- One quad: corners (x0,y0)-(x1,y1), UVs (u0,v0)-(u1,v1), plain indices.
+  let push4 (verts : ByteArray) (idx : ByteArray) (quads : Nat)
+      (x0 y0 x1 y1 u0 v0 u1 v1 : Float32) (c : Color) :
+      ByteArray × ByteArray := Id.run do
+    let mut vs := verts
+    vs := packTexVertex vs ⟨x0, y0⟩ ⟨u0, v0⟩ c
+    vs := packTexVertex vs ⟨x1, y0⟩ ⟨u1, v0⟩ c
+    vs := packTexVertex vs ⟨x0, y1⟩ ⟨u0, v1⟩ c
+    vs := packTexVertex vs ⟨x1, y1⟩ ⟨u1, v1⟩ c
+    let mut ix := idx
+    let base := UInt32.ofNat (4 * quads)
+    for j in ([0, 1, 2, 1, 3, 2] : List UInt32) do
+      ix := pushU32 ix (base + j)
+    return (vs, ix)
   let mut i := 0
   for l in layers do
     let (u, v) := match texs[i]? with
@@ -351,6 +429,46 @@ private def layerComposites (layers : Array LayerEnc)
     for j in ([0, 1, 2, 1, 3, 2] : List UInt32) do
       idx := pushU32 idx (base + j)
     i := i + 1
+  quads := layers.size
+  let some (tw, th, stw, sth) := snapshot | return (verts, idx)
+  let sw := Float32.ofNat stw.toNat
+  let sh := Float32.ofNat sth.toNat
+  -- Snapshot blit: the target extent 1:1 (sampled nearest at replay).
+  let (vs0, ix0) := push4 verts idx quads 0 0 tw th 0 0 (tw / sw) (th / sh) .white
+  verts := vs0; idx := ix0
+  quads := quads + 1
+  for k in [0:backdrops.size] do
+    let b := backdrops[k]!
+    let some bt := btexs[k]? | break
+    let r := b.region
+    let w1 := backdropLevelDim r.width 1
+    let h1 := backdropLevelDim r.height 1
+    let aw := Float32.ofNat bt.aw.toNat
+    let ah := Float32.ofNat bt.ah.toNat
+    -- Downsample 1: the region's fraction of the snapshot (clamp-to-edge
+    -- extends window-edge content past the texture) → the level-1 extent.
+    let (vs1, ix1) := push4 verts idx quads 0 0 w1 h1
+      (r.left / sw) (r.top / sh) (r.right / sw) (r.bottom / sh) .white
+    verts := vs1; idx := ix1
+    quads := quads + 1
+    -- Downsample 2 (drawn only for two-halving panels): level 1 → level 2.
+    let (vs2, ix2) := push4 verts idx quads 0 0
+      (backdropLevelDim r.width 2) (backdropLevelDim r.height 2)
+      0 0 (w1 / aw) (h1 / ah) .white
+    verts := vs2; idx := ix2
+    quads := quads + 1
+    -- Panel composite: the panel rect addressed inside the blurred region at
+    -- the final level, over the chain-end texture's pool dimensions.
+    let scale := Float32.ofNat (2 ^ b.levels)
+    let (_, ew, eh) := bt.final b.levels
+    let ewf := Float32.ofNat ew.toNat
+    let ehf := Float32.ofNat eh.toNat
+    let p := b.panel
+    let (vs3, ix3) := push4 verts idx quads p.left p.top p.right p.bottom
+      ((p.left - r.left) / scale / ewf) ((p.top - r.top) / scale / ehf)
+      ((p.right - r.left) / scale / ewf) ((p.bottom - r.top) / scale / ehf) .white
+    verts := vs3; idx := ix3
+    quads := quads + 1
   return (verts, idx)
 
 /-- Clamp a scissor to the render-target extent (Metal validation requires
@@ -371,15 +489,17 @@ mid-pass, probe-verified). -/
 private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
     (cmds : Array DrawCmd) (layers : Array LayerEnc)
     (atlases : Array Texture) (layerTexs : Array LayerTex)
+    (backdrops : Array BackdropEnc) (backdropTexs : Array BackdropTex)
     (imageTexs : Array Texture) (bufs : FrameBuffers) (w h : Int32) : IO Unit := do
   let full : Sdl.Rect := ⟨0, 0, w, h⟩
   -- 0 quad / 1 mesh / 2 glyph / 3 shadow / 4 layer / 5 image / 6 stretch /
-  -- 9 none
+  -- 7 backdrop / 9 none
   let mut kind : Nat := 9
   let mut scissor : Option Sdl.Rect := none
   let mut atlas : Option Nat := none
   let mut boundLayer : Option (Nat × Bool) := none
   let mut boundImage : Option (Nat × Bool) := none
+  let mut boundBackdrop : Option Nat := none
   -- What the layer pipeline's `LayerClip` fragment uniform currently holds:
   -- `none` = unknown (nothing pushed yet this replay, or clobbered by a
   -- stretch draw's `StretchParams` — same slot 0), `some rc` = `rc` pushed
@@ -390,7 +510,7 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
   for cmd in cmds do
     let want := match cmd with
       | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ _ s
-      | .image _ _ _ _ s => s
+      | .image _ _ _ _ s | .backdrop _ s => s
     if want != scissor then
       rp.setScissor (clampScissor (want.getD full) w h)
       scissor := want
@@ -478,6 +598,31 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
           cb.pushFragmentUniformData 0 (packLayerClip rc)
           pushedClip := some rc
         rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
+    | .backdrop idx _ =>
+      -- Backdrop panel composite: rides the layer pipeline over the shared
+      -- composite quad buffers, sampling the panel's blurred region texture
+      -- linearly (low-res → panel-res upsample), masked by the record-site
+      -- rounded clip. The quad sits at the fixed slot
+      -- `layers.size + 3 idx + 3` (see `layerComposites`).
+      if kind != 7 then
+        rp.bindPipeline r.pipelines.layer
+        if let some s := bufs.layerV then
+          rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+        if let some s := bufs.layerI then
+          rp.bindIndexBuffer { buffer := s.buffer } .u32
+        kind := 7
+        boundBackdrop := none
+      if boundBackdrop != some idx then
+        if let some bt := backdropTexs[idx]? then
+          let levels := (backdrops[idx]?.map (·.levels)).getD 1
+          let (tex, _, _) := bt.final levels
+          rp.bindFragmentSamplers 0 #[{ texture := tex, sampler := r.samplerLinear }]
+          boundBackdrop := some idx
+      let rc := backdrops[idx]?.bind (·.rounded)
+      if pushedClip != some rc then
+        cb.pushFragmentUniformData 0 (packLayerClip rc)
+        pushedClip := some rc
+      rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * (layers.size + 3 * idx + 3)))
     | .image first count tex linear _ =>
       -- Rides the layer pipeline (premultiplied sample × alpha) with its own
       -- vertex/index buffers, a per-command sampler choice, and the unmasked
@@ -500,13 +645,16 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
           boundImage := some (tex, linear)
       rp.drawIndexedPrimitives (UInt32.ofNat count) 1 (UInt32.ofNat first)
 
-/-- Resolve text, encode `list`, acquire the frame's layer textures, grow the
-frame buffers, and record the transfer-buffer write + copy pass on `cb`.
-Returns the encoded frame, its atlas texture table, and the layer textures,
-ready for `GpuRenderer.passes`. -/
+/-- Resolve text, encode `list`, acquire the frame's pooled textures, grow
+the frame buffers, and record the transfer-buffer write + copy pass on `cb`.
+`tw × th` is the extent the target pass will render at (the snapshot texture
+and its blit quad are sized from it — pass the window's pixel size on
+screen, the offscreen extent otherwise). Returns the encoded frame, its
+atlas texture table, and the frame textures, ready for
+`GpuRenderer.passes`. -/
 private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
-    (list : DisplayList) :
-    IO (EncodeResult × Array Texture × Array LayerTex × Array Texture) := do
+    (list : DisplayList) (tw th : UInt32) :
+    IO (EncodeResult × Array Texture × FrameTextures × Array Texture) := do
   let (texts, atlases) ← resolveTexts list
   let (imageIdxs, imageTexs) ← resolveImages r.dev cb list
   let enc := encode list texts imageIdxs
@@ -519,10 +667,14 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
       text runs {enc.textsConsumed} encoded vs {texts.size} resolved, \
       images {enc.imagesConsumed} encoded vs {imageIdxs.size} resolved"
     if gpuDebug then throw (IO.userError msg) else IO.eprintln msg
-  frameStats.set enc.stats
-  let layerTexs ← acquireLayerTextures r
+  let ftex ← acquireFrameTextures r
     (← r.dev.getSwapchainTextureFormat r.window) enc.layers
-  let (lVerts, lIdx) := layerComposites enc.layers layerTexs
+    (if enc.snapshotSplit.isSome then some (tw, th) else none) enc.backdrops
+  frameStats.set { enc.stats with poolTextures := (← r.pool.get).size }
+  let (lVerts, lIdx) := layerComposites enc.layers ftex.layers
+    (ftex.snapshot.map fun (_, sw, sh) =>
+      (Float32.ofNat tw.toNat, Float32.ofNat th.toNat, sw, sh))
+    enc.backdrops ftex.backdrops
   -- Staging layout: one 16-byte-aligned region per pipeline buffer.
   let qOff := 0
   let shOff := qOff + align16 enc.quads.size
@@ -586,25 +738,91 @@ private def GpuRenderer.prepare (r : GpuRenderer) (cb : CommandBuffer)
     uploadRegion cp tb ivOff enc.imageVerts bufs.imageV
     uploadRegion cp tb iiOff enc.imageIdx bufs.imageI
     cp.finish
-  return (enc, atlases, layerTexs, imageTexs)
+  return (enc, atlases, ftex, imageTexs)
+
+/-- Record one backdrop panel's downsample + separable-blur passes off the
+snapshot texture `stex`: a layer-pipeline **copy** draw of composite quad
+`quadBase` (the panel's region → the level-1 extent of `bt.a`, bilinear ≈ a
+2× box filter), a second halving into `bt.b` past σ 32 (quad `quadBase + 1`),
+then the H/V Gaussian round-trip at `σ / 2^levels` — H into the *other*
+texture, V back into the chain's end, where `BackdropTex.final` points the
+composite. Every `cycle := true` target's prior content was only read by
+passes recorded earlier on this command buffer (the M-i layer-blur
+pattern). -/
+private def GpuRenderer.backdropPasses (r : GpuRenderer) (cb : CommandBuffer)
+    (bufs : FrameBuffers) (stex : Texture) (quadBase : Nat)
+    (b : BackdropEnc) (bt : BackdropTex) : IO Unit := do
+  let aw := Float32.ofNat bt.aw.toNat
+  let ah := Float32.ofNat bt.ah.toNat
+  let bw := Float32.ofNat bt.bw.toNat
+  let bh := Float32.ofNat bt.bh.toNat
+  let copy (dst : Texture) (dw dh : Float32) (src : Texture) (quadIdx : Nat) :
+      IO Unit := do
+    cb.pushVertexUniformData 0 (packGlobals dw dh)
+    let rp ← cb.beginRenderPass
+      #[{ texture := dst, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
+          cycle := true }]
+    rp.bindPipeline r.pipelines.layer
+    if let some s := bufs.layerV then
+      rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+    if let some s := bufs.layerI then
+      rp.bindIndexBuffer { buffer := s.buffer } .u32
+    rp.bindFragmentSamplers 0 #[{ texture := src, sampler := r.samplerLinear }]
+    cb.pushFragmentUniformData 0 (packLayerClip none)
+    rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * quadIdx))
+    rp.finish
+  copy bt.a aw ah stex quadBase
+  if b.levels ≥ 2 then
+    copy bt.b bw bh bt.a (quadBase + 1)
+  let wl := backdropLevelDim b.region.width b.levels
+  let hl := backdropLevelDim b.region.height b.levels
+  let sigma := b.sigma / Float32.ofNat (2 ^ b.levels)
+  let taps := Float32.ofNat (min 48 (max 1 (3 * sigma).ceil.toUInt32.toNat))
+  let (fin, finW, finH, other, otherW, otherH) :=
+    if b.levels % 2 == 1 then (bt.a, aw, ah, bt.b, bw, bh)
+    else (bt.b, bw, bh, bt.a, aw, ah)
+  cb.pushVertexUniformData 0 (packBlurVert otherW otherH wl hl (wl / finW) (hl / finH))
+  cb.pushFragmentUniformData 0 (packBlurParams (1 / finW) 0 sigma taps)
+  let hp ← cb.beginRenderPass
+    #[{ texture := other, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
+        cycle := true }]
+  hp.bindPipeline r.pipelines.blur
+  hp.bindFragmentSamplers 0 #[{ texture := fin, sampler := r.samplerLinear }]
+  hp.drawPrimitives 4 1 0 0
+  hp.finish
+  cb.pushVertexUniformData 0 (packBlurVert finW finH wl hl (wl / otherW) (hl / otherH))
+  cb.pushFragmentUniformData 0 (packBlurParams 0 (1 / otherH) sigma taps)
+  let vp ← cb.beginRenderPass
+    #[{ texture := fin, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
+        cycle := true }]
+  vp.bindPipeline r.pipelines.blur
+  vp.bindFragmentSamplers 0 #[{ texture := other, sampler := r.samplerLinear }]
+  vp.drawPrimitives 4 1 0 0
+  vp.finish
 
 /-- Record the frame's render passes on `cb`: one transparent-cleared pass
 per offscreen layer (innermost-first — composites of inner layers replay
 inside outer ones), plus two separable Gaussian passes per *blurred* layer
 (content → ping → content, so the composite samples the content texture
-unchanged), then the clear-and-replay pass into `target`. Each pass pushes
-its own `Globals` viewport so NDC maps to its texture's extent (blur passes
-push their `BlurVert`/`BlurParams` pair instead; a *stretched* layer needs
-no extra pass — its composite draw runs the stretch pipeline, pushing
+unchanged); then the target work. Without backdrops that is one
+clear-and-replay pass into `target`; with them, the **snapshot split**: the
+prefix of the target list replays into the pooled snapshot texture (cleared
+to the frame's clear color — it *is* the frame background), each panel runs
+`backdropPasses`, and the target pass clears, blits the snapshot 1:1
+nearest, and replays the suffix — a single clear + blit + suffix, so
+every command still draws exactly once. Each pass pushes its own `Globals`
+viewport so NDC maps to its texture's extent (blur passes push their
+`BlurVert`/`BlurParams` pair instead; a *stretched* layer needs no extra
+pass — its composite draw runs the stretch pipeline, pushing
 `StretchParams` mid-pass). -/
 private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     (target : Texture) (w h : UInt32) (clear : Color) (enc : EncodeResult)
-    (atlases : Array Texture) (layerTexs : Array LayerTex)
+    (atlases : Array Texture) (ftex : FrameTextures)
     (imageTexs : Array Texture) : IO Unit := do
   let bufs ← r.buffers.get
   let mut i := 0
   for l in enc.layers do
-    if let some lt := layerTexs[i]? then
+    if let some lt := ftex.layers[i]? then
       cb.pushVertexUniformData 0
         (packGlobals (Float32.ofNat lt.w.toNat) (Float32.ofNat lt.h.toNat))
       -- `cycle`: the pooled texture is reused every frame; with two frames in
@@ -613,7 +831,8 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
       let rp ← cb.beginRenderPass
         #[{ texture := lt.tex, loadOp := .clear, clearColor := ⟨0, 0, 0, 0⟩
             cycle := true }]
-      replay r rp cb l.cmds enc.layers atlases layerTexs imageTexs bufs
+      replay r rp cb l.cmds enc.layers atlases ftex.layers
+        enc.backdrops ftex.backdrops imageTexs bufs
         (Int32.ofNat lt.w.toNat) (Int32.ofNat lt.h.toNat)
       rp.finish
       if l.sigma > 0 then
@@ -650,14 +869,54 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
           vp.drawPrimitives 4 1 0 0
           vp.finish
     i := i + 1
-  cb.pushVertexUniformData 0
-    (packGlobals (Float32.ofNat w.toNat) (Float32.ofNat h.toNat))
-  let rp ← cb.beginRenderPass
-    #[{ texture := target, loadOp := .clear
-        clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩ }]
-  replay r rp cb enc.cmds enc.layers atlases layerTexs imageTexs bufs
-    (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
-  rp.finish
+  match enc.snapshotSplit, ftex.snapshot with
+  | some split, some (stex, sw, sh) =>
+    -- Snapshot pass: the scene behind the first panel renders into S,
+    -- cleared to the frame's clear color (it *is* the frame background —
+    -- the target pass starts from a 1:1 blit of it).
+    cb.pushVertexUniformData 0
+      (packGlobals (Float32.ofNat sw.toNat) (Float32.ofNat sh.toNat))
+    let sp ← cb.beginRenderPass
+      #[{ texture := stex, loadOp := .clear
+          clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩, cycle := true }]
+    replay r sp cb (enc.cmds.extract 0 split) enc.layers atlases ftex.layers
+      enc.backdrops ftex.backdrops imageTexs bufs
+      (Int32.ofNat sw.toNat) (Int32.ofNat sh.toNat)
+    sp.finish
+    -- Per-panel region blurs off S.
+    for k in [0:enc.backdrops.size] do
+      if let some b := enc.backdrops[k]? then
+        if let some bt := ftex.backdrops[k]? then
+          r.backdropPasses cb bufs stex (enc.layers.size + 1 + 3 * k) b bt
+    -- Target pass: clear → blit S 1:1 (nearest — byte-exact) → the suffix,
+    -- whose `.backdrop` commands composite the blurred panels.
+    cb.pushVertexUniformData 0
+      (packGlobals (Float32.ofNat w.toNat) (Float32.ofNat h.toNat))
+    let rp ← cb.beginRenderPass
+      #[{ texture := target, loadOp := .clear
+          clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩ }]
+    rp.bindPipeline r.pipelines.layer
+    if let some s := bufs.layerV then
+      rp.bindVertexBuffers 0 #[{ buffer := s.buffer }]
+    if let some s := bufs.layerI then
+      rp.bindIndexBuffer { buffer := s.buffer } .u32
+    rp.bindFragmentSamplers 0 #[{ texture := stex, sampler := r.sampler }]
+    cb.pushFragmentUniformData 0 (packLayerClip none)
+    rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * enc.layers.size))
+    replay r rp cb (enc.cmds.extract split enc.cmds.size) enc.layers atlases
+      ftex.layers enc.backdrops ftex.backdrops imageTexs bufs
+      (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
+    rp.finish
+  | _, _ =>
+    cb.pushVertexUniformData 0
+      (packGlobals (Float32.ofNat w.toNat) (Float32.ofNat h.toNat))
+    let rp ← cb.beginRenderPass
+      #[{ texture := target, loadOp := .clear
+          clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩ }]
+    replay r rp cb enc.cmds enc.layers atlases ftex.layers
+      enc.backdrops ftex.backdrops imageTexs bufs
+      (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
+    rp.finish
 
 /-- One-shot breadcrumbs for the process's very first on-screen render —
 the stage reached pinpoints where a broken device/driver stalls (e.g. a
@@ -673,13 +932,19 @@ def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
   if trace then
     Sdl.logInfo (msg := s!"Compose GPU: first render — prepare (mayBlock {mayBlock})")
   let cb ← r.dev.acquireCommandBuffer
+  -- The window's pixel size stands in for the swapchain extent (not yet
+  -- acquired): it sizes the snapshot texture and its blit quad. A transient
+  -- mismatch mid-resize misblits one frame — the next frame corrects.
+  let (pw, ph) ← r.window.getSizeInPixels
   -- An abandoned command buffer leaks (its finalizer only drops the device
   -- ref — submit/cancel are unsafe from finalizers): if preparing throws
   -- (e.g. texture/buffer creation under memory pressure), cancel before
   -- rethrowing so a retried frame doesn't leak one buffer per attempt.
   -- Canceling is legal here — no swapchain texture has been acquired yet.
-  let (enc, atlases, layerTexs, imageTexs) ←
-    try r.prepare cb list
+  let (enc, atlases, ftex, imageTexs) ←
+    try
+      r.prepare cb list (UInt32.ofNat (max 1 pw.toNatClampNeg))
+        (UInt32.ofNat (max 1 ph.toNatClampNeg))
     catch e => cb.cancel; throw e
   if trace then
     Sdl.logInfo (msg := "Compose GPU: first render — acquiring swapchain texture")
@@ -697,7 +962,7 @@ def GpuRenderer.render (r : GpuRenderer) (clear : Color) (list : DisplayList)
   | some sc =>
     if trace then
       Sdl.logInfo (msg := s!"Compose GPU: first render — acquired {sc.width}x{sc.height}, submitting")
-    r.passes cb sc.texture sc.width sc.height clear enc atlases layerTexs imageTexs
+    r.passes cb sc.texture sc.width sc.height clear enc atlases ftex imageTexs
     cb.submit
     return true
 
@@ -716,8 +981,9 @@ def GpuRenderer.renderOffscreen (r : GpuRenderer) (clear : Color)
   -- Same leak guard as `render`: cancel the un-submitted command buffer (and
   -- release this call's private textures) if recording throws.
   try
-    let (enc, atlases, layerTexs, imageTexs) ← r.prepare cb list
-    r.passes cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases layerTexs imageTexs
+    let (enc, atlases, ftex, imageTexs) ←
+      r.prepare cb list (UInt32.ofNat w) (UInt32.ofNat h)
+    r.passes cb tex (UInt32.ofNat w) (UInt32.ofNat h) clear enc atlases ftex imageTexs
     let cp ← cb.beginCopyPass
     cp.downloadFromTexture
       { texture := tex, w := UInt32.ofNat w, h := UInt32.ofNat h }

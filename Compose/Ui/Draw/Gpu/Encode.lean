@@ -50,6 +50,14 @@ Lowering per primitive:
   grid + nearest; others sample linearly); an enclosing clip scissors the
   composite. Identity props flatten inline. Layers are emitted
   innermost-first — the render order.
+- `backdrop` → a **snapshot split** (`EncodeResult.snapshotSplit`): the first
+  backdrop marks where the target list splits — the renderer replays the
+  prefix into a full-screen snapshot, blurs each panel's region of it at a
+  downsampled resolution (`BackdropEnc`), blits the snapshot 1:1, and the
+  suffix's `.backdrop` commands composite the blurred panel quads (masked by
+  the record-site rounded clip, like layer composites). A backdrop inside an
+  *offscreen* layer's content is dropped (no scene behind it to snapshot —
+  documented v1 constraint).
 
 Clips: `PrimState.clip` becomes an integer scissor per command with the same
 floor/ceil expansion as the SDL backend's clip rect, so the two backends clip
@@ -99,6 +107,44 @@ structure LayerEnc where
   cmds : Array DrawCmd
   deriving Repr, BEq, Inhabited
 
+/-- One encoded backdrop-frost panel (`Prim.backdrop`): the renderer splits
+the target list at the first backdrop (`EncodeResult.snapshotSplit`),
+replays the prefix into a full-screen snapshot texture, blurs this panel's
+`region` of it at a downsampled resolution, and the `.backdrop` composite
+command draws the `panel` quad sampling the blurred texture. All panels
+share the one prefix snapshot — overlapping glass siblings don't frost each
+other (the iOS-parity approximation, DESIGN.md). -/
+structure BackdropEnc where
+  /-- Blur-source region (whole-px, target coordinates): the panel inflated
+  by the blur's full-res reach `3σ` plus the downsample halvings' bilinear
+  bleed, so every visible panel texel blurs from real snapshot content. -/
+  region : Rect
+  /-- The visible panel quad (whole-px: recorded bounds ∩ clip, snapped
+  outward) the composite draws. -/
+  panel : Rect
+  /-- Normalized blur σ in full-res device px (`0 < σ ≤ backdropSigmaMax`).
+  The separable passes run at the downsampled resolution with `σ / 2^levels`. -/
+  sigma : Float32
+  /-- Downsample halvings before blurring (`1`, or `2` past σ 32 — keeps the
+  effective σ ≤ 16, inside the blur pipeline's 48-tap reach). -/
+  levels : Nat
+  /-- The panel's rounded clip at the record site (target coordinates): the
+  composite masks against it in the layer fragment (`LayerClip`); `none`
+  composites unmasked. -/
+  rounded : Option RoundRect := none
+  deriving Repr, BEq, Inhabited
+
+/-- A backdrop region extent downsampled by `k` halvings (whole px, ≥ 1) —
+the renderer's texture-request and pass-extent arithmetic, shared with the
+composite-quad UV math so they can never drift. -/
+def backdropLevelDim (x : Float32) (k : Nat) : Float32 :=
+  max 1 ((x / Float32.ofNat (2 ^ k)).ceil)
+
+#guard backdropLevelDim 100 1 == 50
+#guard backdropLevelDim 101 1 == 51
+#guard backdropLevelDim 101 2 == 26   -- == ceil(ceil(101/2)/2): halvings compose
+#guard backdropLevelDim 1 2 == 1
+
 /-- Encoder output: one packed buffer per pipeline plus the replay commands.
 `textsConsumed` is the number of text runs consumed (walk-order bookkeeping). -/
 structure EncodeResult where
@@ -132,6 +178,14 @@ structure EncodeResult where
   /-- Offscreen layers, innermost-first (their render order; `DrawCmd.layer`
   indices point here). -/
   layers : Array LayerEnc := #[]
+  /-- Backdrop-frost panels in paint order (`DrawCmd.backdrop` indices point
+  here). -/
+  backdrops : Array BackdropEnc := #[]
+  /-- Where the target list splits for backdrop rendering: commands before
+  this index replay into the full-screen snapshot pass, the rest (starting
+  with the first `.backdrop`) replay into the target after a 1:1 blit of the
+  snapshot. `none` = no backdrops — the target pass replays `cmds` whole. -/
+  snapshotSplit : Option Nat := none
   /-- Text runs consumed so far. -/
   textsConsumed : Nat := 0
   /-- Image primitives consumed so far. -/
@@ -454,9 +508,12 @@ private def maskQuad (q : QuadInstance) (rounded : Option RoundRect)
 /-- Encode one primitive. `shift` displaces record-time coordinates into the
 current pass's (zero for the main pass; a layer's negated snapped origin
 inside its content); `extraAlpha` is the folded alpha of enclosing
-`alpha ≥ 1` layers. -/
+`alpha ≥ 1` layers; `inLayer` marks encoding inside an *offscreen* layer's
+command list (where a backdrop has no scene behind it to snapshot — it is
+dropped there; inline-flattened layers stay in the target pass and keep it). -/
 private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
-    (extraAlpha : Float32) (shift : Offset) (st : EncodeResult) : Prim → EncodeResult
+    (extraAlpha : Float32) (shift : Offset) (inLayer : Bool) (st : EncodeResult) :
+    Prim → EncodeResult
   | .rect s color topLeft size =>
     if size.isEmpty then st
     else
@@ -532,12 +589,38 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
     | some texIdx =>
       pushImage st texIdx img src (dst.translate (s.origin + shift))
         (sampling == .linear) (s.alpha * extraAlpha) (scissorAt s.clip shift)
+  | .backdrop s bounds sigma =>
+    -- Inside an offscreen layer's pass there is no "scene behind" to
+    -- snapshot: drop the panel (documented v1 constraint — glass under an
+    -- alpha/blur/transform layer keeps its tint without frost).
+    if inLayer then st else Id.run do
+    let sigma := min sigma backdropSigmaMax
+    if sigma <= 0 then return st
+    -- The visible panel: recorded bounds ∩ clip, snapped outward to whole px.
+    let p := bounds.translate (s.origin + shift)
+    let p := match s.clip with | some c => Rect.intersect p c | none => p
+    let panel : Rect := ⟨p.left.floor, p.top.floor, p.right.ceil, p.bottom.ceil⟩
+    if panel.width < 1 || panel.height < 1 then return st
+    -- Blur-source region: the taps' full-res reach (3σ) plus the downsample
+    -- halvings' bilinear bleed (≤ 4 px at two levels).
+    let m := 3 * sigma + 4
+    let region : Rect := ⟨(panel.left - m).floor, (panel.top - m).floor,
+                          (panel.right + m).ceil, (panel.bottom + m).ceil⟩
+    let idx := st.backdrops.size
+    return { st with
+      snapshotSplit := some (st.snapshotSplit.getD st.cmds.size)
+      cmds := st.cmds.push (.backdrop idx (scissorAt s.clip shift))
+      backdrops := st.backdrops.push
+        { region, panel, sigma
+          levels := if sigma > 32 then 2 else 1
+          rounded := s.rounded.map (·.translate shift) } }
   | .layer s bounds props content =>
     let effect := props.effect.normalize
     if props.transform.isNone && props.alpha ≥ 1.0 && effect == .none then
       -- No compositing needed: flatten inline (records don't produce these;
-      -- hand-built lists may).
-      content.foldl (encodePrim texts images (extraAlpha * props.alpha) shift) st
+      -- hand-built lists may). `inLayer` passes through — flattened content
+      -- draws in the enclosing pass, so a backdrop here keeps its meaning.
+      content.foldl (encodePrim texts images (extraAlpha * props.alpha) shift inLayer) st
     else Id.run do
       -- Conjugate the record-time transform into this pass's coordinates
       -- (`shift` is integral): pass = record + shift ⟹ T(shift)∘t∘T(−shift).
@@ -569,7 +652,7 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
       -- Content encodes at ambient alpha 1: the enclosing flattened alpha
       -- applies exactly once, at the composite below (SDL-backend parity —
       -- its offscreen path renders content with `extraAlpha` 1.0 too).
-      let st := content.foldl (encodePrim texts images 1.0 (shift - ⟨l, t⟩))
+      let st := content.foldl (encodePrim texts images 1.0 (shift - ⟨l, t⟩) true)
         { st with cmds := #[] }
       let idx := st.layers.size
       return { st with
@@ -586,7 +669,7 @@ indices (both in the same prim-walk order `Gpu.resolveTexts` /
 `Gpu.resolveImages` produced them). -/
 def encode (list : DisplayList) (texts : Array ResolvedRun)
     (images : Array Nat := #[]) : EncodeResult :=
-  list.foldl (encodePrim texts images 1.0 .zero) {}
+  list.foldl (encodePrim texts images 1.0 .zero false) {}
 
 -- One crisp rect → one quad instance, one command, no tessellation output.
 #guard
@@ -792,6 +875,53 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   let arc : Prim := .shape {} (.arcStroke ⟨50, 50⟩ 20 0 3 4 (.solid .blue)) none
   let r := encode #[arc, arc] #[]
   r.cmds.size == 1 && (match r.cmds[0]! with | .mesh 0 n none => n == r.meshIdxCount | _ => false)
+-- A backdrop splits the target list at its command index: the prefix (the
+-- content behind it) goes to the snapshot pass, the panel snaps outward to
+-- whole px, and the region adds the 3σ + 4 reach. σ ≤ 32 → one halving.
+#guard
+  let r := encode #[.rect {} .red ⟨0, 0⟩ ⟨100, 100⟩,
+                    .backdrop {} ⟨10.4, 10.6, 50, 50⟩ 8,
+                    .rect {} .blue ⟨0, 0⟩ ⟨4, 4⟩] #[]
+  r.snapshotSplit == some 1 && r.cmds == #[.quads 0 1 none, .backdrop 0 none, .quads 1 1 none]
+    && r.backdrops.size == 1
+    && r.backdrops[0]!.panel == (⟨10, 10, 50, 50⟩ : Rect)
+    && r.backdrops[0]!.region == (⟨-18, -18, 78, 78⟩ : Rect)
+    && r.backdrops[0]!.sigma == 8 && r.backdrops[0]!.levels == 1
+    && r.backdrops[0]!.rounded == none
+-- The record-site rounded clip rides the BackdropEnc (the composite mask),
+-- and the clip both scissors the command and crops the panel.
+#guard
+  let rr := RoundRect.circular ⟨10, 10, 40, 40⟩ 12
+  let st : PrimState := { clip := some ⟨10, 10, 40, 40⟩, rounded := some rr }
+  let r := encode #[.backdrop st ⟨0, 0, 60, 60⟩ 8] #[]
+  r.snapshotSplit == some 0 && r.cmds == #[.backdrop 0 (some ⟨10, 10, 30, 30⟩)]
+    && r.backdrops[0]!.panel == (⟨10, 10, 40, 40⟩ : Rect)
+    && r.backdrops[0]!.rounded == some rr
+-- σ caps at backdropSigmaMax and > 32 takes the second halving; σ ≤ 0 and
+-- fully-clipped panels drop (no split, no command).
+#guard
+  let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 99] #[]
+  r.backdrops[0]!.sigma == 64 && r.backdrops[0]!.levels == 2
+#guard
+  let clipped : PrimState := { clip := some ⟨100, 100, 100, 100⟩ }
+  let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 0,
+                    .backdrop clipped ⟨0, 0, 50, 50⟩ 8] #[]
+  r.snapshotSplit == none && r.cmds.isEmpty && r.backdrops.isEmpty
+-- Two backdrops share the one split (all panels frost the same prefix
+-- snapshot); a backdrop inside an *offscreen* layer is dropped, but inside
+-- an inline-flattened one it keeps its meaning.
+#guard
+  let r := encode #[.rect {} .red ⟨0, 0⟩ ⟨100, 100⟩,
+                    .backdrop {} ⟨0, 0, 40, 40⟩ 8,
+                    .backdrop {} ⟨50, 0, 90, 40⟩ 8] #[]
+  r.snapshotSplit == some 1 && r.backdrops.size == 2
+    && r.cmds == #[.quads 0 1 none, .backdrop 0 none, .backdrop 1 none]
+#guard
+  let inner : Prim := .backdrop {} ⟨0, 0, 40, 40⟩ 8
+  let off := encode #[.layer {} ⟨0, 0, 40, 40⟩ { alpha := 0.5 } #[inner]] #[]
+  let flat := encode #[.layer {} ⟨0, 0, 40, 40⟩ {} #[inner]] #[]
+  off.backdrops.isEmpty && off.snapshotSplit == none && off.layers.size == 1
+    && flat.backdrops.size == 1 && flat.snapshotSplit == some 0
 
 /-! ## Frame statistics -/
 
@@ -807,12 +937,18 @@ structure FrameStats where
   glyphs : Nat := 0
   layers : Nat := 0
   images : Nat := 0
+  backdrops : Nat := 0
+  /-- Pooled offscreen textures alive after this frame's acquire (layer +
+  snapshot + backdrop textures) — renderer-set (not part of the pure
+  `EncodeResult.stats`), a pool-pressure gauge. -/
+  poolTextures : Nat := 0
   deriving Repr, BEq, Inhabited
 
 /-- One-line debug form. -/
 def FrameStats.brief (s : FrameStats) : String :=
   s!"draws={s.drawCalls} quads={s.quads} shadows={s.shadows} \
-meshTris={s.meshTriangles} glyphs={s.glyphs} layers={s.layers} images={s.images}"
+meshTris={s.meshTriangles} glyphs={s.glyphs} layers={s.layers} images={s.images} \
+backdrops={s.backdrops} pool={s.poolTextures}"
 
 /-- Compute an encoded frame's statistics (glyph and image quads are 6
 indices each). -/
@@ -823,7 +959,8 @@ def EncodeResult.stats (r : EncodeResult) : FrameStats :=
     meshTriangles := r.meshIdxCount / 3
     glyphs := r.glyphIdxCount / 6
     layers := r.layers.size
-    images := r.imageIdxCount / 6 }
+    images := r.imageIdxCount / 6
+    backdrops := r.backdrops.size }
 
 -- Merged rects: one draw, two instances.
 #guard
@@ -841,6 +978,11 @@ def EncodeResult.stats (r : EncodeResult) : FrameStats :=
   let r := encode #[sh, arc] #[]
   r.stats.shadows == 1 && r.stats.drawCalls == 2
     && r.stats.meshTriangles == r.meshIdxCount / 3 && r.stats.meshTriangles > 0
+-- Backdrops count themselves (their composite command is a draw call; the
+-- snapshot/blur/blit work is renderer-side, uncounted like blur passes).
+#guard
+  let r := encode #[.rect {} .red ⟨0, 0⟩ ⟨100, 100⟩, .backdrop {} ⟨0, 0, 40, 40⟩ 8] #[]
+  r.stats == { drawCalls := 2, quads := 1, backdrops := 1 }
 
 end Compose.Draw.Gpu
 

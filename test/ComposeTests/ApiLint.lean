@@ -43,6 +43,7 @@ open Compose
 /-- Components exempt from the `modifier` rule, with reasons. -/
 def modifierAllowlist : List Name :=
   [``Compose.MaterialTheme,   -- non-emitting: a pure CompositionLocalProvider nest
+   ``Compose.MaterialApp,     -- non-emitting: installs the app theme (a MaterialTheme)
    ``Compose.TooltipSurface,  -- fixed-styled tooltip content piece
    ``Compose.MenuBar,         -- window chrome; Compose Desktop's MenuBar has none either
    ``Compose.BackHandler]     -- non-emitting: registers a back interceptor

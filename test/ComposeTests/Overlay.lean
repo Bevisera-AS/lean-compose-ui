@@ -49,28 +49,34 @@ private structure ORig where
   clock : IO.Ref UInt64
 
 /-- Bootstrap `content` under a fake-clock `LocalScheduler`, start the queued
-coroutines, render the first frame. -/
+coroutines, render the first frame. The window's own scheduler (which the
+production app loop drives — `backdropHost`'s animation runs there, above
+the test-local provider) is driven with the same fake clock. -/
 private def oboot (content : Composable Unit) (w : Dp := 300) (h : Dp := 300) :
     IO ORig := do
   let clock ← IO.mkRef (0 : UInt64)
   let s ← Scheduler.create (clock := clock.get)
   let ctx ← bootstrap "compose-overlay-test" w h
     (CompositionLocalProvider LocalScheduler (some s) content) cfg
+    (clock := clock.get)
   let _ ← step ctx cfg
   s.runDue 0
+  ctx.scheduler.runDue 0
   return { ctx, s, clock }
 
 private def ORig.render (r : ORig) : IO Unit := do
   if ← r.ctx.needsFrame.get then
     let _ ← step r.ctx cfg
 
-/-- Advance the fake clock by `dtMs`, run due coroutines, tick the frame
-clock, render. -/
+/-- Advance the fake clock by `dtMs`, run due coroutines (both the test
+scheduler and the window's), tick both frame clocks, render. -/
 private def ORig.tick (r : ORig) (dtMs : UInt64) : IO Unit := do
   let t := (← r.clock.get) + dtMs * 1_000_000
   r.clock.set t
   r.s.runDue t
   r.s.tickFrame t
+  r.ctx.scheduler.runDue t
+  r.ctx.scheduler.tickFrame t
   r.render
 
 /-- Settle: alternate render (recompose) and `runDue` a few times so chained
@@ -81,12 +87,15 @@ private def ORig.settle (r : ORig) : IO Unit := do
   for _ in [0:4] do
     r.render
     r.s.runDue (← r.clock.get)
+    r.ctx.scheduler.runDue (← r.clock.get)
   let mut i := 0
-  while (← r.s.hasFrameWork) && i < 300 do
+  while ((← r.s.hasFrameWork) || (← r.ctx.scheduler.hasFrameWork)) && i < 300 do
     let t := (← r.clock.get) + 8 * 1_000_000
     r.clock.set t
     r.s.runDue t
     r.s.tickFrame t
+    r.ctx.scheduler.runDue t
+    r.ctx.scheduler.tickFrame t
     i := i + 1
   r.render
   r.render
@@ -634,11 +643,13 @@ private def alertDialogThemedElevation : IO Unit := do
     ((themed'.splitOn s!"blur={Draw.fmtF 9}").length > 1)
 
 /-- `blurBehind`: an open dialog wraps the window's *base* content in a blur
-layer (radius 8 dp → σ 4 px at density 1), the dialog's own content stays
-outside it, and closing removes the layer and resets the state. (Pixels
-can't assert this rig — the software renderer documentedly ignores blur —
-so the recorded display list is the witness; gpu-probe ⑭ covers the GPU
-pixels.) -/
+layer whose radius **animates** toward the request (200 ms tween in
+`backdropHost`) — mid-flight the σ sits strictly between 0 and the settled
+radius-8-dp value (σ 4 px at density 1), the dialog's own content stays
+outside the layer, and dismissal animates the σ back down before the layer
+disappears. (Pixels can't assert this rig — the software renderer
+documentedly ignores blur — so the recorded display list is the witness;
+gpu-probe ⑭ covers the GPU pixels.) -/
 private def dialogBlurBehind : IO Unit := do
   let open' ← MutableState.create true
   let r ← oboot <| themed <| Box (modifier := Modifier.fillMaxSize |>.background .white) do
@@ -649,18 +660,31 @@ private def dialogBlurBehind : IO Unit := do
           (Box (modifier := Modifier.size 80 40 |>.background .blue))
       else
         withGroup 2 (pure ())
-  r.settle
-  checkEq "blur-behind: the max radius lands in the window state"
-    (← r.ctx.backdropBlurState.cell.get) 8
-  let (frame, _) ← Compose.Draw.DrawScope.record {} r.ctx.root.drawTree
   let isBlurLayer : Compose.Draw.Prim → Bool := fun p =>
     match p with
     | .layer _ _ props _ => (props.effect matches .blur _)
     | _ => false
+  let blurSigma : IO (Option Float32) := do
+    let (frame, _) ← Compose.Draw.DrawScope.record {} r.ctx.root.drawTree
+    return frame.find? isBlurLayer |>.bind fun p =>
+      match p with
+      | .layer _ _ props _ => match props.effect with | .blur s => some s | _ => none
+      | _ => none
+  -- ~80 ms into the 200 ms tween: the frost is easing in.
+  for _ in [0:10] do r.tick 8
+  match ← blurSigma with
+  | some s =>
+    check s!"blur-behind: σ animates through an intermediate value (got {s})"
+      (0 < s && s < 4)
+  | none => check "blur-behind: a blur layer exists mid-animation" false
+  r.settle
+  checkEq "blur-behind: the max radius lands in the window state"
+    (← r.ctx.backdropBlurState.cell.get) 8
+  let (frame, _) ← Compose.Draw.DrawScope.record {} r.ctx.root.drawTree
   match frame.find? isBlurLayer with
   | some (.layer _ _ props inner) =>
     let sigma : Float32 := match props.effect with | .blur s => s | _ => 0
-    checkEq "blur-behind: σ = radius/2 px" sigma 4
+    checkEq "blur-behind: settled σ = radius/2 px" sigma 4
     let innerBriefs := String.intercalate "\n" (inner.map (·.brief)).toList
     check "blur-behind: the base content is inside the blur layer"
       ((innerBriefs.splitOn "#ff0000ff").length ≥ 2)
@@ -668,10 +692,19 @@ private def dialogBlurBehind : IO Unit := do
       ((innerBriefs.splitOn "#0000ffff").length == 1)
   | _ => check "blur-behind: a blur layer wraps the base content" false
   open'.set false
-  r.settle
+  -- Dismissal drops the request to 0 immediately, but the σ animates down —
+  -- mid-flight the layer is still there, shallower than the settled value.
+  for _ in [0:10] do r.tick 8
   checkEq "blur-behind: closing resets the state" (← r.ctx.backdropBlurState.cell.get) 0
+  match ← blurSigma with
+  | some s =>
+    check s!"blur-behind: σ animates back down through an intermediate value (got {s})"
+      (0 < s && s < 4)
+  | none => check "blur-behind: the layer survives mid-exit-animation" false
+  r.settle
   let (after, _) ← Compose.Draw.DrawScope.record {} r.ctx.root.drawTree
-  check "blur-behind: no blur layer after closing" (after.find? isBlurLayer |>.isNone)
+  check "blur-behind: no blur layer after the exit animation settles"
+    (after.find? isBlurLayer |>.isNone)
 
 /-- AlertDialog: title/text/buttons render and the confirm button fires. -/
 private def alertDialogBasics : IO Unit := do

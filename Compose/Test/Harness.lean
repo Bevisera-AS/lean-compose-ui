@@ -76,16 +76,21 @@ def render : TestM Unit := do
 
 /-- Wait until the UI is idle **without advancing the clock**: run due
 coroutine work, render dirty frames, repeat until no frame is pending and
-the scheduler has no immediately-runnable work. Pending *timers* and frame
-subscribers do not count — drive those with `advanceTimeBy`/`settle`.
-Mirrors `waitForIdle`. -/
+neither scheduler has immediately-runnable work. The window's own scheduler
+(which the production app loop drives — framework coroutines above the
+test-local provider run there, e.g. `backdropHost`'s blur animation) is
+driven alongside the test scheduler, on the same fake clock. Pending
+*timers* and frame subscribers do not count — drive those with
+`advanceTimeBy`/`settle`. Mirrors `waitForIdle`. -/
 def awaitIdle : TestM Unit := do
   let t ← read
   for _ in [0:1000] do
     t.sched.runDue (← t.clockRef.get)
+    t.ctx.scheduler.runDue (← t.clockRef.get)
     if ← t.ctx.needsFrame.get then
       let _ ← Compose.step t.ctx t.config
-    else if (← t.sched.nextDeadline) != some 0 then
+    else if (← t.sched.nextDeadline) != some 0
+        && (← t.ctx.scheduler.nextDeadline) != some 0 then
       return
   throw (IO.userError "awaitIdle: UI did not become idle within 1000 rounds \
                        (a coroutine keeps enqueueing work?)")
@@ -104,6 +109,8 @@ def advanceTimeBy (ms : UInt64) (frameMs : UInt64 := 8) : TestM Unit := do
     t.clockRef.set nowNs
     t.sched.runDue nowNs
     t.sched.tickFrame nowNs
+    t.ctx.scheduler.runDue nowNs
+    t.ctx.scheduler.tickFrame nowNs
     render
   awaitIdle
 
@@ -120,7 +127,8 @@ def settle (capMs : UInt64 := 4000) (frameMs : UInt64 := 8) : TestM Unit := do
   awaitIdle
   let t ← read
   let mut spent : UInt64 := 0
-  while (← t.sched.hasFrameWork) && spent < capMs do
+  while ((← t.sched.hasFrameWork) || (← t.ctx.scheduler.hasFrameWork))
+      && spent < capMs do
     spent := spent + frameMs
     advanceTimeBy frameMs frameMs
   render
@@ -237,6 +245,7 @@ def runComposeTest (content : Composable Unit) (body : TestM Unit)
                  | none => content
   let ctx ← bootstrap "runComposeTest" width height
     (CompositionLocalProvider LocalScheduler (some sched) wrapped) config
+    (clock := clockRef.get)
   -- Re-install the input pipeline to keep hold of the `InputManager` (focus
   -- assertions need its `FocusManager`); same wiring as `bootstrap`'s.
   let input ← installInput ctx (onTextClientFocused := fun active => do

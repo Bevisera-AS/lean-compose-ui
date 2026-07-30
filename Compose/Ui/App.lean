@@ -339,9 +339,11 @@ invalidation hooks to the window's `needsFrame` flag — everything `step`
 needs, without entering the loop. `width`/`height` are `Dp` (sized in window
 coordinates via `windowCoordSize`). Main thread only.
 
-`clock` is the scheduler's time source (default: real time); `captureFrames`
-substitutes a manually stepped ref. An overriding caller must also drive the
-scheduler itself — `step` reads real time. -/
+`clock` is the scheduler's time source (default: real time), and `step`
+follows it (`ctx.scheduler.clock`), so a fake-clock override keeps the whole
+window — timers, the frame clock, and framework-level animations — on one
+consistent timeline; the overriding caller advances that clock and drives
+`runDue`/`tickFrame` between renders itself. -/
 def bootstrap (title : String) (width height : Dp) (content : Composable Unit)
     (config : AppConfig := {}) (clock : IO UInt64 := Sdl.getTicksNS) :
     IO WindowContext := do
@@ -640,7 +642,7 @@ where
       if sizeChanged then
         -- One clock advance per actual size change: timers and animations
         -- progress during the drag at the drag's own tick rate.
-        let now ← Sdl.getTicksNS
+        let now ← ctx.scheduler.clock
         ctx.scheduler.runDue now
         if ← ctx.scheduler.hasFrameWork then
           ctx.scheduler.tickFrame now
@@ -729,7 +731,7 @@ def wakeTimeoutMs (ctx : WindowContext) (idleCapMs : UInt32 := idleWaitMs) : IO 
   match ← ctx.scheduler.nextDeadline with
   | none => return Int32.ofNat cap.toNat
   | some d =>
-    let now ← Sdl.getTicksNS
+    let now ← ctx.scheduler.clock
     if d ≤ now then return 0
     return Int32.ofNat (min cap ((d - now) / 1_000_000 + 1)).toNat
 
@@ -754,8 +756,10 @@ def step (ctx : WindowContext) (config : AppConfig := {})
   if ← ctx.quitRequested.get then return false
   -- 3: coroutines due now; frame clock while subscribed. Paused: timers
   -- still run (background work), the frame clock does not (animations
-  -- resume — and complete — on foreground).
-  let now ← Sdl.getTicksNS
+  -- resume — and complete — on foreground). Time comes from the scheduler's
+  -- own clock (real time in production; a bootstrap `clock` override keeps
+  -- fake-clock tests on one consistent timeline).
+  let now ← ctx.scheduler.clock
   ctx.scheduler.runDue now
   let paused ← ctx.paused.get
   if !paused && (← ctx.scheduler.hasFrameWork) then

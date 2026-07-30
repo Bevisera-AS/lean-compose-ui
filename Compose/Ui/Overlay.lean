@@ -6,6 +6,8 @@ public import Compose.Ui.Layout
 public meta import Compose.Ui.Layout
 public import Compose.Runtime.Macro
 public meta import Compose.Runtime.Macro
+public import Compose.Animation.AnimateAsState
+public meta import Compose.Animation.AnimateAsState
 
 public section
 
@@ -240,13 +242,18 @@ composable def overlayHost (ctx : WindowContext) : Composable Unit := do
 /-- The base-content wrapper: an **always-present** layout node (structure
 stays stable — no composition-state loss when the blur toggles) whose
 modifier Gaussian-blurs the whole base subtree while any open overlay
-requests a backdrop blur (`OverlayEntry.blurBehind`; the observed read
-recomposes exactly this wrapper). GPU backend only — the SDL software
-backend renders unblurred (the documented blur approximation). -/
+requests a backdrop blur (`OverlayEntry.blurBehind`). The radius *animates*
+toward the requested value (~200 ms tween): opening overlays frost in, and
+dismissal — the host outliving every entry — animates back down before the
+blur layer disappears. The animated read recomposes exactly this wrapper
+per frame; near-zero radii (< 0.05) record no layer at all. GPU backend
+only — the SDL software backend renders unblurred (the documented blur
+approximation). -/
 composable def backdropHost (ctx : WindowContext) (content : Composable Unit) :
     Composable Unit := do
-  let r ← ctx.backdropBlurState.get
-  Layout (if r > 0 then Modifier.blur ⟨r⟩ else {}) .root content
+  let animated ← animateFloatAsState (← ctx.backdropBlurState.get) (.tween 200)
+  let r ← animated.get
+  Layout (if r > 0.05 then Modifier.blur ⟨r⟩ else {}) .root content
     (policyInputs := some 0x62647270)
 
 /-- The root content wrapper `bootstrap` composes: the app content (under
@@ -268,9 +275,10 @@ private def captureLocals : Composable LocalMap := fun c => c.locals.get
 re-registers the key routing / modal focus hook immediately (prop-keyed
 effects below) instead of latching the mount-time value until unmount.
 `blurBehind` requests a Gaussian backdrop blur of the window's *base*
-content while this overlay is open and interactive — static, latched per
-composition; the host applies the max over all open overlays (see
-`backdropHost`; an animated radius is future work). -/
+content while this overlay is open and interactive — latched per
+composition; the host applies the max over all open overlays and animates
+toward it (see `backdropHost`), so the frost eases in on open and back out
+on dismissal. -/
 composable def overlayImpl (anchor : Option Rect) (alignment : Alignment)
     (offset : IntOffset) (onDismissRequest : Option (IO Unit)) (focusable : Bool)
     (onKeyEvent : KeyEvent → IO Bool) (scrimColor : Option Color) (modal : Bool)

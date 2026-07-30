@@ -31,23 +31,52 @@ structure BorderStroke where
   color : Color
   deriving Repr, BEq, Inhabited
 
+/-- The shadow + background chain of a themed container, appended to `base`:
+the drop shadow (only when `elevation > 0`) then the container fill clipped to
+`shape`. The single seam every themed container's background goes through, so
+a `SurfaceMaterial` swap reaches widgets that build their background from raw
+modifiers as well as those that use `Surface`.
+
+`.glass` currently renders **exactly** like `.opaque` — a deliberate
+placeholder. The translucent treatment (backdrop blur, tint wash, specular
+rim) lands with `Compose.Material.Glass` and will replace that arm; until
+then a glass-themed app is pixel-identical to an opaque one. -/
+def SurfaceMaterial.backgroundModifier (m : SurfaceMaterial) (color : Color)
+    (shape : Shape) (elevation : Dp) (base : Modifier := {}) : Modifier :=
+  match m with
+  | .opaque => classic
+  | .glass _ => classic
+where
+  /-- The classic opaque Material chain. -/
+  classic : Modifier :=
+    (if elevation > 0 then base.shadow elevation shape else base)
+      |>.background color shape
+
 /-- A shaped, colored container providing the content color for what's
 inside. `color` defaults to the theme's `surface`; `contentColor` defaults to
 the scheme's `on*` pair for `color` (or the ambient content color when
 `color` is no scheme role). Content is clipped to `shape`; `elevation > 0`
-draws a Material drop shadow under the shape (`Modifier.shadow`). Mirrors
-`androidx.compose.material3.Surface` (shadow elevation; no tonal overlays). -/
+draws a Material drop shadow under the shape (`Modifier.shadow`).
+
+`material` picks how the background renders (`none` = `.opaque`); widgets that
+are themed chrome pass `(← MaterialTheme.tokens).materials.chrome`/`.bars`.
+**The content color is independent of it**: resolution always runs on the
+untinted role `color`, because translucency is a rendering treatment, not a
+role change — a glass `surfaceContainer` still contrasts against `onSurface`.
+
+Mirrors `androidx.compose.material3.Surface` (shadow elevation; no tonal
+overlays). -/
 def Surface (content : Composable Unit := pure ())
     (modifier : Modifier := {}) (shape : Shape := .rectangle)
     (color : Option Color := none) (contentColor : Option Color := none)
-    (border : Option BorderStroke := none) (elevation : Dp := 0) : Composable Unit := do
+    (border : Option BorderStroke := none) (elevation : Dp := 0)
+    (material : Option SurfaceMaterial := none) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let ambientContent ← LocalContentColor.current
   let container := color.getD colors.surface
   let resolvedContent := contentColor.getD
     ((colors.contentColorFor container).getD ambientContent)
-  let m := (if elevation > 0 then modifier.shadow elevation shape else modifier)
-    |>.background container shape
+  let m := (material.getD .opaque).backgroundModifier container shape elevation modifier
     |>.then (match border with
              | some b => Modifier.border b.width b.color shape
              | none => {})

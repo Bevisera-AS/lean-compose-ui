@@ -1136,6 +1136,50 @@ private def probeSquircle (r : Compose.Draw.Gpu.GpuRenderer)
   check s!"stroke: … which the circular band leaves empty (got {(px cis 12 12).1})"
     ((px cis 12 12).1.toNat ≤ 5)
 
+/-- ㉒ stacked backdrop panels (progressive snapshot): the frame composes
+into the snapshot texture segment by segment, so a panel frosts everything
+painted beneath it — *including content drawn after an earlier panel* (the
+demo-glass scroll bug: a glass card mid-list blinded the fixed panels to
+everything drawn after it). Over a red base: panel A frosts pure red; a
+blue rect drawn between the panels covers panel B's whole blur region, so
+B's interior must frost blue (the one-prefix-snapshot renderer showed red
+here); A's blur ran before the blue rect existed, so its frost stays pure
+red; plain pixels ride the snapshot round-trip byte-exact. -/
+private def probeBackdropStack (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  say "㉒ stacked backdrop panels → progressive snapshot pixels"
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (bs : ByteArray) (x y : Nat) =>
+    let o := (y * 220 + x) * 4
+    if bgra then (bs.get! (o+2), bs.get! (o+1), bs.get! o, bs.get! (o+3))
+    else (bs.get! o, bs.get! (o+1), bs.get! (o+2), bs.get! (o+3))
+  -- Panel A ⟨20,20,100,100⟩ σ4 (region reach 16 px: ⟨4,4,116,116⟩ — all
+  -- red when A blurs); the blue rect ⟨110,10,210,110⟩ lands between the
+  -- panels and covers B ⟨130,30,190,90⟩'s whole region ⟨114,14,206,106⟩.
+  let (list, _) ← DrawScope.record {} do
+    DrawScope.drawRect (.solid .red) ⟨0, 0⟩ ⟨220, 140⟩
+    DrawScope.drawBackdrop ⟨20, 20, 100, 100⟩ 4
+    DrawScope.drawRect (.solid .blue) ⟨110, 10⟩ ⟨100, 100⟩
+    DrawScope.drawBackdrop ⟨130, 30, 190, 90⟩ 4
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 220 140
+  let p := px bytes
+  let b := p 160 60
+  check s!"stack: the later panel frosts content drawn after the earlier one (b={b.2.2.1})"
+    (b.2.2.1.toNat ≥ 240 && b.1.toNat ≤ 10)
+  let a := p 60 60
+  check s!"stack: the earlier panel frosts only what was beneath it (r={a.1})"
+    (a.1.toNat ≥ 245 && a.2.2.1.toNat ≤ 8)
+  let rim := p 97 60
+  check s!"stack: A's rim predates the blue rect — no leak (r={rim.1} b={rim.2.2.1})"
+    (rim.1.toNat ≥ 240 && rim.2.2.1.toNat ≤ 8)
+  check "blit: plain blue between the panels is byte-exact (@120,60)"
+    (p 120 60 == (0, 0, 255, 255))
+  check "blit: plain red outside everything is byte-exact (@215,130)"
+    (p 215 130 == (255, 0, 0, 255))
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: two backdrops" (stats.backdrops == 2)
+
 /-- ⑮ fractional-origin text (M-j): both backends snap run origins through
 the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
 byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
@@ -1242,6 +1286,7 @@ def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
   probeBackdrop gpuRenderer engine font swapchainFmt
   probeRefraction gpuRenderer swapchainFmt
   probeSquircle gpuRenderer swapchainFmt
+  probeBackdropStack gpuRenderer swapchainFmt
   probeFractionalText gpuRenderer engine font
   probeInvalidate gpuRenderer
   match raw with

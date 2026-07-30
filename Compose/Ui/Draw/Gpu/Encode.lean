@@ -51,13 +51,15 @@ Lowering per primitive:
   composite. Identity props flatten inline. Layers are emitted
   innermost-first — the render order.
 - `backdrop` → a **snapshot split** (`EncodeResult.snapshotSplit`): the first
-  backdrop marks where the target list splits — the renderer replays the
-  prefix into a full-screen snapshot, blurs each panel's region of it at a
-  downsampled resolution (`BackdropEnc`), blits the snapshot 1:1, and the
-  suffix's `.backdrop` commands composite the blurred panel quads (masked by
-  the record-site rounded clip, like layer composites). A backdrop inside an
-  *offscreen* layer's content is dropped (no scene behind it to snapshot —
-  documented v1 constraint).
+  backdrop marks where the target list starts composing into the full-screen
+  snapshot texture — the renderer replays it segment by segment, blurring
+  each panel's region of the snapshot *as painted so far* at a downsampled
+  resolution (`BackdropEnc`) before that panel's `.backdrop` command
+  composites the blurred quad into the snapshot (masked by the record-site
+  rounded clip, like layer composites), then blits the finished snapshot
+  1:1 — each panel frosts everything beneath it, earlier panels' frost
+  included. A backdrop inside an *offscreen* layer's content is dropped (no
+  scene behind it to snapshot — documented v1 constraint).
 
 Clips: `PrimState.clip` becomes an integer scissor per command with the same
 floor/ceil expansion as the SDL backend's clip rect, so the two backends clip
@@ -107,13 +109,13 @@ structure LayerEnc where
   cmds : Array DrawCmd
   deriving Repr, BEq, Inhabited
 
-/-- One encoded backdrop-frost panel (`Prim.backdrop`): the renderer splits
-the target list at the first backdrop (`EncodeResult.snapshotSplit`),
-replays the prefix into a full-screen snapshot texture, blurs this panel's
-`region` of it at a downsampled resolution, and the `.backdrop` composite
-command draws the `panel` quad sampling the blurred texture. All panels
-share the one prefix snapshot — overlapping glass siblings don't frost each
-other (the iOS-parity approximation, DESIGN.md). -/
+/-- One encoded backdrop-frost panel (`Prim.backdrop`): the renderer
+composes the target list into a full-screen snapshot texture segment by
+segment (from `EncodeResult.snapshotSplit`), blurs this panel's `region` of
+the snapshot *as painted so far* at a downsampled resolution, and the
+`.backdrop` composite command draws the `panel` quad sampling the blurred
+texture back into the snapshot — a panel frosts everything painted beneath
+it, earlier panels' frost included (the iOS backdrop model, DESIGN.md). -/
 structure BackdropEnc where
   /-- Blur-source region (whole-px, target coordinates): the panel inflated
   by the blur's full-res reach `3σ` plus the downsample halvings' bilinear
@@ -187,10 +189,12 @@ structure EncodeResult where
   /-- Backdrop-frost panels in paint order (`DrawCmd.backdrop` indices point
   here). -/
   backdrops : Array BackdropEnc := #[]
-  /-- Where the target list splits for backdrop rendering: commands before
-  this index replay into the full-screen snapshot pass, the rest (starting
-  with the first `.backdrop`) replay into the target after a 1:1 blit of the
-  snapshot. `none` = no backdrops — the target pass replays `cmds` whole. -/
+  /-- Where the target list starts composing into the snapshot texture:
+  commands before this index (the scene behind the first panel) replay into
+  the cleared snapshot pass, the rest replay into it segment by segment
+  between the per-panel region blurs, and the target pass blits the
+  finished snapshot 1:1. `none` = no backdrops — the target pass replays
+  `cmds` whole. -/
   snapshotSplit : Option Nat := none
   /-- Text runs consumed so far. -/
   textsConsumed : Nat := 0
@@ -912,8 +916,9 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   let r := encode #[arc, arc] #[]
   r.cmds.size == 1 && (match r.cmds[0]! with | .mesh 0 n none => n == r.meshIdxCount | _ => false)
 -- A backdrop splits the target list at its command index: the prefix (the
--- content behind it) goes to the snapshot pass, the panel snaps outward to
--- whole px, and the region adds the 3σ + 4 reach. σ ≤ 32 → one halving.
+-- content behind it) opens the snapshot composition, the panel snaps
+-- outward to whole px, and the region adds the 3σ + 4 reach. σ ≤ 32 → one
+-- halving.
 #guard
   let r := encode #[.rect {} .red ⟨0, 0⟩ ⟨100, 100⟩,
                     .backdrop {} ⟨10.4, 10.6, 50, 50⟩ 8,
@@ -958,9 +963,10 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   let r := encode #[.backdrop {} ⟨0, 0, 50, 50⟩ 0,
                     .backdrop clipped ⟨0, 0, 50, 50⟩ 8] #[]
   r.snapshotSplit == none && r.cmds.isEmpty && r.backdrops.isEmpty
--- Two backdrops share the one split (all panels frost the same prefix
--- snapshot); a backdrop inside an *offscreen* layer is dropped, but inside
--- an inline-flattened one it keeps its meaning.
+-- Two backdrops share the one split (the snapshot composition opens at the
+-- first; the renderer blurs each panel's region at its own command, so the
+-- second frosts the first's composite); a backdrop inside an *offscreen*
+-- layer is dropped, but inside an inline-flattened one it keeps its meaning.
 #guard
   let r := encode #[.rect {} .red ⟨0, 0⟩ ⟨100, 100⟩,
                     .backdrop {} ⟨0, 0, 40, 40⟩ 8,

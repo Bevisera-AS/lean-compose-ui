@@ -23,13 +23,16 @@ in-flight data) → acquire the swapchain texture (blocking or not per
 frame) → one render pass per offscreen layer (innermost-first, cleared
 transparent; blurred layers append two separable Gaussian passes bouncing
 through a second pooled texture) → then the target work: without backdrops,
-one clear-and-replay pass; with them, the **snapshot split** — the target
-list's prefix replays into a full-screen snapshot texture, each panel's
-region is downsampled (once, twice past σ 32) and separably blurred, and
-the target pass clears, blits the snapshot 1:1 nearest, and replays the
-suffix, whose `.backdrop` commands composite the blurred panel quads
-(through the refracting glass pipeline when the panel's `Refraction` is
-on) → submit (present is implicit).
+one clear-and-replay pass; with them, the **progressive snapshot** — the
+target list replays into a full-screen snapshot texture segment by segment:
+the prefix behind the first panel, then per backdrop its region is
+downsampled (once, twice past σ 32) and separably blurred off the snapshot
+*as painted so far*, and a reopened (`loadOp .load`) snapshot pass
+composites the frosted panel quad (through the refracting glass pipeline
+when the panel's `Refraction` is on) and continues to the next panel — so
+each panel frosts everything beneath it, earlier panels' frost included;
+the target pass then clears and blits the finished snapshot 1:1 nearest →
+submit (present is implicit).
 
 Layer textures come from a per-window pool: dimensions quantized up to 64 px,
 best-fit ≥ the request, entries released after sitting idle for
@@ -841,12 +844,17 @@ per offscreen layer (innermost-first — composites of inner layers replay
 inside outer ones), plus two separable Gaussian passes per *blurred* layer
 (content → ping → content, so the composite samples the content texture
 unchanged); then the target work. Without backdrops that is one
-clear-and-replay pass into `target`; with them, the **snapshot split**: the
-prefix of the target list replays into the pooled snapshot texture (cleared
-to the frame's clear color — it *is* the frame background), each panel runs
-`backdropPasses`, and the target pass clears, blits the snapshot 1:1
-nearest, and replays the suffix — a single clear + blit + suffix, so
-every command still draws exactly once. Each pass pushes its own `Globals`
+clear-and-replay pass into `target`; with them, the **progressive
+snapshot**: the target list composes into the pooled snapshot texture
+segment by segment — the prefix behind the first panel into a cleared pass
+(the frame's clear color — it *is* the frame background), then per panel
+`backdropPasses` off the snapshot as painted so far followed by a reopened
+(`loadOp .load`) pass replaying from that panel's `.backdrop` composite to
+the next boundary — and the target pass clears and blits the snapshot 1:1
+nearest. Every command still draws exactly once, and each panel frosts
+everything beneath it, earlier panels' frost included (the demo-glass
+scroll bug: a glass card mid-scroll must not blind later panels to content
+drawn after it). Each pass pushes its own `Globals`
 viewport so NDC maps to its texture's extent (blur passes push their
 `BlurVert`/`BlurParams` pair instead; a *stretched* layer needs no extra
 pass — its composite draw runs the stretch pipeline, pushing
@@ -907,11 +915,19 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     i := i + 1
   match enc.snapshotSplit, ftex.snapshot with
   | some split, some (stex, sw, sh) =>
-    -- Snapshot pass: the scene behind the first panel renders into S,
-    -- cleared to the frame's clear color (it *is* the frame background —
-    -- the target pass starts from a 1:1 blit of it).
-    cb.pushVertexUniformData 0
-      (packGlobals (Float32.ofNat sw.toNat) (Float32.ofNat sh.toNat))
+    -- Progressive snapshot: the whole scene composes into S, segment by
+    -- segment. The `.backdrop` command positions are the boundaries (the
+    -- first is `split` by construction; command `cuts[k]` carries index
+    -- `k` — backdrops append in command order).
+    let mut cuts : Array Nat := #[]
+    for ci in [0:enc.cmds.size] do
+      if let some (.backdrop ..) := enc.cmds[ci]? then
+        cuts := cuts.push ci
+    let globals := packGlobals (Float32.ofNat sw.toNat) (Float32.ofNat sh.toNat)
+    -- Segment 0 — the scene behind the first panel — into S, cleared to the
+    -- frame's clear color (it *is* the frame background). The one cycle:
+    -- later passes reopen the same backing with `loadOp .load`.
+    cb.pushVertexUniformData 0 globals
     let sp ← cb.beginRenderPass
       #[{ texture := stex, loadOp := .clear
           clearColor := ⟨clear.r, clear.g, clear.b, clear.a⟩, cycle := true }]
@@ -919,13 +935,24 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
       enc.backdrops ftex.backdrops imageTexs bufs
       (Int32.ofNat sw.toNat) (Int32.ofNat sh.toNat)
     sp.finish
-    -- Per-panel region blurs off S.
-    for k in [0:enc.backdrops.size] do
+    -- Per panel: blur its region off S *as painted so far*, then reopen S
+    -- and replay from the `.backdrop` composite up to the next boundary —
+    -- so each panel frosts everything beneath it, earlier panels' frost
+    -- included, and every command still draws exactly once.
+    let mut k := 0
+    for pos in cuts do
       if let some b := enc.backdrops[k]? then
         if let some bt := ftex.backdrops[k]? then
           r.backdropPasses cb bufs stex (enc.layers.size + 1 + 3 * k) b bt
-    -- Target pass: clear → blit S 1:1 (nearest — byte-exact) → the suffix,
-    -- whose `.backdrop` commands composite the blurred panels.
+      let stop := cuts[k + 1]?.getD enc.cmds.size
+      cb.pushVertexUniformData 0 globals   -- the blur passes clobbered it
+      let sp ← cb.beginRenderPass #[{ texture := stex, loadOp := .load }]
+      replay r sp cb (enc.cmds.extract pos stop) enc.layers atlases
+        ftex.layers enc.backdrops ftex.backdrops imageTexs bufs
+        (Int32.ofNat sw.toNat) (Int32.ofNat sh.toNat)
+      sp.finish
+      k := k + 1
+    -- Target pass: clear → blit S 1:1 (nearest — byte-exact).
     cb.pushVertexUniformData 0
       (packGlobals (Float32.ofNat w.toNat) (Float32.ofNat h.toNat))
     let rp ← cb.beginRenderPass
@@ -939,9 +966,6 @@ private def GpuRenderer.passes (r : GpuRenderer) (cb : CommandBuffer)
     rp.bindFragmentSamplers 0 #[{ texture := stex, sampler := r.sampler }]
     cb.pushFragmentUniformData 0 (packLayerClip none)
     rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * enc.layers.size))
-    replay r rp cb (enc.cmds.extract split enc.cmds.size) enc.layers atlases
-      ftex.layers enc.backdrops ftex.backdrops imageTexs bufs
-      (Int32.ofNat w.toNat) (Int32.ofNat h.toNat)
     rp.finish
   | _, _ =>
     cb.pushVertexUniformData 0

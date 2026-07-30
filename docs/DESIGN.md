@@ -476,23 +476,28 @@ panel that frosts whatever is *behind it* in the window (σ = radius/2 px,
 capped at 64), masked exactly by the ambient rounded clip (the draw walk
 records the prim under the panel shape's `clipRoundRect`). The encoder
 splits the target list at the **first** backdrop (`snapshotSplit` +
-`BackdropEnc`); the renderer replays the prefix into a pooled full-screen
-snapshot, downsamples each panel's region (panel + 3σ + 4, one halving —
-two past σ 32 — through layer-pipeline copy draws, so the separable passes
-run at σ/2ʰ ≤ 16 within the blur pipeline's 48-tap reach), runs the H/V
-Gaussian round-trip, then clears the target, blits the snapshot 1:1
-nearest (byte-exact), and replays the suffix, whose `.backdrop` commands
-composite the blurred panel quads through the layer pipeline's `LayerClip`
-mask. All panels share the one prefix snapshot, so overlapping glass
-siblings don't frost each other (the iOS-parity approximation), and a
-backdrop inside an *offscreen* layer (alpha/blur/transform ancestor) is
-dropped by the encoder — both documented v1 constraints. The SDL backend
-executes the prim as a no-op (glass keeps tint + rim + shadow — the
-established blur degrade), which also makes it a `gpu-parity` exclusion.
-Verified by `gpu-probe` ⑲ (blit byte-exactness, corner culling, constant
-regions ≈ identity through the downsample chain, a monotonic seam ramp,
-the σ = 40 two-halving path, and text/image prims on both sides of the
-split keeping the resolve/encode walks in lockstep).
+`BackdropEnc`); the renderer composes the whole list into a pooled
+full-screen snapshot **progressively** — the prefix behind the first panel
+into a cleared pass, then per panel: downsample its region of the snapshot
+*as painted so far* (panel + 3σ + 4, one halving — two past σ 32 — through
+layer-pipeline copy draws, so the separable passes run at σ/2ʰ ≤ 16 within
+the blur pipeline's 48-tap reach), run the H/V Gaussian round-trip, and
+reopen the snapshot (`loadOp .load`) to composite the blurred panel quad
+through the layer pipeline's `LayerClip` mask and continue to the next
+panel — then clears the target and blits the finished snapshot 1:1 nearest
+(byte-exact). Each panel therefore frosts everything painted beneath it,
+including earlier panels' frost and content drawn between two panels (the
+iOS backdrop model — a glass card scrolling through a list must not blind
+the fixed panels above it to content drawn after it). A backdrop inside an
+*offscreen* layer (alpha/blur/transform ancestor) is dropped by the
+encoder — a documented v1 constraint. The SDL backend executes the prim as
+a no-op (glass keeps tint + rim + shadow — the established blur degrade),
+which also makes it a `gpu-parity` exclusion. Verified by `gpu-probe` ⑲
+(blit byte-exactness, corner culling, constant regions ≈ identity through
+the downsample chain, a monotonic seam ramp, the σ = 40 two-halving path,
+and text/image prims on both sides of the split keeping the resolve/encode
+walks in lockstep) and ㉒ (stacked panels: content drawn between two
+panels appears in the second panel's frost, not the first's).
 
 **Refraction** (`Refraction` on the backdrop prim, GPU-only): a panel whose
 refraction `strength > 0` composites through the **glass** pipeline instead

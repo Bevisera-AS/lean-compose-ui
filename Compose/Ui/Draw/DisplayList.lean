@@ -201,11 +201,12 @@ inductive Prim where
   Gaussian-blurred at `sigma` (device px, capped at `backdropSigmaMax` when
   recorded) and redrawn as the panel's background, masked by the ambient
   rounded clip (`PrimState.rounded`). `refr` optionally bends the blurred
-  backdrop near the rim (`Refraction`). GPU-only — the renderer splits the
-  frame at the first backdrop into a snapshot pass and blurs per-panel
-  regions off the snapshot; the SDL backend draws nothing (glass keeps its
-  tint/rim treatment), and the GPU encoder drops a backdrop recorded inside
-  an offscreen layer (both documented, DESIGN.md). -/
+  backdrop near the rim (`Refraction`). GPU-only — the renderer composes
+  the frame into a snapshot texture segment by segment, blurring each
+  panel's region *as painted so far* (earlier panels' frost included); the
+  SDL backend draws nothing (glass keeps its tint/rim treatment), and the
+  GPU encoder drops a backdrop recorded inside an offscreen layer (both
+  documented, DESIGN.md). -/
   | backdrop (st : PrimState) (bounds : Rect) (sigma : Float32)
       (refr : Refraction := {})
 

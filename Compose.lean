@@ -208,6 +208,8 @@ public import Compose.Material.TextFieldChrome
 public meta import Compose.Material.TextFieldChrome
 public import Compose.Material.TextField
 public meta import Compose.Material.TextField
+public import Compose.Material.App
+public meta import Compose.Material.App
 public import Compose.Test
 public meta import Compose.Test
 

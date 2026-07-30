@@ -71,22 +71,23 @@ open Compose
 composable def counterUi : Composable Unit := do
   let count ← remember (mutableStateOf (0 : Nat))
   let n ← count.get
-  MaterialTheme do
-    Column (modifier := Modifier.padding (all := 16))
-        (verticalArrangement := .spacedBy 12) do
-      Text "Counter" (style := { fontSize := 22 })
-      TextField (toString n) (fun _ => pure ()) (enabled := false)
-        (modifier := Modifier.testTag "count")
-      Button (count.modify (· + 1)) (Text "Count")
-        (modifier := Modifier.testTag "count-btn")
+  Column (modifier := Modifier.padding (all := 16))
+      (verticalArrangement := .spacedBy 12) do
+    Text "Counter" (style := { fontSize := 22 })
+    TextField (toString n) (fun _ => pure ()) (enabled := false)
+      (modifier := Modifier.testTag "count")
+    Button (count.modify (· + 1)) (Text "Count")
+      (modifier := Modifier.testTag "count-btn")
 
 def main : IO UInt32 :=
-  runApp "compose counter" 320 200 counterUi
+  runMaterialApp "compose counter" 320 200 counterUi
 ```
 
 `remember (mutableStateOf …)` survives recomposition; writing it
 (`count.modify`) re-runs only the scopes that read it. `Modifier.testTag`s are
-handles for the tests below.
+handles for the tests below. `runMaterialApp` installs the Material theme
+around your screen and follows the OS light/dark setting, live — pass
+`theme := .fixed .dark` to pin one instead.
 
 ## Testing
 

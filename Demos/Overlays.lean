@@ -71,19 +71,17 @@ composable def overlaysUi : Composable Unit := do
   let menuOpen ← remember (mutableStateOf false)
   let dialogOpen ← remember (mutableStateOf false)
   let frostedOpen ← remember (mutableStateOf false)
-  MaterialTheme do
-    Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
-      Text "Scroll, menus, dialogs" (style := { fontSize := 22 })
-      listSection scroll
-      Row (horizontalArrangement := .spacedBy 12)
-          (verticalAlignment := .centerVertically) do
-        flavorPicker choice menuOpen
-        dialogSection dialogOpen
-        frostedSection frostedOpen
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+    Text "Scroll, menus, dialogs" (style := { fontSize := 22 })
+    listSection scroll
+    Row (horizontalArrangement := .spacedBy 12)
+        (verticalAlignment := .centerVertically) do
+      flavorPicker choice menuOpen
+      dialogSection dialogOpen
+      frostedSection frostedOpen
 
 end Demos.Overlays
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  Compose.runApp "compose overlays" 480 420 Demos.Overlays.overlaysUi
-    { clearColor := Compose.ColorScheme.light.surface }
+  Compose.runMaterialApp "compose overlays" 480 420 Demos.Overlays.overlaysUi

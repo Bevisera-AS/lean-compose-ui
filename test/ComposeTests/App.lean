@@ -10,7 +10,10 @@ software renderer): first-frame pixels, state-write → dirty → re-render with
 changed pixels (the invalidation→frame wiring end to end), clean steps render
 nothing, synthetic resize events remeasure, quit dispatch, the
 `COMPOSE_MAX_FRAMES`-style pass cap of `runLoop`, and idle blocking (a
-workless step sleeps its wait out instead of spinning).
+workless step sleeps its wait out instead of spinning). The app-level theme
+install lives here too (`MaterialApp` + `syncWindowClearColor`): it is a
+shell property — a live OS theme flip must reach the scheme *and* the
+window's clear color.
 -/
 
 namespace Tests.App
@@ -370,6 +373,63 @@ private def firstFrameHookFires : IO Unit := do
   check "firstFrame: presented again" ((← ctx.framesRendered.get) == 2)
   check "firstFrame: hook stays fired-once" ((← fired.get) == 1)
 
+/-- `MaterialApp (theme := .system)` installs a *live* theme: the ambient
+scheme follows the shell's dark-mode flag across recompositions. The dummy
+video driver reports no system theme, so the flag is driven directly — the
+`systemThemeChanged` handler that writes it is covered by the `Chrome` group.
+`systemDarkState` is process-wide, hence the `finally` restore. -/
+private def materialAppFollowsSystemTheme : IO Unit := do
+  let seen ← IO.mkRef ColorScheme.light
+  let ctx ← boot <| MaterialApp (theme := .system) do
+    seen.set (← MaterialTheme.colorScheme)
+    Box (modifier := Modifier.size 10 10)
+  try
+    check "materialApp: the dummy driver seeds the light scheme"
+      ((← seen.get) == ColorScheme.light)
+    systemDarkState.set true
+    check "materialApp: the theme flip marks the frame dirty" (← ctx.needsFrame.get)
+    let _ ← step ctx cfg
+    check "materialApp: the system flip installs the dark scheme"
+      ((← seen.get) == ColorScheme.dark)
+    systemDarkState.set false
+    let _ ← step ctx cfg
+    check "materialApp: flipping back restores the light scheme"
+      ((← seen.get) == ColorScheme.light)
+  finally
+    systemDarkState.set false
+
+/-- `syncWindowClearColor` keeps `WindowContext.clearColor` on the ambient
+scheme's `surface`: already at bootstrap (composition precedes the first
+render, so no unthemed frame flashes — the probe below clears to the dark
+surface even though `cfg.clearColor` is white), and live across a system
+flip under `.system`. -/
+private def clearColorFollowsTheme : IO Unit := do
+  let ctx ← boot <| MaterialApp (theme := .fixed .dark) do
+    syncWindowClearColor
+    Box (modifier := Modifier.size 10 10)
+  check "clearColor: the first composition retints the clear color"
+    ((← ctx.clearColor.get) == ColorScheme.dark.surface)
+  let _ ← step ctx cfg
+  let bg ← pixel ctx 120 100
+  check s!"clearColor: the first frame cleared to the dark surface ({showColor bg})"
+    (colorNear bg 0x1A 0x1C 0x1E)
+  let ctx2 ← boot <| MaterialApp (theme := .system) do
+    syncWindowClearColor
+    Box (modifier := Modifier.size 10 10)
+  try
+    check "clearColor: light under the dummy driver"
+      ((← ctx2.clearColor.get) == ColorScheme.light.surface)
+    systemDarkState.set true
+    let _ ← step ctx2 cfg
+    check "clearColor: the ref follows the system flip"
+      ((← ctx2.clearColor.get) == ColorScheme.dark.surface)
+    systemDarkState.set false
+    let _ ← step ctx2 cfg
+    check "clearColor: the ref follows the flip back"
+      ((← ctx2.clearColor.get) == ColorScheme.light.surface)
+  finally
+    systemDarkState.set false
+
 /-- The IME-inset bridge end to end: a user event of the window's `imeEvent`
 type publishes the keyboard inset (code = window px), `Modifier.imePadding`
 shrinks content clear of it, and `screenKeyboardHidden` restores. -/
@@ -489,6 +549,8 @@ def run : IO Unit := do
   rendersComposition
   stateWriteRedraws
   firstFrameHookFires
+  materialAppFollowsSystemTheme
+  clearColorFollowsTheme
   imeInsetPadding
   imePaddingSafeAreaOverlap
   bringIntoViewOnFocusAndIme

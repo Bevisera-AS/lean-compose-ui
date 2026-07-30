@@ -180,61 +180,60 @@ composable def circleDrawerUi : Composable Unit := do
     | none     => h.current
   let sel := hp.bind (selectedIndex display)
 
-  MaterialTheme do
-    let colors ← MaterialTheme.colorScheme
-    let canvasDraw : DrawM Unit := do
-      for i in [0:display.size] do
-        let c := display[i]!
-        if sel == some i then
-          DrawScope.drawCircle (.solid Color.gray) c.center c.radius (style := .fill)
-        DrawScope.drawCircle (.solid colors.onSurface) c.center c.radius (style := .stroke 1.5)
-    Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
-        (horizontalAlignment := .centerHorizontally) do
-      Text "CircleDrawer" (style := { fontSize := 22 })
-      Row (horizontalArrangement := .spacedBy 8) do
-        Button (history.modify (·.undo)) (Text "Undo") (enabled := h.canUndo)
-          (modifier := Modifier.testTag "undo")
-        Button (history.modify (·.redo)) (Text "Redo") (enabled := h.canRedo)
-          (modifier := Modifier.testTag "redo")
-      Box (modifier := Modifier.fillMaxWidth |>.height 360
-            |>.background colors.surface
-            |>.border 1 colors.outlineVariant
-            -- Clip after the border: circles near the edge (or outside it,
-            -- after a window shrink) clip to the canvas, the border stays.
-            |>.clip .rectangle
-            |>.onGloballyPositioned canvasRect.set
-            |>.drawBehind canvasDraw
-            |>.pointerInput 0 (detectTapGestures
-                (onTap := some onLeft) (onSecondaryTap := some onRight))
-            |>.pointerInput 1 (detectHover
-                (onEnter := onHover) (onMove := onHover))
-            |>.testTag "canvas")
-      -- Right-click context menu, anchored at the click (window coords).
-      match (← menuAt.get) with
-      | none => pure ()
-      | some (idx, p) =>
-        let r ← canvasRect.get
-        DropdownMenu (expanded := true) (onDismissRequest := menuAt.set none)
-            (offset := ⟨(r.left + p.x).floor.toInt32, (r.top + p.y).floor.toInt32⟩) do
-          DropdownMenuItem "Adjust diameter…" (onClick := do
-            let h ← history.get
-            dialogFor.set (some idx)
-            liveDiam.set ((h.current[idx]?.map (·.diameter)).getD defaultDiameter)
-            menuAt.set none)
-      -- The live diameter-adjust dialog.
-      match dlg with
-      | none => pure ()
-      | some idx =>
-        let center := (h.current[idx]?.map (·.center)).getD .zero
-        Dialog (onDismissRequest := closeDialog) do
-          Surface (modifier := Modifier.width 320) (shape := .rounded 16) do
-            Column (modifier := Modifier.padding (all := 20))
-                (verticalArrangement := .spacedBy 16) do
-              Text s!"Adjust diameter of circle at ({center.x.toUInt32}, {center.y.toUInt32})"
-              Slider live liveDiam.set (valueRange := (4, 160))
-                (modifier := Modifier.fillMaxWidth |>.testTag "diameter")
-              Row (modifier := Modifier.fillMaxWidth)
-                  (horizontalArrangement := Arrangement.«end») do
-                TextButton closeDialog (Text "Done") (modifier := Modifier.testTag "done")
+  let colors ← MaterialTheme.colorScheme
+  let canvasDraw : DrawM Unit := do
+    for i in [0:display.size] do
+      let c := display[i]!
+      if sel == some i then
+        DrawScope.drawCircle (.solid Color.gray) c.center c.radius (style := .fill)
+      DrawScope.drawCircle (.solid colors.onSurface) c.center c.radius (style := .stroke 1.5)
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12)
+      (horizontalAlignment := .centerHorizontally) do
+    Text "CircleDrawer" (style := { fontSize := 22 })
+    Row (horizontalArrangement := .spacedBy 8) do
+      Button (history.modify (·.undo)) (Text "Undo") (enabled := h.canUndo)
+        (modifier := Modifier.testTag "undo")
+      Button (history.modify (·.redo)) (Text "Redo") (enabled := h.canRedo)
+        (modifier := Modifier.testTag "redo")
+    Box (modifier := Modifier.fillMaxWidth |>.height 360
+          |>.background colors.surface
+          |>.border 1 colors.outlineVariant
+          -- Clip after the border: circles near the edge (or outside it,
+          -- after a window shrink) clip to the canvas, the border stays.
+          |>.clip .rectangle
+          |>.onGloballyPositioned canvasRect.set
+          |>.drawBehind canvasDraw
+          |>.pointerInput 0 (detectTapGestures
+              (onTap := some onLeft) (onSecondaryTap := some onRight))
+          |>.pointerInput 1 (detectHover
+              (onEnter := onHover) (onMove := onHover))
+          |>.testTag "canvas")
+    -- Right-click context menu, anchored at the click (window coords).
+    match (← menuAt.get) with
+    | none => pure ()
+    | some (idx, p) =>
+      let r ← canvasRect.get
+      DropdownMenu (expanded := true) (onDismissRequest := menuAt.set none)
+          (offset := ⟨(r.left + p.x).floor.toInt32, (r.top + p.y).floor.toInt32⟩) do
+        DropdownMenuItem "Adjust diameter…" (onClick := do
+          let h ← history.get
+          dialogFor.set (some idx)
+          liveDiam.set ((h.current[idx]?.map (·.diameter)).getD defaultDiameter)
+          menuAt.set none)
+    -- The live diameter-adjust dialog.
+    match dlg with
+    | none => pure ()
+    | some idx =>
+      let center := (h.current[idx]?.map (·.center)).getD .zero
+      Dialog (onDismissRequest := closeDialog) do
+        Surface (modifier := Modifier.width 320) (shape := .rounded 16) do
+          Column (modifier := Modifier.padding (all := 20))
+              (verticalArrangement := .spacedBy 16) do
+            Text s!"Adjust diameter of circle at ({center.x.toUInt32}, {center.y.toUInt32})"
+            Slider live liveDiam.set (valueRange := (4, 160))
+              (modifier := Modifier.fillMaxWidth |>.testTag "diameter")
+            Row (modifier := Modifier.fillMaxWidth)
+                (horizontalArrangement := Arrangement.«end») do
+              TextButton closeDialog (Text "Done") (modifier := Modifier.testTag "done")
 
 end Demos.CircleDrawer

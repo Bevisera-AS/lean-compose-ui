@@ -35,5 +35,4 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "--list" then
     demos.forM IO.println
     return 0
-  runApp "compose-ui demos" 520 560 (galleryUi spawnDemo)
-    { clearColor := ColorScheme.light.surface }
+  runMaterialApp "compose-ui demos" 520 560 (galleryUi spawnDemo)

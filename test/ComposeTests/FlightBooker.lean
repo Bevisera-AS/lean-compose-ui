@@ -17,7 +17,7 @@ open Compose Compose.Test Tests.Harness
 
 /-- Mode switching gates the return field, and validation gates Book. -/
 private def validationAndCombobox : IO Unit := runComposeTest
-  Demos.FlightBooker.flightBookerUi (theme := none)
+  Demos.FlightBooker.flightBookerUi
   (width := 360) (height := 400)
   do
     -- One-way by default: return field disabled; the prefilled date is valid,
@@ -40,7 +40,7 @@ private def validationAndCombobox : IO Unit := runComposeTest
 
 /-- Clicking Book opens an AlertDialog stating the (one-way) selection. -/
 private def bookingDialog : IO Unit := runComposeTest
-  Demos.FlightBooker.flightBookerUi (theme := none)
+  Demos.FlightBooker.flightBookerUi
   (width := 360) (height := 400)
   do
     assertMissing (.role .dialog)

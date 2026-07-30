@@ -11,5 +11,4 @@ one import closure, so each demo's entry point is split out here.
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  Compose.runApp "compose counter" 320 200 Demos.Counter.counterUi
-    { clearColor := Compose.ColorScheme.light.surface }
+  Compose.runMaterialApp "compose counter" 320 200 Demos.Counter.counterUi

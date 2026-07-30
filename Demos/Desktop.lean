@@ -44,7 +44,8 @@ def accentAt (i : Nat) : String × Color := accents[i]! -- callers keep `i < acc
 `ContextMenuArea` canvas, and the shared activity log. Visible state
 (`log`/`accent`) is mutated here; the `on*` hooks perform the window/dialog/quit
 side effects — injected so the MT suite can record them instead of opening OS
-windows. Wrap it in a `MaterialTheme` (the app and `runComposeTest` both do). -/
+windows. Compose it under a theme (`desktopApp` installs one app-wide with
+`MaterialApp`; `runComposeTest` provides its own). -/
 composable def desktopBody
     (log : MutableState (Array String)) (accent : MutableState Nat)
     (onNewWindow : IO Unit) (onAbout : IO Unit) (onQuit : IO Unit) :
@@ -118,8 +119,12 @@ composable def aboutBody (onOk : IO Unit) : Composable Unit :=
 
 /-- The application shell: owns the shared state, declares the main `Window`,
 the state-driven array of extra `Window`s, the About `DialogWindow`, and a
-`Tray`. Run it via `Compose.application` (see `Demos/DesktopMain.lean`). -/
-def desktopApp : Composable Unit := do
+`Tray`. Run it via `Compose.application` (see `Demos/DesktopMain.lean`).
+
+`MaterialApp` installs one theme app-wide — every `Window` inherits it through
+its call-site locals capture — and each window's content opens with
+`syncWindowClearColor` so its background follows the scheme. -/
+def desktopApp : Composable Unit := MaterialApp do
   let log ← remember (mutableStateOf (#[] : Array String))
   let accent ← remember (mutableStateOf 0)
   let windows ← remember (mutableStateOf (#[] : Array Nat))  -- live extra-window ids
@@ -136,16 +141,17 @@ def desktopApp : Composable Unit := do
     log.modify (·.push "About dismissed")
   -- Main window: closing it exits the whole application.
   Window "Desktop" 640 480 (onCloseRequest := do quit; pure true)
-    (MaterialTheme (desktopBody log accent onNewWindow (aboutOpen.set true) quit))
+    (do syncWindowClearColor
+        desktopBody log accent onNewWindow (aboutOpen.set true) quit)
   -- Extra windows, each independently closable.
   for id in ← windows.get do
     keyed id (Window s!"Window #{id}" 340 220
       (onCloseRequest := do windows.modify (·.filter (· != id)); pure true)
-      (MaterialTheme (extraWindowBody id log)))
+      (do syncWindowClearColor; extraWindowBody id log))
   -- About: a modal dialog of the main window.
   if ← aboutOpen.get then
     DialogWindow "About" 360 200 (onCloseRequest := do closeAbout; pure true)
-      (MaterialTheme (aboutBody closeAbout))
+      (do syncWindowClearColor; aboutBody closeAbout)
   -- System tray (best-effort; absent under headless drivers).
   Tray (tooltip := some "compose-ui desktop") (menu := #[
     .item "Add log entry" (log.modify (·.push "Tray action")),

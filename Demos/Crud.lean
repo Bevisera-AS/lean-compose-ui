@@ -177,6 +177,6 @@ composable def crudUi : Composable Unit := do
   let filter ← remember (mutableStateOf "")
   let «name» ← remember (mutableStateOf "")
   let surname ← remember (mutableStateOf "")
-  MaterialTheme (crudBody db filter «name» surname)
+  crudBody db filter «name» surname
 
 end Demos.Crud

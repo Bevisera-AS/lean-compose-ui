@@ -14,5 +14,4 @@ open Compose
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  runApp "compose timer" 420 320 Demos.Timer.timerUi
-    { clearColor := ColorScheme.light.surface }
+  runMaterialApp "compose timer" 420 320 Demos.Timer.timerUi

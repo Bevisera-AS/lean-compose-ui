@@ -14,5 +14,4 @@ open Compose
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  runApp "compose crud" 540 420 Demos.Crud.crudUi
-    { clearColor := ColorScheme.light.surface }
+  runMaterialApp "compose crud" 540 420 Demos.Crud.crudUi

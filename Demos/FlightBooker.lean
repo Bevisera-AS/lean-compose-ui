@@ -133,29 +133,28 @@ composable def flightBookerUi : Composable Unit := do
   let dlg ← dialogOpen.get
   let isReturn := selectedMode == returnLabel
   let bookable := canBook isReturn s r
-  MaterialTheme do
-    Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
-      Text "Book Flight" (style := { fontSize := 22 })
-      ExposedDropdownMenuBox open' expanded.set fun scope => do
-        ExposedDropdownMenuField scope selectedMode (expanded := open')
-          (modifier := Modifier.testTag "mode")
-        let anchor ← scope.anchor
-        DropdownMenu open' (onDismissRequest := expanded.set false) (anchor := anchor)
-            (matchAnchorWidth := true) do
-          for m in [oneWayLabel, returnLabel] do
-            keyed m (DropdownMenuItem m
-              (onClick := do mode.set m; expanded.set false))
-      TextField s startText.set (label := some "Start date")
-        (isError := (parseDate s).isNone) (modifier := Modifier.testTag "start")
-      TextField r returnText.set (enabled := isReturn) (label := some "Return date")
-        (isError := isReturn && (parseDate r).isNone)
-        (modifier := Modifier.testTag "return")
-      Button (dialogOpen.set true) (Text "Book") (enabled := bookable)
-        (modifier := Modifier.testTag "book")
-      if dlg then
-        AlertDialog (onDismissRequest := dialogOpen.set false)
-          (title := "Flight booked")
-          (text := bookMessage isReturn s r)
-          (confirmButton := TextButton (dialogOpen.set false) (Text "OK"))
+  Column (modifier := Modifier.padding (all := 16)) (verticalArrangement := .spacedBy 12) do
+    Text "Book Flight" (style := { fontSize := 22 })
+    ExposedDropdownMenuBox open' expanded.set fun scope => do
+      ExposedDropdownMenuField scope selectedMode (expanded := open')
+        (modifier := Modifier.testTag "mode")
+      let anchor ← scope.anchor
+      DropdownMenu open' (onDismissRequest := expanded.set false) (anchor := anchor)
+          (matchAnchorWidth := true) do
+        for m in [oneWayLabel, returnLabel] do
+          keyed m (DropdownMenuItem m
+            (onClick := do mode.set m; expanded.set false))
+    TextField s startText.set (label := some "Start date")
+      (isError := (parseDate s).isNone) (modifier := Modifier.testTag "start")
+    TextField r returnText.set (enabled := isReturn) (label := some "Return date")
+      (isError := isReturn && (parseDate r).isNone)
+      (modifier := Modifier.testTag "return")
+    Button (dialogOpen.set true) (Text "Book") (enabled := bookable)
+      (modifier := Modifier.testTag "book")
+    if dlg then
+      AlertDialog (onDismissRequest := dialogOpen.set false)
+        (title := "Flight booked")
+        (text := bookMessage isReturn s r)
+        (confirmButton := TextButton (dialogOpen.set false) (Text "OK"))
 
 end Demos.FlightBooker

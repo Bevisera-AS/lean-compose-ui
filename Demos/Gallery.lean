@@ -76,13 +76,12 @@ desktop scrollbar (auto-hides when idle). `launch` is the per-row spawn
 action (production: fork the demo exe; tests: record it). -/
 composable def galleryUi (launch : String → IO Unit) : Composable Unit := do
   let scroll ← rememberScrollState
-  MaterialTheme do
-    Box (modifier := Modifier.fillMaxSize) do
-      Column (modifier := (Modifier.fillMaxSize).padding (all := 16) |>.verticalScroll scroll)
-          (verticalArrangement := .spacedBy 10) do
-        Text "compose-ui demos" (style := { fontSize := 24, weight := .bold })
-        Text "Pick a demo to launch." (style := { fontSize := 14 })
-        demos.forM (demoRow launch)
-      VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
+  Box (modifier := Modifier.fillMaxSize) do
+    Column (modifier := (Modifier.fillMaxSize).padding (all := 16) |>.verticalScroll scroll)
+        (verticalArrangement := .spacedBy 10) do
+      Text "compose-ui demos" (style := { fontSize := 24, weight := .bold })
+      Text "Pick a demo to launch." (style := { fontSize := 14 })
+      demos.forM (demoRow launch)
+    VerticalScrollbar scroll (Modifier.align .topEnd |>.fillMaxHeight)
 
 end Demos.Gallery

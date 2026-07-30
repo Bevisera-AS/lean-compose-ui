@@ -725,10 +725,23 @@ clock only while subscribers exist, so an idle UI consumes no CPU.
 ## Material-lite (`Compose/Material/*.lean`)
 
 - `Theme.lean`: `ColorScheme` (light + dark, Material3-ish roles: primary,
-  onPrimary, surface, onSurface, surfaceVariant, outline, error, …),
-  `Typography` (display/headline/title/body/label × size), `Shapes`
-  (corner radii S/M/L). `MaterialTheme (colors typography shapes) (content)`
-  provides them via CompositionLocals; `theme.colors.primary` style accessors.
+  onPrimary, surface, onSurface, surface-container tiers, outline, error, …;
+  tier/error-container fields have derived defaults, so a custom palette
+  names the core roles and the rest follow), `Typography`
+  (display/headline/title/body/label × size), `Shapes` (corner radii S/M/L),
+  `ThemeTokens` (interaction alphas, elevation scale, `Materials` — which
+  widget classes render `.opaque` vs `.glass (GlassSpec)` — and the scrim
+  opacity), all bundled in `Theme`. `MaterialTheme (content) (theme :=
+  Option Theme)` installs a bundle or per-aspect `Option` overrides;
+  **omitted aspects inherit the ambient theme** (nesting overrides only
+  what it names). Readers: `MaterialTheme.colorScheme/typography/shapes/
+  tokens` (per-aspect recomposition granularity) and `.current` (rebundle).
+  `MaterialTheme` also re-provides `LocalScrimColor` (Ui layer) so `Dialog`
+  scrims follow the scheme, and a themed root keeps
+  `WindowContext.clearColor` (an `IO.Ref` the render/capture paths read) in
+  sync with `colors.surface` — `runMaterialApp`/`MaterialApp` in
+  `Material/App.lean` wire that up, selecting light/dark live via
+  `AppTheme.system`/`isSystemInDarkTheme`.
 - State layers instead of full ripple: hover/press/focus draw a
   `primary`-tinted overlay at Material alpha tokens, animated via
   `animateFloatAsState`; press adds a bounded expanding-circle ripple

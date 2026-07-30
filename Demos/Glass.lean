@@ -65,9 +65,14 @@ composable def panelSection (open' : MutableState Bool) : Composable Unit := do
   let choice ← remember (mutableStateOf (0 : Nat))
   let on ← remember (mutableStateOf true)
   let amount ← remember (mutableStateOf (0.6 : Float32))
+  let field ← remember (mutableStateOf "Frosted text field")
   GlassSurface (shape := .rounded 18) do
     Column (modifier := Modifier.padding (all := 14)) (verticalArrangement := .spacedBy 8) do
       Text "Widgets on glass" (style := { fontSize := 15, weight := .medium })
+      Row (horizontalArrangement := .spacedBy 8) (verticalAlignment := .centerVertically) do
+        Button (pure ()) (Text "Filled")
+        OutlinedButton (pure ()) (Text "Outlined")
+        TextButton (pure ()) (Text "Text")
       Row (horizontalArrangement := .spacedBy 6) (verticalAlignment := .centerVertically) do
         Checkbox (← checked.get) checked.set
         RadioButton ((← choice.get) == 0) (choice.set 0)
@@ -78,11 +83,12 @@ composable def panelSection (open' : MutableState Bool) : Composable Unit := do
       let v ← amount.get
       Slider v amount.set (modifier := Modifier.width 250)
       LinearProgressIndicator (some v) (modifier := Modifier.width 250)
+      TextField (← field.get) field.set (modifier := Modifier.width 250)
       Button (open'.set true) (Text "Open glass dialog")
 
 /-- The demo screen: scrolling backdrop, fixed glass toolbar (top), floating
-glass panel (bottom), and — through the theme seam alone — a glass
-`ElevatedCard` in the scroll. -/
+glass panel (centered, its shadow fully visible), and — through the theme
+seam alone — a glass `ElevatedCard` in the scroll. -/
 composable def glassUi : Composable Unit := do
   let dark ← remember (mutableStateOf false)
   let open' ← remember (mutableStateOf false)
@@ -107,7 +113,7 @@ composable def glassUi : Composable Unit := do
       Box (modifier := Modifier.align .topCenter |>.fillMaxWidth
           |>.padding (horizontal := some 12) (top := some 8)) do
         toolbarSection dark
-      Box (modifier := Modifier.align .bottomCenter |>.padding (bottom := some 14)) do
+      Box (modifier := Modifier.align .center) do
         panelSection open'
       glassDialog open'
 
@@ -115,4 +121,4 @@ end Demos.Glass
 
 /-- Entry point. -/
 def main : IO UInt32 :=
-  Compose.runMaterialApp "liquid glass" 480 560 Demos.Glass.glassUi
+  Compose.runMaterialApp "liquid glass" 480 700 Demos.Glass.glassUi

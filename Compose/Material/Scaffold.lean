@@ -35,7 +35,7 @@ composable def Scaffold (content : Composable Unit := pure ())
     (topBar : Option (Composable Unit) := none)
     (bottomBar : Option (Composable Unit) := none) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Column (modifier := modifier.fillMaxSize |>.background colors.background) do
+  Column (modifier := modifier.fillMaxSize |>.background colors.surface) do
     if let some bar := topBar then bar
     Box (modifier := Modifier.weight 1 |>.fillMaxWidth) do
       content

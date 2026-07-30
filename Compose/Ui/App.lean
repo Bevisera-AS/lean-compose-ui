@@ -203,9 +203,9 @@ theme is global). -/
 initialize systemDarkState : MutableState Bool ← MutableState.create false
 
 /-- Whether the OS is in dark mode right now — live: readers recompose when
-the system theme flips while the app runs. Apps pick their scheme with it:
-`MaterialTheme (colors := if (← isSystemInDarkTheme) then .dark else .light)`.
-Mirrors `androidx.compose.foundation.isSystemInDarkTheme`. -/
+the system theme flips while the app runs. `AppTheme.system` (the
+`runMaterialApp` default) selects the scheme with it; read it directly for
+custom behavior. Mirrors `androidx.compose.foundation.isSystemInDarkTheme`. -/
 def isSystemInDarkTheme : Composable Bool :=
   systemDarkState.get
 

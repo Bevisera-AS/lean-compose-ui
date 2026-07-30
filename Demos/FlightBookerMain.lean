@@ -11,4 +11,4 @@ why the entry point is split out from the library module).
 def main : IO UInt32 :=
   Compose.runApp "compose flight booker" 360 360
     Demos.FlightBooker.flightBookerUi
-    { clearColor := Compose.ColorScheme.light.background }
+    { clearColor := Compose.ColorScheme.light.surface }

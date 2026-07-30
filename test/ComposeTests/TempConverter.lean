@@ -16,7 +16,7 @@ open Compose Compose.Test Tests.Harness
 
 /-- Typing a Celsius value fills Fahrenheit (`100 °C → 212 °F`). -/
 private def celsiusToFahrenheit : IO Unit := runComposeTest
-  Demos.TempConverter.tempConverterUi (theme := false)
+  Demos.TempConverter.tempConverterUi (theme := none)
   (width := 360) (height := 320)
   do
     assertTextEquals (.tag "celsius") ""
@@ -27,7 +27,7 @@ private def celsiusToFahrenheit : IO Unit := runComposeTest
 
 /-- Typing a Fahrenheit value fills Celsius (`212 °F → 100 °C`). -/
 private def fahrenheitToCelsius : IO Unit := runComposeTest
-  Demos.TempConverter.tempConverterUi (theme := false)
+  Demos.TempConverter.tempConverterUi (theme := none)
   (width := 360) (height := 320)
   do
     typeText (.tag "fahrenheit") "212"
@@ -36,7 +36,7 @@ private def fahrenheitToCelsius : IO Unit := runComposeTest
 
 /-- Unparseable input is inert: the sibling field keeps its last good value. -/
 private def invalidIsInert : IO Unit := runComposeTest
-  Demos.TempConverter.tempConverterUi (theme := false)
+  Demos.TempConverter.tempConverterUi (theme := none)
   (width := 360) (height := 320)
   do
     typeText (.tag "celsius") "50"

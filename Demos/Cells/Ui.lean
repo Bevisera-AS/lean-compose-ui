@@ -348,7 +348,7 @@ both scrollbars overlaid. -/
 composable def cellsScreen (st : CellsState) (hs vs : ScrollState) :
     Composable Unit := do
   let colors ← MaterialTheme.colorScheme
-  Column (modifier := Modifier.fillMaxSize |>.background colors.background) do
+  Column (modifier := Modifier.fillMaxSize |>.background colors.surface) do
     formulaBar st
     Row (modifier := Modifier.weight 1 |>.fillMaxWidth) do
       Column (modifier := Modifier.width headerW) do

@@ -4,6 +4,8 @@ public import Compose.Material.Text
 public meta import Compose.Material.Text
 public import Compose.Runtime.Locals
 public meta import Compose.Runtime.Locals
+public import Compose.Ui.Overlay
+public meta import Compose.Ui.Overlay
 
 public section
 
@@ -14,23 +16,36 @@ namespace Compose
 
 The trimmed Material3 theming system from DESIGN.md: `ColorScheme` (light and
 dark baseline palettes), `Typography` (the type-scale roles the widgets
-consume), `Shapes` (corner radii), and the `MaterialTheme` provider that
-carries all three through CompositionLocals — re-providing `LocalTextStyle`
-so `Text` inside a themed subtree defaults to `bodyMedium` in `onSurface`.
+consume), `Shapes` (corner radii), `ThemeTokens` (interaction alphas,
+elevations, surface materials, scrim opacity), and the `Theme` bundle tying
+them together. `MaterialTheme` provides a bundle — or per-aspect overrides of
+the ambient one — through CompositionLocals, re-providing `LocalTextStyle`
+(so `Text` inside a themed subtree defaults to `bodyMedium` in `onSurface`)
+and `LocalScrimColor` (so modal scrims follow the scheme).
 
 Readers use the Compose-M3 spelling: `MaterialTheme.colorScheme`,
-`MaterialTheme.typography`, `MaterialTheme.shapes` (each a `Composable`
-reader rather than a `ThemeData` bundle, so recomposition granularity follows
-what was actually read), plus `LocalContentColor.current` for the preferred
-content color established by `MaterialTheme`/`Surface`.
+`MaterialTheme.typography`, `MaterialTheme.shapes`, `MaterialTheme.tokens`
+(each a `Composable` reader rather than a bundle read, so recomposition
+granularity follows what was actually read); `MaterialTheme.current`
+rebundles the ambient aspects into a `Theme`. `LocalContentColor.current` is
+the preferred content color established by `MaterialTheme`/`Surface`.
+
+Omitted aspects **inherit**: `MaterialTheme (colors := some .dark) do …`
+nested in a themed app keeps the outer typography/shapes/tokens (each
+parameter is an `Option`; `none` reads the ambient value). At the root the
+ambient values are the light-baseline defaults.
 
 `LocalContentColor` lives here rather than in `Surface.lean` (where Compose
 declares it) because `MaterialTheme` seeds it and Lean modules cannot import
 cyclically — a documented, cosmetic deviation.
 -/
 
-/-- The Material3 color roles the framework consumes (trimmed to what the
-M9–M13 widgets need). Mirrors `androidx.compose.material3.ColorScheme`. -/
+/-- The Material3 color roles the framework consumes — trimmed to what the
+widgets need, plus the surface-container tiers custom palettes layer with.
+The tier and error-container fields default to derivations from the core
+roles, so a custom scheme stays small: `{ ColorScheme.light with primary :=
+…, surface := … }` fills the rest coherently. Mirrors
+`androidx.compose.material3.ColorScheme`. -/
 structure ColorScheme where
   primary : Color
   onPrimary : Color
@@ -42,20 +57,30 @@ structure ColorScheme where
   onSurface : Color
   surfaceVariant : Color
   onSurfaceVariant : Color
-  background : Color
-  onBackground : Color
   outline : Color
   outlineVariant : Color
   error : Color
   onError : Color
   scrim : Color
+  /-- Lowest-emphasis raised surface (sheets). Derived when unset. -/
+  surfaceContainerLow : Color := Color.lerp surface onSurface 0.03
+  /-- Mid-emphasis raised surface (menus, toolbars). Derived when unset. -/
+  surfaceContainer : Color := Color.lerp surface onSurface 0.05
+  /-- High-emphasis raised surface (dialogs). Derived when unset. -/
+  surfaceContainerHigh : Color := Color.lerp surface onSurface 0.08
+  /-- Error emphasis container (inline error chips/banners). Derived when
+  unset. -/
+  errorContainer : Color := Color.lerp error onError 0.85
+  /-- Content on `errorContainer`. Derived when unset. -/
+  onErrorContainer : Color := Color.lerp error Color.black 0.5
   deriving Repr, BEq
 
 namespace ColorScheme
 
 /-- The light palette. Material3 baseline structure, reseeded with a blue
 primary in place of the M3 baseline purple; neutrals retinted from M3's
-purple-leaning greys to cool blue-greys to match. -/
+purple-leaning greys to cool blue-greys to match. Tier/error-container
+roles use the derived defaults. -/
 def light : ColorScheme where
   primary := .hex 0xFF386EE0
   onPrimary := .hex 0xFFFFFFFF
@@ -67,8 +92,6 @@ def light : ColorScheme where
   onSurface := .hex 0xFF1A1C1E
   surfaceVariant := .hex 0xFFDFE2EB
   onSurfaceVariant := .hex 0xFF43474E
-  background := .hex 0xFFFCFCFF
-  onBackground := .hex 0xFF1A1C1E
   outline := .hex 0xFF73777F
   outlineVariant := .hex 0xFFC3C6CF
   error := .hex 0xFFB3261E
@@ -77,7 +100,7 @@ def light : ColorScheme where
 
 /-- The dark palette. Material3 baseline structure, reseeded with a blue
 primary (an M3 dark-tone of the light scheme's blue) in place of the M3
-baseline purple. -/
+baseline purple. Tier/error-container roles use the derived defaults. -/
 def dark : ColorScheme where
   primary := .hex 0xFFABC7FF
   onPrimary := .hex 0xFF002E69
@@ -89,8 +112,6 @@ def dark : ColorScheme where
   onSurface := .hex 0xFFE2E2E6
   surfaceVariant := .hex 0xFF43474E
   onSurfaceVariant := .hex 0xFFC3C6CF
-  background := .hex 0xFF1A1C1E
-  onBackground := .hex 0xFFE2E2E6
   outline := .hex 0xFF8D9199
   outlineVariant := .hex 0xFF43474E
   error := .hex 0xFFF2B8B5
@@ -100,7 +121,10 @@ def dark : ColorScheme where
 instance : Inhabited ColorScheme := ⟨light⟩
 
 /-- The `on*` role paired with a scheme color (`primary → onPrimary`, …), or
-`none` for a color that is no scheme role. Mirrors
+`none` for a color that is no scheme role. When a palette reuses one color
+across roles the first match in the order below wins (primary family,
+surface family, error family) — all three surface-container tiers map to
+`onSurface`, so tier collisions are harmless by construction. Mirrors
 `androidx.compose.material3.contentColorFor`. -/
 def contentColorFor (cs : ColorScheme) (c : Color) : Option Color :=
   if c == cs.primary then some cs.onPrimary
@@ -108,15 +132,27 @@ def contentColorFor (cs : ColorScheme) (c : Color) : Option Color :=
   else if c == cs.secondary then some cs.onSecondary
   else if c == cs.surface then some cs.onSurface
   else if c == cs.surfaceVariant then some cs.onSurfaceVariant
-  else if c == cs.background then some cs.onBackground
+  else if c == cs.surfaceContainerLow then some cs.onSurface
+  else if c == cs.surfaceContainer then some cs.onSurface
+  else if c == cs.surfaceContainerHigh then some cs.onSurface
   else if c == cs.error then some cs.onError
+  else if c == cs.errorContainer then some cs.onErrorContainer
   else none
 
 #guard light.contentColorFor light.primary == some light.onPrimary
 #guard light.contentColorFor light.surface == some light.onSurface
+#guard light.contentColorFor light.surfaceContainerHigh == some light.onSurface
 #guard dark.contentColorFor dark.error == some dark.onError
+#guard dark.contentColorFor dark.errorContainer == some dark.onErrorContainer
 #guard light.contentColorFor Color.magenta == none
+-- A palette reusing one color across families resolves to the first family
+-- in the `if`-chain (primary before surface here) — pinned, documented.
+#guard let cs := { light with primary := light.surface }
+       cs.contentColorFor cs.surface == some cs.onPrimary
 #guard light != dark
+-- Derived tiers sit strictly between `surface` and `onSurface`.
+#guard light.surfaceContainer != light.surface
+#guard dark.surfaceContainer != dark.surface
 
 end ColorScheme
 
@@ -162,8 +198,9 @@ structure Shapes where
 
 /-! ## State-layer opacity tokens
 
-The Material3 interaction state-layer opacities (`md.sys.state.*`), consumed
-by `Compose.Material.StateLayer`. -/
+The Material3 interaction state-layer opacities (`md.sys.state.*`). The
+loose `def`s are the baseline values; themes override them through
+`ThemeTokens.interactions`. -/
 
 /-- Hover state-layer opacity. Mirrors `md.sys.state.hover.state-layer-opacity`. -/
 def stateLayerHoverAlpha : Float32 := 0.08
@@ -182,6 +219,95 @@ def disabledContentAlpha : Float32 := 0.38
 `12%` disabled-container token. -/
 def disabledContainerAlpha : Float32 := 0.12
 
+/-! ## Theme tokens: interactions, elevations, materials -/
+
+/-- Interaction-state opacities, consumed by `StateLayer` and the widgets'
+disabled states. Defaults are the Material3 baseline tokens. -/
+structure Interactions where
+  hoverAlpha : Float32 := stateLayerHoverAlpha
+  focusAlpha : Float32 := stateLayerFocusAlpha
+  pressAlpha : Float32 := stateLayerPressAlpha
+  disabledContentAlpha : Float32 := disabledContentAlpha
+  disabledContainerAlpha : Float32 := disabledContainerAlpha
+  deriving Repr, BEq, Inhabited
+
+/-- Elevation (shadow) scale for the floating chrome. Defaults are the
+per-component values the widgets historically hardcoded. -/
+structure Elevations where
+  card : Dp := 1
+  tooltip : Dp := 2
+  /-- Menus, menu-bar dropdowns, and the text-field selection toolbar. -/
+  menu : Dp := 3
+  dialog : Dp := 6
+  deriving Repr, BEq, Inhabited
+
+/-- The specular rim of a glass surface: a thin stroke whose brush is a
+(unit-space) top-to-bottom highlight gradient. -/
+structure RimSpec where
+  width : Dp := 1
+  /-- Unit-space brush (gradient geometry in the unit square, scaled to the
+  surface at draw time). -/
+  brush : Draw.Brush := .solid (Color.white.withAlpha 0.35)
+  deriving Repr, BEq, Inhabited
+
+/-- Everything a translucent "liquid glass" surface draws: a backdrop blur
+radius, a translucent tint wash, a specular rim, and a soft drop shadow.
+Data only — rendering (and light/dark-adaptive defaults) live in
+`Compose.Material.Glass`; brushes are unit-space. -/
+structure GlassSpec where
+  /-- Unit-space translucent tint over the blurred backdrop. -/
+  tint : Draw.Brush := .solid (Color.white.withAlpha 0.45)
+  /-- Backdrop Gaussian blur radius (σ = radius/2 px). -/
+  blurRadius : Dp := 48
+  rim : Option RimSpec := some {}
+  elevation : Dp := 24
+  deriving Repr, BEq, Inhabited
+
+/-- How a themed container renders its background: classic opaque Material,
+or translucent glass per a `GlassSpec`. -/
+inductive SurfaceMaterial where
+  | opaque
+  | glass (spec : GlassSpec := {})
+  deriving Repr, BEq, Inhabited
+
+/-- Which widget classes render which `SurfaceMaterial`. -/
+structure Materials where
+  /-- Floating chrome: menus, dialogs, tooltips, sheets, cards, the
+  selection toolbar. -/
+  chrome : SurfaceMaterial := .opaque
+  /-- Anchored bars: `TopAppBar`, the `MenuBar` strip. -/
+  bars : SurfaceMaterial := .opaque
+  deriving Repr, BEq, Inhabited
+
+/-- The non-color, non-type, non-shape theme aspects: interaction alphas,
+elevation scale, surface materials, and the modal scrim opacity. -/
+structure ThemeTokens where
+  interactions : Interactions := {}
+  elevations : Elevations := {}
+  materials : Materials := {}
+  /-- Opacity applied to `colors.scrim` for modal scrims. -/
+  scrimAlpha : Float32 := 0.32
+  deriving Repr, BEq, Inhabited
+
+/-- A complete theme: the bundle `MaterialTheme` installs and
+`MaterialTheme.current` reads back. Swap wholesale
+(`MaterialTheme (theme := some myTheme) do …`) or override aspects
+(`MaterialTheme (colors := some .dark) do …` — omitted aspects inherit). -/
+structure Theme where
+  colors : ColorScheme := .light
+  typography : Typography := {}
+  shapes : Shapes := {}
+  tokens : ThemeTokens := {}
+  deriving Repr, BEq, Inhabited
+
+/-- The light baseline theme. -/
+def Theme.light : Theme := {}
+
+/-- The dark baseline theme. -/
+def Theme.dark : Theme := { colors := .dark }
+
+#guard Theme.light != Theme.dark
+
 /-! ## CompositionLocals and the provider -/
 
 /-- The ambient `ColorScheme`. Static: a theme swap recomposes the subtree.
@@ -197,6 +323,12 @@ initialize LocalTypography : CompositionLocal Typography ←
 initialize LocalShapes : CompositionLocal Shapes ←
   staticCompositionLocalOf {}
 
+/-- The ambient `ThemeTokens`. Static, one local for the whole group —
+static-local invalidation is provider-subtree-wide on any change, so
+per-aspect splitting buys nothing here. -/
+initialize LocalTokens : CompositionLocal ThemeTokens ←
+  staticCompositionLocalOf {}
+
 /-- The preferred color for content (icons, hand-drawn marks) at this point
 of the tree; seeded by `MaterialTheme` with `onSurface` and re-provided by
 `Surface` to match its container color. Dynamic, so only actual readers
@@ -204,21 +336,6 @@ recompose. Mirrors `androidx.compose.material3.LocalContentColor` (declared
 here, not in `Surface.lean` — see the module docstring). -/
 initialize LocalContentColor : CompositionLocal Color ←
   compositionLocalOf Color.black
-
-/-- Provide the Material theme to `content`: `LocalColorScheme` /
-`LocalTypography` / `LocalShapes`, `LocalContentColor := colors.onSurface`,
-and `LocalTextStyle := typography.bodyMedium` colored `onSurface` (so `Text`
-inside inherits the themed default). Nest with different `colors` for a
-mixed-theme screen. Mirrors `androidx.compose.material3.MaterialTheme`. -/
-def MaterialTheme (content : Composable Unit)
-    (colors : ColorScheme := .light) (typography : Typography := {})
-    (shapes : Shapes := {}) : Composable Unit :=
-  CompositionLocalProvider LocalColorScheme colors <|
-    CompositionLocalProvider LocalTypography typography <|
-      CompositionLocalProvider LocalShapes shapes <|
-        CompositionLocalProvider LocalContentColor colors.onSurface <|
-          CompositionLocalProvider LocalTextStyle
-            { typography.bodyMedium with color := colors.onSurface } content
 
 namespace MaterialTheme
 
@@ -231,7 +348,50 @@ def typography : Composable Typography := LocalTypography.current
 /-- The ambient `Shapes`. Mirrors `MaterialTheme.shapes`. -/
 def shapes : Composable Shapes := LocalShapes.current
 
+/-- The ambient `ThemeTokens`. -/
+def tokens : Composable ThemeTokens := LocalTokens.current
+
+/-- The ambient theme, rebundled from the per-aspect locals. -/
+def current : Composable Theme := do
+  return { colors := ← LocalColorScheme.current
+           typography := ← LocalTypography.current
+           shapes := ← LocalShapes.current
+           tokens := ← LocalTokens.current }
+
 end MaterialTheme
+
+/-- Provide a theme to `content`: the per-aspect CompositionLocals plus
+`LocalScrimColor := colors.scrim` at the theme's scrim opacity,
+`LocalContentColor := colors.onSurface`, and `LocalTextStyle :=
+typography.bodyMedium` colored `onSurface` (so `Text` inside inherits the
+themed default).
+
+`theme` installs a whole bundle; the per-aspect parameters override it (or,
+when `theme` is omitted, the **ambient** theme — so a nested
+`MaterialTheme (colors := some .dark) do …` keeps the outer typography,
+shapes, and tokens). Mirrors `androidx.compose.material3.MaterialTheme`. -/
+def MaterialTheme (content : Composable Unit)
+    (theme : Option Theme := none)
+    (colors : Option ColorScheme := none) (typography : Option Typography := none)
+    (shapes : Option Shapes := none) (tokens : Option ThemeTokens := none) :
+    Composable Unit := do
+  let base ← match theme with
+    | some t => pure t
+    | none => MaterialTheme.current
+  let t : Theme :=
+    { colors := colors.getD base.colors
+      typography := typography.getD base.typography
+      shapes := shapes.getD base.shapes
+      tokens := tokens.getD base.tokens }
+  CompositionLocalProvider LocalColorScheme t.colors <|
+    CompositionLocalProvider LocalTypography t.typography <|
+      CompositionLocalProvider LocalShapes t.shapes <|
+        CompositionLocalProvider LocalTokens t.tokens <|
+          CompositionLocalProvider LocalScrimColor
+            (t.colors.scrim.withAlpha t.tokens.scrimAlpha) <|
+            CompositionLocalProvider LocalContentColor t.colors.onSurface <|
+              CompositionLocalProvider LocalTextStyle
+                { t.typography.bodyMedium with color := t.colors.onSurface } content
 
 end Compose
 

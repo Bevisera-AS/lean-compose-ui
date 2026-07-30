@@ -208,7 +208,8 @@ def focusedNode : TestM (Option LayoutNode) := do
 
 /-- Run a UI test: boot a headless-capable window (`testConfig`: software
 renderer, no vsync), compose `content` under a **fake-clock scheduler** and
-(by default) `MaterialTheme colors`, bring the UI to its first idle frame,
+(by default) the light `MaterialTheme` (pass `theme := some myTheme` for a
+custom one, `none` for no theme), bring the UI to its first idle frame,
 run `body`, and dispose the composition. Time is fully controlled — see
 `awaitIdle`/`advanceTimeBy`/`settle`. Mirrors
 `androidx.compose.ui.test.runComposeUiTest` + `setContent`.
@@ -226,13 +227,14 @@ runComposeTest (counterApp) do
 ```
 -/
 def runComposeTest (content : Composable Unit) (body : TestM Unit)
-    (width : Dp := 480) (height : Dp := 360) (theme : Bool := true)
-    (colors : ColorScheme := .light) (config : AppConfig := testConfig) :
+    (width : Dp := 480) (height : Dp := 360) (theme : Option Theme := some .light)
+    (config : AppConfig := testConfig) :
     IO Unit := do
   let clockRef ← IO.mkRef (0 : UInt64)
   let sched ← Scheduler.create (clock := clockRef.get)
-  let wrapped := if theme then MaterialTheme content (colors := colors)
-                 else content
+  let wrapped := match theme with
+                 | some t => MaterialTheme content (theme := some t)
+                 | none => content
   let ctx ← bootstrap "runComposeTest" width height
     (CompositionLocalProvider LocalScheduler (some sched) wrapped) config
   -- Re-install the input pipeline to keep hold of the `InputManager` (focus

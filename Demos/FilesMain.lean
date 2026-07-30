@@ -17,4 +17,4 @@ open Compose
 (honors `COMPOSE_MAX_FRAMES` for headless smoke). -/
 def main : IO UInt32 :=
   runApp "Files" 640 480 Demos.Files.filesApp
-    { clearColor := ColorScheme.light.background }
+    { clearColor := ColorScheme.light.surface }

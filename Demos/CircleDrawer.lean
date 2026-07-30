@@ -13,4 +13,4 @@ just the executable entry point. Headless:
 /-- Entry point. -/
 def main : IO UInt32 :=
   Compose.runApp "compose circles" 520 480 Demos.CircleDrawer.circleDrawerUi
-    { clearColor := Compose.ColorScheme.light.background }
+    { clearColor := Compose.ColorScheme.light.surface }

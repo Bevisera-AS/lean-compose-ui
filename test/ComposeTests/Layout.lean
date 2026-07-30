@@ -452,7 +452,7 @@ re-clamped offset. -/
 private def sharedScrollStickyHeader : IO Unit := do
   let s ← Compose.ScrollState.create
   let wide ← MutableState.create true -- main content: 1000px wide, then 300px
-  Compose.Test.runComposeTest (theme := false)
+  Compose.Test.runComposeTest (theme := none)
       (Column (Tests.restartable 1 do
         let w : Dp := if ← wide.get then 1000 else 300
         Box (modifier := Modifier.width 200 |>.height 20 |>.horizontalScroll s) do

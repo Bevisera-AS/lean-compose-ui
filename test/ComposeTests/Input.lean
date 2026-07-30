@@ -1366,7 +1366,7 @@ keep the handoff 1:1. -/
 private def nestedDragOriginShift : IO Unit := do
   let outer ← ScrollState.create
   let inner ← ScrollState.create
-  runComposeTest (theme := false)
+  runComposeTest (theme := none)
     (Box do
       Box (modifier := Modifier.size 200 200 |>.verticalScroll outer (overscroll := .none)) do
         Column do

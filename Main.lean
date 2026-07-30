@@ -36,4 +36,4 @@ def main (args : List String) : IO UInt32 := do
     demos.forM IO.println
     return 0
   runApp "compose-ui demos" 520 560 (galleryUi spawnDemo)
-    { clearColor := ColorScheme.light.background }
+    { clearColor := ColorScheme.light.surface }

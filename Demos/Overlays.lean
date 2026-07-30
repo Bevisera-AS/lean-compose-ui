@@ -86,4 +86,4 @@ end Demos.Overlays
 /-- Entry point. -/
 def main : IO UInt32 :=
   Compose.runApp "compose overlays" 480 420 Demos.Overlays.overlaysUi
-    { clearColor := Compose.ColorScheme.light.background }
+    { clearColor := Compose.ColorScheme.light.surface }

@@ -19,7 +19,7 @@ private def rowsExist : IO Unit := do
   let launched ← IO.mkRef (#[] : Array String)
   runComposeTest
     (Demos.Gallery.galleryUi (fun exe => launched.modify (·.push exe)))
-    (theme := false) (width := 520) (height := 640)
+    (theme := none) (width := 520) (height := 640)
     do
       assertExists (.text "compose-ui demos")
       for entry in Demos.Gallery.demos do
@@ -31,7 +31,7 @@ private def clickLaunches : IO Unit := do
   let launched ← IO.mkRef (#[] : Array String)
   runComposeTest
     (Demos.Gallery.galleryUi (fun exe => launched.modify (·.push exe)))
-    (theme := false) (width := 520) (height := 640)
+    (theme := none) (width := 520) (height := 640)
     do
       -- The first rows sit inside the viewport (later rows scroll off and are
       -- unhittable); one click each, checking the recorded exe names.

@@ -11,4 +11,4 @@ why the entry point is split out from the library module).
 def main : IO UInt32 :=
   Compose.runApp "compose temperature converter" 340 300
     Demos.TempConverter.tempConverterUi
-    { clearColor := Compose.ColorScheme.light.background }
+    { clearColor := Compose.ColorScheme.light.surface }

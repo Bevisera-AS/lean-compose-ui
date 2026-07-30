@@ -42,18 +42,19 @@ private def approx (x y : Float32) (tol : Float32 := 0.02) : Bool := (x - y).abs
 /-! ## Theme locals (plain composition) -/
 
 /-- `MaterialTheme` provides scheme/typography/shapes and re-seeds
-`LocalTextStyle`/`LocalContentColor`; a nested dark theme overrides all of
-them for its subtree only. -/
+`LocalTextStyle`/`LocalContentColor`; a nested theme overrides what it
+names — for its subtree only — and **inherits** the rest from the ambient
+theme. -/
 private def themeLocals : IO Unit := do
   let t ← TestTree.create
   let lightCap ← IO.mkRef (none : Option (ColorScheme × TextStyle × Compose.Color × Shapes))
   let darkCap ← IO.mkRef (none : Option (ColorScheme × TextStyle × Compose.Color))
   let afterCap ← IO.mkRef (none : Option ColorScheme)
   let _ ← Composition.create t.applier <| MaterialTheme
-    (typography := { bodyMedium := { fontSize := 16 } }) do
+    (typography := some { bodyMedium := { fontSize := 16 } }) do
     lightCap.set (some (← MaterialTheme.colorScheme, ← LocalTextStyle.current,
       ← LocalContentColor.current, ← MaterialTheme.shapes))
-    MaterialTheme (colors := .dark) do
+    MaterialTheme (colors := some .dark) do
       darkCap.set (some (← MaterialTheme.colorScheme, ← LocalTextStyle.current,
         ← LocalContentColor.current))
     afterCap.set (some (← MaterialTheme.colorScheme))
@@ -67,10 +68,33 @@ private def themeLocals : IO Unit := do
   check "theme: nested dark scheme overrides" (dcs == .dark)
   check "theme: nested dark text style recolored" (dts.color == ColorScheme.dark.onSurface)
   check "theme: nested dark content color" (dcc == ColorScheme.dark.onSurface)
-  check "theme: nested dark typography resets to its own default"
-    (dts.fontSize == (14 : Sp))
+  check "theme: nested dark inherits the outer custom typography"
+    (dts.fontSize == (16 : Sp))
   let some acs ← afterCap.get | throw (IO.userError "after capture missing")
   check "theme: dark subtree does not leak to its sibling" (acs == .light)
+
+/-- The `Theme` bundle installs wholesale, `MaterialTheme.current` reads it
+back, a nested per-aspect override inherits everything it does not name, and
+`LocalScrimColor` follows the scheme at the theme's scrim opacity. -/
+private def themeBundle : IO Unit := do
+  let t ← TestTree.create
+  let custom : Theme :=
+    { colors := .dark
+      typography := { bodyMedium := { fontSize := 17 } }
+      tokens := { scrimAlpha := 0.5, elevations := { dialog := 9 } } }
+  let outerCap ← IO.mkRef (none : Option (Theme × Compose.Color))
+  let innerCap ← IO.mkRef (none : Option Theme)
+  let _ ← Composition.create t.applier <| MaterialTheme (theme := some custom) do
+    outerCap.set (some (← MaterialTheme.current, ← LocalScrimColor.current))
+    MaterialTheme (colors := some .light) do
+      innerCap.set (some (← MaterialTheme.current))
+  let some (outer, oscrim) ← outerCap.get | throw (IO.userError "outer capture missing")
+  check "theme: bundle round-trips through MaterialTheme.current" (outer == custom)
+  check "theme: scrim local follows the scheme at the theme's opacity"
+    (oscrim == custom.colors.scrim.withAlpha 0.5)
+  let some inner ← innerCap.get | throw (IO.userError "inner capture missing")
+  check "theme: nested colors-only override inherits typography and tokens"
+    (inner == { custom with colors := .light })
 
 /-- `Surface` provides the `on*` pair of its container color (and recolors
 the ambient text style); a non-scheme color inherits the ambient content
@@ -538,6 +562,7 @@ private def surfaceShapePixels : IO Unit := do
 /-- The Material group. -/
 def run : IO Unit := do
   themeLocals
+  themeBundle
   surfaceContentColor
   surfaceShapePixels
   buttonBasics

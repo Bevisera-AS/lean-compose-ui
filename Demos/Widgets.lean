@@ -119,7 +119,7 @@ composable def darkSection (checked : MutableState Bool)
     (on : MutableState Bool) : Composable Unit := do
   let c ← checked.get
   let o ← on.get
-  MaterialTheme (colors := .dark) do
+  MaterialTheme (colors := some .dark) do
     Surface (modifier := Modifier.fillMaxWidth) (shape := .rounded 12) do
       Row (modifier := Modifier.padding (all := 12)) (horizontalArrangement := .spacedBy 8)
           (verticalAlignment := .centerVertically) do

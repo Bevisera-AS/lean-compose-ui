@@ -10,14 +10,8 @@ framework, and all [7GUIs tasks](https://eugenkiss.github.io/7guis/tasks)
 as demos.
 
 <p align="center">
-  <img src="docs/screenshots/gallery.png" alt="Gallery launcher" width="30%">
-  <img src="docs/screenshots/widgets.gif" alt="Material widgets" width="30%">
-  <img src="docs/screenshots/cells.png" alt="Cells spreadsheet" width="30%">
-</p>
-<p align="center">
-  <img src="docs/screenshots/crud.png" alt="CRUD demo" width="30%">
-  <img src="docs/screenshots/timer.gif" alt="Timer demo" width="30%">
-  <img src="docs/screenshots/overlays.png" alt="Overlays demo" width="30%">
+  <img src="docs/screenshots/widgets.gif" alt="Material widgets" width="40%">
+  <img src="docs/screenshots/glass.gif" alt="Liquid Glass widgets" width="40%">
 </p>
 
 ## Highlights

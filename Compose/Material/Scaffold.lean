@@ -63,6 +63,7 @@ composable def TopAppBar (title : String) (modifier : Modifier := {})
 composable def IconButton (onClick : IO Unit) (icon : IconVector)
     (modifier : Modifier := {}) (enabled : Bool := true)
     (contentDescription : Option String := none) : Composable Unit := do
+  let interactions := (← MaterialTheme.tokens).interactions
   let source ← rememberInteractionSource
   let clickRef ← rememberUpdatedRef onClick
   let layer ← rememberStateLayer source .circle (enabled := enabled)
@@ -74,7 +75,7 @@ composable def IconButton (onClick : IO Unit) (icon : IconVector)
     |>.then layer
   Box (modifier := m) (contentAlignment := .center) do
     Icon icon (tint := some (if enabled then contentColor
-      else contentColor.withAlpha disabledContentAlpha))
+      else contentColor.withAlpha interactions.disabledContentAlpha))
 
 end Compose
 

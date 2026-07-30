@@ -59,11 +59,12 @@ private def buttonImpl (onClick : IO Unit) (modifier : Modifier) (enabled : Bool
 composable def Button (onClick : IO Unit) (content : Composable Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   buttonImpl onClick modifier enabled
     (container := if enabled then colors.primary
-                  else colors.onSurface.withAlpha disabledContainerAlpha)
+                  else colors.onSurface.withAlpha interactions.disabledContainerAlpha)
     (contentColor := if enabled then colors.onPrimary
-                     else colors.onSurface.withAlpha disabledContentAlpha)
+                     else colors.onSurface.withAlpha interactions.disabledContentAlpha)
     (border := none) (horizontalPadding := 24) content
 
 /-- Outlined button: transparent container, 1 dp `outline` border, `primary`
@@ -71,13 +72,15 @@ content. Mirrors `androidx.compose.material3.OutlinedButton`. -/
 composable def OutlinedButton (onClick : IO Unit) (content : Composable Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   buttonImpl onClick modifier enabled
     (container := .transparent)
     (contentColor := if enabled then colors.primary
-                     else colors.onSurface.withAlpha disabledContentAlpha)
+                     else colors.onSurface.withAlpha interactions.disabledContentAlpha)
     (border := some { width := 1
                       color := if enabled then colors.outline
-                               else colors.onSurface.withAlpha disabledContainerAlpha })
+                               else colors.onSurface.withAlpha
+                                 interactions.disabledContainerAlpha })
     (horizontalPadding := 24) content
 
 /-- Text button: no container or border, `primary` content, tighter padding.
@@ -85,10 +88,11 @@ Mirrors `androidx.compose.material3.TextButton`. -/
 composable def TextButton (onClick : IO Unit) (content : Composable Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   buttonImpl onClick modifier enabled
     (container := .transparent)
     (contentColor := if enabled then colors.primary
-                     else colors.onSurface.withAlpha disabledContentAlpha)
+                     else colors.onSurface.withAlpha interactions.disabledContentAlpha)
     (border := none) (horizontalPadding := 12) content
 
 end Compose

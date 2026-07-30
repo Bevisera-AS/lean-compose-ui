@@ -67,6 +67,7 @@ Mirrors `androidx.compose.material3.Checkbox`. -/
 composable def Checkbox (checked : Bool) (onCheckedChange : Bool → IO Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   let source ← rememberInteractionSource
   let latest ← rememberUpdatedRef (checked, onCheckedChange)
   -- The state-layer circle behind: radius 20 dp on the 40 dp target.
@@ -75,7 +76,7 @@ composable def Checkbox (checked : Bool) (onCheckedChange : Bool → IO Unit)
     (enabled := enabled)
   let fillTarget :=
     if enabled then (if checked then colors.primary else colors.primary.withAlpha 0)
-    else if checked then colors.onSurface.withAlpha disabledContentAlpha
+    else if checked then colors.onSurface.withAlpha interactions.disabledContentAlpha
     else Color.transparent
   let fill ← animateColorAsState fillTarget (.tween 150 0 .fastOutSlowIn)
   let fraction ← animateFloatAsState (if checked then 1.0 else 0.0)
@@ -83,7 +84,7 @@ composable def Checkbox (checked : Bool) (onCheckedChange : Bool → IO Unit)
   let fillNow ← fill.get
   let fractionNow ← fraction.get
   let borderColor := if enabled then colors.onSurfaceVariant
-                     else colors.onSurface.withAlpha disabledContentAlpha
+                     else colors.onSurface.withAlpha interactions.disabledContentAlpha
   let markColor := if enabled then colors.onPrimary else colors.surface
   let m := modifier
     |>.size 40 40

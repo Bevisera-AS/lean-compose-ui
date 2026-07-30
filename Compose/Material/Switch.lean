@@ -53,6 +53,7 @@ the *new* value. Mirrors `androidx.compose.material3.Switch`. -/
 composable def Switch (checked : Bool) (onCheckedChange : Bool → IO Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   let source ← rememberInteractionSource
   let latest ← rememberUpdatedRef (checked, onCheckedChange)
   let values ← rememberStateLayerValues source
@@ -64,8 +65,8 @@ composable def Switch (checked : Bool) (onCheckedChange : Bool → IO Unit)
     (.tween 150 0 .fastOutSlowIn)
   let trackTarget :=
     if enabled then (if checked then colors.primary else colors.surfaceVariant)
-    else if checked then colors.onSurface.withAlpha disabledContainerAlpha
-    else colors.surfaceVariant.withAlpha disabledContainerAlpha
+    else if checked then colors.onSurface.withAlpha interactions.disabledContainerAlpha
+    else colors.surfaceVariant.withAlpha interactions.disabledContainerAlpha
   let track ← animateColorAsState trackTarget (.tween 150 0 .fastOutSlowIn)
   let trackNow ← track.get
   let thumbXNow ← thumbX.get
@@ -73,7 +74,7 @@ composable def Switch (checked : Bool) (onCheckedChange : Bool → IO Unit)
   let fractionNow ← fraction.get
   let thumbColor :=
     if enabled then (if checked then colors.onPrimary else colors.outline)
-    else colors.onSurface.withAlpha disabledContentAlpha
+    else colors.onSurface.withAlpha interactions.disabledContentAlpha
   let borderColor := if enabled then colors.outline else Color.transparent
   let haloAlpha := if enabled then values.layerAlpha else 0
   let m := modifier

@@ -27,10 +27,11 @@ composable def FilterChip (selected : Bool) (onClick : IO Unit)
   let colors ← MaterialTheme.colorScheme
   let typo ← MaterialTheme.typography
   let shape := (← MaterialTheme.shapes).small
+  let interactions := (← MaterialTheme.tokens).interactions
   let source ← rememberInteractionSource
   let clickRef ← rememberUpdatedRef onClick
   let contentColor :=
-    if !enabled then colors.onSurface.withAlpha disabledContentAlpha
+    if !enabled then colors.onSurface.withAlpha interactions.disabledContentAlpha
     else if selected then colors.onPrimaryContainer
     else colors.onSurfaceVariant
   let layer ← rememberStateLayer source shape (tint := some contentColor)

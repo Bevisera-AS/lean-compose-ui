@@ -210,6 +210,7 @@ layer); Enter activates the highlighted item. Mirrors
 composable def DropdownMenuItem (text : String) (onClick : IO Unit)
     (enabled : Bool := true) (modifier : Modifier := {}) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   let menu? ← LocalMenuState.current
   let id ← remember freshId
   let actionRef ← rememberUpdatedRef onClick
@@ -244,7 +245,8 @@ composable def DropdownMenuItem (text : String) (onClick : IO Unit)
     |>.padding (horizontal := some 12) (vertical := some 8)
   Box (modifier := m) (contentAlignment := .centerStart) do
     Text text (color := some (if enabled then colors.onSurface
-                              else colors.onSurface.withAlpha disabledContentAlpha))
+                              else colors.onSurface.withAlpha
+                                interactions.disabledContentAlpha))
 
 /-- Receiver scope of `ExposedDropdownMenuBox` content: the captured anchor
 rect (window coordinates) and the expansion toggle. Mirrors

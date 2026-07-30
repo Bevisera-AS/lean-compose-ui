@@ -582,6 +582,7 @@ composable def ValueTextField (value : TextFieldValue)
     (singleLine : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
   let shape := (← MaterialTheme.shapes).extraSmall
+  let interactions := (← MaterialTheme.tokens).interactions
   let ambient ← LocalTextStyle.current
   let density ← LocalDensity.current
   let window? ← LocalWindowContext.current
@@ -631,16 +632,16 @@ composable def ValueTextField (value : TextFieldValue)
     let cellLabel ← remember (IO.mkRef (none : Option TextLayout))
     -- Colors and styles.
     let textColor := if enabled then colors.onSurface
-                     else colors.onSurface.withAlpha disabledContentAlpha
+                     else colors.onSurface.withAlpha interactions.disabledContentAlpha
     let outlineColor :=
-      if !enabled then colors.onSurface.withAlpha disabledContainerAlpha
+      if !enabled then colors.onSurface.withAlpha interactions.disabledContainerAlpha
       else if isError then colors.error
       else if focused then colors.primary
       else colors.outline
     let outlineWidth : Dp := if focused && enabled then 2 else 1
     let caretColor := if isError then colors.error else colors.primary
     let labelColor :=
-      if !enabled then colors.onSurface.withAlpha disabledContentAlpha
+      if !enabled then colors.onSurface.withAlpha interactions.disabledContentAlpha
       else if isError then colors.error
       else if focused then colors.primary
       else colors.onSurfaceVariant

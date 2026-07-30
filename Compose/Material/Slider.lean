@@ -170,6 +170,7 @@ composable def Slider (value : Float32) (onValueChange : Float32 → IO Unit)
     (steps : Nat := 0) (enabled : Bool := true)
     (onValueChangeFinished : IO Unit := pure ()) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   let density ← LocalDensity.current
   let source ← rememberInteractionSource
   -- Optimistic latest-value ref (the TextField pattern): re-synced with the
@@ -205,9 +206,9 @@ composable def Slider (value : Float32) (onValueChange : Float32 → IO Unit)
       return true
     | none => return false
   let active := if enabled then colors.primary
-                else colors.onSurface.withAlpha disabledContentAlpha
+                else colors.onSurface.withAlpha interactions.disabledContentAlpha
   let inactive := if enabled then colors.surfaceVariant
-                  else colors.onSurface.withAlpha disabledContainerAlpha
+                  else colors.onSurface.withAlpha interactions.disabledContainerAlpha
   let haloAlpha := if enabled then values.layerAlpha else 0
   let m := modifier
     |>.height 40

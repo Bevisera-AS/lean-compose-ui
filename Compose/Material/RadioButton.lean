@@ -39,6 +39,7 @@ caller, as in Compose). Mirrors `androidx.compose.material3.RadioButton`. -/
 composable def RadioButton (selected : Bool) (onClick : IO Unit)
     (modifier : Modifier := {}) (enabled : Bool := true) : Composable Unit := do
   let colors ← MaterialTheme.colorScheme
+  let interactions := (← MaterialTheme.tokens).interactions
   let source ← rememberInteractionSource
   let clickRef ← rememberUpdatedRef onClick
   let layer ← rememberStateLayer source .circle
@@ -48,9 +49,9 @@ composable def RadioButton (selected : Bool) (onClick : IO Unit)
   let dotRadius ← animateDpAsState (if selected then 5 else 0) (.tween 150 0 .fastOutSlowIn)
   let dotNow ← dotRadius.get
   let active := if enabled then colors.primary
-                else colors.onSurface.withAlpha disabledContentAlpha
+                else colors.onSurface.withAlpha interactions.disabledContentAlpha
   let inactive := if enabled then colors.onSurfaceVariant
-                  else colors.onSurface.withAlpha disabledContentAlpha
+                  else colors.onSurface.withAlpha interactions.disabledContentAlpha
   let m := modifier
     |>.size 40 40
     |>.semantics (role := some .radioButton) (selected := some selected)

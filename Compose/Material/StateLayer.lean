@@ -46,17 +46,24 @@ otherwise; see `Modifier.clickable`'s docstring).
 -/
 
 /-- Target state-layer alpha for the raised interaction flags: the additive
-sum of the Material3 hover/focus/press tokens (see the module docstring). -/
-def stateLayerTargetAlpha (hovered focused pressed : Bool) : Float32 :=
-  (if hovered then stateLayerHoverAlpha else 0)
-    + (if focused then stateLayerFocusAlpha else 0)
-    + (if pressed then stateLayerPressAlpha else 0)
+sum of the hover/focus/press tokens (see the module docstring). Pure, so the
+alphas arrive as a parameter — composable callers pass the themed
+`(← MaterialTheme.tokens).interactions`; the default is the Material3
+baseline. -/
+def stateLayerTargetAlpha (hovered focused pressed : Bool)
+    (interactions : Interactions := {}) : Float32 :=
+  (if hovered then interactions.hoverAlpha else 0)
+    + (if focused then interactions.focusAlpha else 0)
+    + (if pressed then interactions.pressAlpha else 0)
 
 #guard stateLayerTargetAlpha false false false == 0
 #guard stateLayerTargetAlpha true false false == stateLayerHoverAlpha
 #guard stateLayerTargetAlpha false true false == stateLayerFocusAlpha
 #guard stateLayerTargetAlpha true true true
         == stateLayerHoverAlpha + stateLayerFocusAlpha + stateLayerPressAlpha
+-- Themed alphas replace the baseline wholesale.
+#guard stateLayerTargetAlpha true false true { hoverAlpha := 0.5, pressAlpha := 0.25 }
+        == 0.75
 
 /-- Distance from `p` to the farthest corner of `r` — the ripple radius that
 covers the whole shape from the press position. Mirrors
@@ -131,10 +138,12 @@ Widgets drawing their own halo (`Switch`, `Slider`) consume this directly;
 everything else uses `rememberStateLayer`. -/
 def rememberStateLayerValues (source : InteractionSource) :
     Composable StateLayerValues := do
+  let interactions := (← MaterialTheme.tokens).interactions
   let hovered ← source.hovered.get
   let focused ← source.focused.get
   let pressed ← source.pressed.get
-  let layerAlpha ← animateFloatAsState (stateLayerTargetAlpha hovered focused pressed)
+  let layerAlpha ← animateFloatAsState
+    (stateLayerTargetAlpha hovered focused pressed interactions)
     (.tween 150 0 .fastOutSlowIn)
   let ripple ← remember RippleAnim.create
   let pressCenter ← remember (IO.mkRef Offset.zero)
@@ -142,7 +151,7 @@ def rememberStateLayerValues (source : InteractionSource) :
   LaunchedEffect pressed do
     if pressed then
       ripple.progress.snapTo 0
-      ripple.alpha.snapTo stateLayerPressAlpha
+      ripple.alpha.snapTo interactions.pressAlpha
       ripple.progress.animateTo 1 (.tween 300 0 .fastOutSlowIn)
     else
       unless (← ripple.alpha.peek) == 0 do

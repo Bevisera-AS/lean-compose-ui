@@ -31,9 +31,10 @@ changes to the input pipeline.
   the same entry) and Esc (an app-level key-handler registration, innermost
   overlay first) call `onDismissRequest`. Mirrors
   `androidx.compose.ui.window.Popup`.
-* `Dialog` is the modal variant: a full-window scrim (black at 32 %) that
-  swallows every pointer event below it, content centered, Esc/scrim-click
-  dismiss. Mirrors `androidx.compose.ui.window.Dialog` (in-window).
+* `Dialog` is the modal variant: a full-window scrim (`LocalScrimColor`,
+  black at 32 % by default) that swallows every pointer event below it,
+  content centered, Esc/scrim-click dismiss. Mirrors
+  `androidx.compose.ui.window.Dialog` (in-window).
 
 Overlay content composes under the `CompositionLocal` scope captured at the
 owner's call site, so it sees the theme/density/scheduler of where the
@@ -42,10 +43,18 @@ owner's call site, so it sees the theme/density/scheduler of where the
 every composition, so the popup recomposes with its caller.
 -/
 
-/-- The dialog scrim: black at the Material 32 % scrim opacity (both
-baseline schemes use a black scrim; `Dialog` lives below the theme layer, so
-the color is fixed here). -/
+/-- The default dialog scrim: black at the Material 32 % scrim opacity (both
+baseline schemes use a black scrim). Seeds `LocalScrimColor`; the theme layer
+re-provides it from the ambient scheme. -/
 def dialogScrimColor : Color := Color.black.withAlpha 0.32
+
+/-- The ambient modal-scrim color, consumed by `Dialog` (and the Material
+modal widgets). `Overlay` sits below the theme layer, so the themed value is
+provided by `MaterialTheme` (`colors.scrim` at the theme's scrim opacity);
+the default matches the historical fixed scrim. Static: a scrim change
+recomposes the providing subtree. -/
+initialize LocalScrimColor : CompositionLocal Color ←
+  staticCompositionLocalOf dialogScrimColor
 
 /-! ## Position resolution -/
 
@@ -352,18 +361,19 @@ def Popup (content : Composable Unit := pure ())
     (scrimColor := none) (modal := false) interactive content
     (blurBehind := blurBehind) (preferAbove := preferAbove)
 
-/-- A modal overlay: a full-window scrim (black at 32 %) swallows every
-pointer event below it, `content` is centered, and Esc or a scrim click
-calls `onDismissRequest`. `blurBehind` Gaussian-blurs the base content
-behind the scrim while open — the frosted-dialog look (GPU backend; the
-SDL software backend keeps the plain scrim). Mirrors
-`androidx.compose.ui.window.Dialog` (in-window; keyboard focus is not
-scoped to the dialog — a documented M10 limitation). -/
+/-- A modal overlay: a full-window scrim (`LocalScrimColor`, black at 32 %
+by default) swallows every pointer event below it, `content` is centered,
+and Esc or a scrim click calls `onDismissRequest`. `blurBehind`
+Gaussian-blurs the base content behind the scrim while open — the
+frosted-dialog look (GPU backend; the SDL software backend keeps the plain
+scrim). Mirrors `androidx.compose.ui.window.Dialog` (in-window; keyboard
+focus is not scoped to the dialog — a documented M10 limitation). -/
 def Dialog (onDismissRequest : IO Unit) (content : Composable Unit := pure ())
-    (blurBehind : Dp := 0) : Composable Unit :=
+    (blurBehind : Dp := 0) : Composable Unit := do
+  let scrim ← LocalScrimColor.current
   overlayImpl (anchor := none) (alignment := .center) (offset := ⟨0, 0⟩)
     (onDismissRequest := some onDismissRequest) (focusable := true)
-    (onKeyEvent := fun _ => pure false) (scrimColor := some dialogScrimColor)
+    (onKeyEvent := fun _ => pure false) (scrimColor := some scrim)
     (modal := true) (interactive := true) content (blurBehind := blurBehind)
 
 end Compose

@@ -103,7 +103,9 @@ structure AppConfig where
   vsync-requesting window paces the shared loop (`electVSyncPacer`); the others
   present immediately to avoid serializing vblank waits. -/
   vsync : Bool := true
-  /-- Every frame starts from this color. -/
+  /-- Every frame starts from this color (the initial value of
+  `WindowContext.clearColor`; a themed root keeps that ref in sync with the
+  ambient scheme, overriding this). -/
   clearColor : Color := Color.white
   /-- Runs on `windowCloseRequested`; return `true` to quit (the default).
   Mirrors `onCloseRequest`. -/
@@ -291,7 +293,8 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       bringIntoViewPending := ← IO.mkRef false
       renderFailures := ← IO.mkRef 0
       frameProbe := ← IO.mkRef none
-      imeSyncHook := ← IO.mkRef none }
+      imeSyncHook := ← IO.mkRef none
+      clearColor := ← IO.mkRef config.clearColor }
   -- Layout half of the invalidation wiring: any dirty walk reaching the root
   -- schedules a frame.
   ctx.root.setOnRequestRemeasure ctx.requestFrame
@@ -524,7 +527,7 @@ def renderFrame (ctx : WindowContext) (config : AppConfig) (mayBlock : Bool := t
   -- genuinely gone. The counter resets on every successful render.
   let presented? ←
     try
-      let p ← ctx.backend.render config.clearColor list mayBlock
+      let p ← ctx.backend.render (← ctx.clearColor.get) list mayBlock
       ctx.renderFailures.set 0
       pure (some p)
     catch e =>
@@ -870,7 +873,7 @@ backend={repr ctx.backend.kind}"
     -- Unconditional: `awaitFrame` subscribers must see every frame's nanos,
     -- and a tick is what makes the next one due.
     ctx.scheduler.tickFrame now
-    out.write (← ctx.backend.capture capCfg.clearColor (← recordFrame ctx) w h)
+    out.write (← ctx.backend.capture (← ctx.clearColor.get) (← recordFrame ctx) w h)
   (← ctx.composition).dispose
   ctx.backend.dispose
 

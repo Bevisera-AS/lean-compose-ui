@@ -298,6 +298,12 @@ structure WindowContext where
   /-- The app→IME sync hook (see `ImeSync`); installed by the embedding
   platform layer, fired by the focused `TextField`'s draw pass. -/
   imeSyncHook : IO.Ref (Option ImeSync)
+  /-- The color every frame clears to. Seeded from `AppConfig.clearColor` by
+  `bootstrapWindow`; a themed root (`MaterialApp`/`runMaterialApp`) rewrites
+  it each composition so the clear tracks the ambient scheme's `surface` —
+  live theme flips retint without a config round-trip, and no stale-color
+  frame can flash (composition runs before the first render). -/
+  clearColor : IO.Ref Color
 
 /-- The ambient `WindowContext` (`none` outside a window). Treat as opaque
 plumbing — for framework internals (overlays in M10, IME in M6), not app

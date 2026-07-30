@@ -311,7 +311,11 @@ fragment float4 tex_fragment(TexOut in [[stage_in]],
 /-- The layer-composite pipeline's MSL: same vertex layout as the glyph
 pipeline, but the sampled texel is an offscreen layer's *premultiplied*
 pixels — the fragment scales all four channels by the group alpha
-(`color.a`) and must not re-premultiply. -/
+(`color.a`) and must not re-premultiply. The `LayerClip` fragment uniform
+(pushed per composite draw, `packLayerClip`) masks the composite against
+the record-site rounded clip — the huge-rect sentinel when unmasked — with
+the quad fragment's exact coverage term; `in.pos` (`gl_FragCoord` in the
+GLSL twin) supplies the pass-coordinate pixel position. -/
 private def layerMsl : String := mslPrelude ++ "
 struct TexIn {
   float2 pos   [[attribute(0)]];
@@ -325,6 +329,11 @@ struct TexOut {
   float4 color;
 };
 
+struct LayerClip {
+  float4 bounds;
+  float4 radii;
+};
+
 vertex TexOut layer_vertex(TexIn in [[stage_in]],
                            constant Globals& g [[buffer(0)]]) {
   TexOut out;
@@ -335,9 +344,11 @@ vertex TexOut layer_vertex(TexIn in [[stage_in]],
 }
 
 fragment float4 layer_fragment(TexOut in [[stage_in]],
+                               constant LayerClip& lc [[buffer(0)]],
                                texture2d<float> layer [[texture(0)]],
                                sampler smp [[sampler(0)]]) {
-  return layer.sample(smp, in.uv) * in.color.a;
+  float clip = saturate(0.5 - rrect_sdf(in.pos.xy, lc.bounds, lc.radii));
+  return layer.sample(smp, in.uv) * (in.color.a * clip);
 }
 "
 
@@ -496,9 +507,35 @@ def packStretchParams (sx sy uMax vMax : Float32) : ByteArray := Id.run do
     b := pushF32 b v
   return b
 
+/-- The 32-byte `LayerClip` fragment uniform (two std140 `vec4`s): the
+composite's rounded-clip bounds as `(x, y, w, h)` plus per-corner radii
+`(tl, tr, br, bl)` in the compositing pass's px, elliptical corners
+degrading to the x radius like every quad mask. `none` packs the huge-rect
+sentinel (the `QuadInstance` unmasked-clip convention) — coverage 1
+everywhere a composite can reach. -/
+def packLayerClip (rr : Option Compose.RoundRect) : ByteArray := Id.run do
+  let vals : List Float32 := match rr with
+    | some rr =>
+      let rr := rr.normalize
+      [rr.rect.left, rr.rect.top, rr.rect.width, rr.rect.height,
+       rr.topLeft.x, rr.topRight.x, rr.bottomRight.x, rr.bottomLeft.x]
+    | none => [-1e8, -1e8, 2e8, 2e8, 0, 0, 0, 0]
+  let mut b := ByteArray.emptyWithCapacity 32
+  for v in vals do
+    b := pushF32 b v
+  return b
+
 #guard (packBlurVert 256 128 80 40 0.3125 0.3125).size == 32
 #guard (packBlurParams 0.00390625 0 4 12).size == 16
 #guard (packStretchParams 0.032 0 0.8 0.625).size == 16
+#guard (packLayerClip none).size == 32
+#guard (packLayerClip (some (.circular ⟨10, 20, 50, 60⟩ 8))).size == 32
+-- Bounds pack as (x, y, w, h); the sentinel starts with the huge rect.
+#guard (packLayerClip (some (.circular ⟨10, 20, 50, 60⟩ 8)))
+        == (pushF32 (pushF32 (pushF32 (pushF32 (pushF32 (pushF32 (pushF32 (pushF32
+              ByteArray.empty 10) 20) 40) 40) 8) 8) 8) 8)
+#guard (packLayerClip none).extract 0 16
+        == (pushF32 (pushF32 (pushF32 (pushF32 ByteArray.empty (-1e8)) (-1e8)) 2e8) 2e8)
 
 /-- Premultiplied-alpha blending — the one blend state every pipeline uses. -/
 private def premulBlend : ColorTargetBlendState :=
@@ -614,8 +651,10 @@ def Pipelines.create (dev : Device) (target : TextureFormat) : IO Pipelines := d
   glyphVs.release
   glyphFs.release
   -- layer: the glyph vertex layout with the premultiplied-composite fragment
+  -- (its `LayerClip` fragment uniform is pushed per composite/image draw)
   let layerVs ← shader layerMsl texVertSpv "layer_vertex" .vertex (uniforms := 1)
-  let layerFs ← shader layerMsl layerFragSpv "layer_fragment" .fragment (samplers := 1)
+  let layerFs ← shader layerMsl layerFragSpv "layer_fragment" .fragment
+    (samplers := 1) (uniforms := 1)
   let layer ← dev.createGraphicsPipeline
     { vertexShader := layerVs, fragmentShader := layerFs
       vertexInputState :=

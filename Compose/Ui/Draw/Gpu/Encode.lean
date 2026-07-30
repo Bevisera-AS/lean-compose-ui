@@ -88,6 +88,13 @@ structure LayerEnc where
   normalized): the composite draws through the stretch pipeline, which warps
   the UV before sampling — no extra pass, no spread. -/
   stretch : Option (Float32 × Float32) := none
+  /-- The ambient rounded clip at the layer's record site, in the
+  compositing pass's coordinates: the composite draw masks against it in the
+  layer fragment (`LayerClip` uniform — exact rounded clipping of blurred/
+  translucent composites; `none` pushes the unmasked huge-rect sentinel).
+  Stretched composites ignore it (the stretch pipeline has its own fragment
+  uniform; overscroll never records under a rounded clip in production). -/
+  rounded : Option RoundRect := none
   /-- The layer's own render-pass commands. -/
   cmds : Array DrawCmd
   deriving Repr, BEq, Inhabited
@@ -571,6 +578,7 @@ private partial def encodePrim (texts : Array ResolvedRun) (images : Array Nat)
           { bounds := ⟨l, t, rt, bt⟩, alpha := props.alpha * extraAlpha
             transform, sigma := match effect with | .blur sg => sg | _ => 0
             stretch := match effect with | .stretch sx sy => some (sx, sy) | _ => none
+            rounded := s.rounded.map (·.translate shift)
             cmds := st.cmds } }
 
 /-- Encode a display list against its resolved text runs and image texture
@@ -723,6 +731,25 @@ def encode (list : DisplayList) (texts : Array ResolvedRun)
   r.layers.size == 2
     && (r.layers[0]!.transform.getD .identity).mapOffset ⟨1, 1⟩ == ⟨1, 1⟩
     && (r.layers[0]!.transform.getD .identity).mapOffset ⟨2, 1⟩ == ⟨3, 1⟩
+-- A rounded clip enclosing an offscreen layer rides the LayerEnc (the
+-- composite's in-shader mask); an unclipped layer records `none`.
+#guard
+  let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8
+  let st : PrimState := { clip := some ⟨0, 0, 40, 40⟩, rounded := some rr }
+  let r := encode #[.layer st ⟨0, 0, 40, 40⟩ { alpha := 0.5 }
+    #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]] #[]
+  r.layers.size == 1 && r.layers[0]!.rounded == some rr
+    && (encode #[.layer {} ⟨0, 0, 40, 40⟩ { alpha := 0.5 }
+          #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]] #[]).layers[0]!.rounded == none
+-- Inside an enclosing layer pass the rounded mask shifts into that pass's
+-- coordinates (outer bounds ⟨0,0,8,8⟩ inflate to origin (−1,−1), so the
+-- inner mask translates by +1).
+#guard
+  let rr := RoundRect.circular ⟨0, 0, 4, 4⟩ 2
+  let inner : Prim := .layer { rounded := some rr } ⟨0, 0, 4, 4⟩ { alpha := 0.5 }
+    #[.rect {} .red ⟨0, 0⟩ ⟨4, 4⟩]
+  let r := encode #[.layer {} ⟨0, 0, 8, 8⟩ { alpha := 0.5 } #[inner]] #[]
+  r.layers.size == 2 && r.layers[0]!.rounded == some (rr.translate ⟨1, 1⟩)
 -- The ambient rounded clip becomes the quad's in-shader mask.
 #guard
   let rr := RoundRect.circular ⟨0, 0, 40, 40⟩ 8

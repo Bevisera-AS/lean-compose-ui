@@ -380,6 +380,13 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
   let mut atlas : Option Nat := none
   let mut boundLayer : Option (Nat × Bool) := none
   let mut boundImage : Option (Nat × Bool) := none
+  -- What the layer pipeline's `LayerClip` fragment uniform currently holds:
+  -- `none` = unknown (nothing pushed yet this replay, or clobbered by a
+  -- stretch draw's `StretchParams` — same slot 0), `some rc` = `rc` pushed
+  -- (`some none` = the unmasked sentinel). Fresh per replay entry: push
+  -- uniforms persist on the command buffer across passes, so a new pass
+  -- never trusts the slot's previous content.
+  let mut pushedClip : Option (Option RoundRect) := none
   for cmd in cmds do
     let want := match cmd with
       | .quads _ _ s | .mesh _ _ s | .glyphs _ _ _ s | .shadows _ _ s | .layer _ _ s
@@ -449,6 +456,7 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
             cb.pushFragmentUniformData 0 (packStretchParams sx sy
               (l.bounds.width / Float32.ofNat lt.w.toNat)
               (l.bounds.height / Float32.ofNat lt.h.toNat))
+            pushedClip := none    -- StretchParams clobbered slot 0
         rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
       | none =>
         if kind != 4 then
@@ -464,10 +472,16 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
             rp.bindFragmentSamplers 0
               #[{ texture := lt.tex, sampler := if linear then r.samplerLinear else r.sampler }]
             boundLayer := some (idx, linear)
+        -- The composite's rounded mask (the sentinel when unmasked).
+        let rc := layers[idx]?.bind (·.rounded)
+        if pushedClip != some rc then
+          cb.pushFragmentUniformData 0 (packLayerClip rc)
+          pushedClip := some rc
         rp.drawIndexedPrimitives 6 1 (UInt32.ofNat (6 * idx))
     | .image first count tex linear _ =>
       -- Rides the layer pipeline (premultiplied sample × alpha) with its own
-      -- vertex/index buffers and a per-command sampler choice.
+      -- vertex/index buffers, a per-command sampler choice, and the unmasked
+      -- `LayerClip` sentinel (images clip by scissor only).
       if kind != 5 then
         rp.bindPipeline r.pipelines.layer
         if let some s := bufs.imageV then
@@ -476,6 +490,9 @@ private def replay (r : GpuRenderer) (rp : RenderPass) (cb : CommandBuffer)
           rp.bindIndexBuffer { buffer := s.buffer } .u32
         kind := 5
         boundImage := none
+      if pushedClip != some none then
+        cb.pushFragmentUniformData 0 (packLayerClip none)
+        pushedClip := some none
       if boundImage != some (tex, linear) then
         if let some t := imageTexs[tex]? then
           rp.bindFragmentSamplers 0

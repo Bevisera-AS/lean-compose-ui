@@ -875,6 +875,61 @@ private def probeStretch (r : Compose.Draw.Gpu.GpuRenderer)
   note s!"frame stats: {stats.brief}"
   check "frame stats: four layers" (stats.layers == 4)
 
+/-- ⑱ rounded-clipped layer composites (Wave 2b): a rounded clip enclosing
+an offscreen layer rides the `LayerEnc` and masks the composite in the layer
+fragment (`LayerClip` uniform) — a blurred layer's corner is culled exactly
+where the quad SDF says while its interior and edge midpoints keep the
+blurred content; a translucent layer culls the same way; and an unmasked
+layer drawn *after* masked ones in the same pass gets the sentinel re-pushed
+(the `pushedClip` tracker), rendering byte-identical to the same layer
+alone. -/
+private def probeLayerClip (r : Compose.Draw.Gpu.GpuRenderer)
+    (swapchainFmt : Sdl.Gpu.TextureFormat) : IO Unit := do
+  say "⑱ rounded-clipped layer composites → masked pixels"
+  let unmasked : Draw.DrawM Unit :=
+    DrawScope.withLayer ⟨170, 10, 190, 30⟩ 0.5 do
+      DrawScope.drawRect (.solid .white) ⟨170, 10⟩ ⟨20, 20⟩
+  let (list, _) ← DrawScope.record {} do
+    -- A: blurred layer under a rounded clip — the blur must not leak past
+    -- the rounded corner.
+    DrawScope.clipRoundRect (RoundRect.circular ⟨10, 10, 70, 70⟩ 12) do
+      DrawScope.withBlur ⟨10, 10, 70, 70⟩ 4 do
+        DrawScope.drawRect (.solid .white) ⟨10, 10⟩ ⟨60, 60⟩
+    -- B: translucent layer under a rounded clip.
+    DrawScope.clipRoundRect (RoundRect.circular ⟨100, 10, 160, 70⟩ 16) do
+      DrawScope.withLayer ⟨100, 10, 160, 70⟩ 0.5 do
+        DrawScope.drawRect (.solid .red) ⟨100, 10⟩ ⟨60, 60⟩
+    -- C: an unmasked layer after the masked ones (sentinel restoration).
+    unmasked
+  let bytes ← r.renderOffscreen ⟨0, 0, 0, 1⟩ list 200 100
+  let bgra := swapchainFmt == .b8g8r8a8Unorm
+  let px := fun (bs : ByteArray) (x y : Nat) =>
+    let o := (y * 200 + x) * 4
+    if bgra then (bs.get! (o+2), bs.get! (o+1), bs.get! o, bs.get! (o+3))
+    else (bs.get! o, bs.get! (o+1), bs.get! (o+2), bs.get! (o+3))
+  let v := fun (x y : Nat) => (px bytes x y).1.toNat
+  check s!"blur: rounded corner culled (got {v 12 12} @12,12)" (v 12 12 == 0)
+  check s!"blur: interior keeps the blurred content (got {v 40 40})" (v 40 40 ≥ 250)
+  check s!"blur: edge midpoint keeps the blurred falloff (got {v 40 11})"
+    (120 ≤ v 40 11 && v 40 11 ≤ 210)
+  check "blur: outside the clip untouched" (px bytes 5 5 == (0, 0, 0, 255))
+  check s!"alpha: rounded corner culled (got {v 103 13} @103,13)" (v 103 13 == 0)
+  check s!"alpha: center composites at 50% (got {(px bytes 130 40).1})"
+    (110 ≤ v 130 40 && v 130 40 ≤ 142)
+  check s!"alpha: edge midpoint kept (got {v 130 11})" (110 ≤ v 130 11 && v 130 11 ≤ 142)
+  let stats ← Compose.Draw.Gpu.frameStats.get
+  note s!"frame stats: {stats.brief}"
+  check "frame stats: three layers" (stats.layers == 3)
+  -- The unmasked layer after masked draws must match the same layer alone.
+  let (alone, _) ← DrawScope.record {} unmasked
+  let ref ← r.renderOffscreen ⟨0, 0, 0, 1⟩ alone 200 100
+  let mut regionSame := true
+  for x in [168:192] do
+    for y in [8:32] do
+      if px bytes x y != px ref x y then regionSame := false
+  check "sentinel: unmasked layer after masked ones is byte-identical to the layer alone"
+    regionSame
+
 /-- ⑮ fractional-origin text (M-j): both backends snap run origins through
 the shared `snapTextOrigin`, so drawing at ⟨10.4, 60.6⟩ must produce the
 byte-identical frame to drawing at the snapped ⟨10, 61⟩. -/
@@ -977,6 +1032,7 @@ def run (fontPath : String := "assets/fonts/Roboto-Regular.ttf")
     note "⑬ raw-MSL fragment-uniform micro-probe skipped (the blur pipeline covers pushFragmentUniformData on SPIR-V)"
   probeBlur gpuRenderer swapchainFmt
   probeStretch gpuRenderer swapchainFmt
+  probeLayerClip gpuRenderer swapchainFmt
   probeFractionalText gpuRenderer engine font
   probeInvalidate gpuRenderer
   match raw with

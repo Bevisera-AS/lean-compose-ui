@@ -559,12 +559,94 @@ private def surfaceShapePixels : IO Unit := do
     (near corner .white)
   check "surface shape: opposite corner too" (near (← r.pixel 78 78) .white)
 
+/-- The `.glass` surface material is a **placeholder** that renders exactly
+like `.opaque` until `Compose.Material.Glass` lands: same pixels (shadow
+included) and the same content color. Pins the seam so the renderer swap is
+the visible change, not this wave. -/
+private def surfaceGlassPlaceholder : IO Unit := do
+  -- An elevated, rounded, shadowed Surface — every arm of the background
+  -- chain `backgroundModifier` builds.
+  let scene (material : Option SurfaceMaterial) : Composable Unit :=
+    themed <| Box (modifier := Modifier.fillMaxSize |>.background .white) <|
+      Surface (modifier := Modifier.size 80 60) (shape := .rounded 12)
+        (color := some L.primary) (elevation := 6) (material := material)
+  let plainRig ← mboot (scene none)
+  let glassRig ← mboot (scene (some (.glass {})))
+  let plainShot ← (← plainRig.ctx.sdlRenderer).readPixels
+  let glassShot ← (← glassRig.ctx.sdlRenderer).readPixels
+  let mut diffs := 0
+  let mut sampled := 0
+  for y in [0:53] do
+    for x in [0:80] do
+      let a ← plainShot.readPixel (Int32.ofNat (x * 3)) (Int32.ofNat (y * 3))
+      let b ← glassShot.readPixel (Int32.ofNat (x * 3)) (Int32.ofNat (y * 3))
+      sampled := sampled + 1
+      unless a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a do
+        diffs := diffs + 1
+  check s!"glass placeholder: {sampled} sampled pixels identical to opaque"
+    (diffs == 0 && sampled > 0)
+  -- Premise: the rig actually drew the surface and its shadow (otherwise
+  -- "identical" would be two identical blank frames).
+  check "glass placeholder: premise — the container is drawn"
+    (near (← glassRig.pixel 40 30) L.primary)
+  -- Content color is unaffected: translucency is a rendering treatment, not
+  -- a role change.
+  let root ← LayoutNode.create
+  let cap ← IO.mkRef (none : Option (Compose.Color × Compose.Color))
+  let _ ← Composition.create (LayoutNode.applier root) <| MaterialTheme do
+    Surface (color := some L.primary) (material := some (.glass {})) do
+      cap.set (some (← LocalContentColor.current, (← LocalTextStyle.current).color))
+  let some (cc, tc) ← cap.get | throw (IO.userError "glass capture missing")
+  check "glass placeholder: content color still the untinted role pair"
+    (cc == L.onPrimary)
+  check "glass placeholder: text style recolored to it too" (tc == L.onPrimary)
+
+/-- Themed `ThemeTokens` reach the widgets: a distinctive
+`interactions.disabledContentAlpha` changes the content color a disabled
+widget establishes, and the elevation scale changes what an elevated widget
+asks `Modifier.shadow` for. -/
+private def themedTokensFlow : IO Unit := do
+  -- A disabled TextButton resolves its label color through
+  -- `tokens.interactions.disabledContentAlpha`; capture it from the slot.
+  let capture (tokens : Option ThemeTokens) : IO Compose.Color := do
+    let cap ← IO.mkRef (none : Option Compose.Color)
+    let _ ← mboot <| MaterialTheme (tokens := tokens) <|
+      TextButton (pure ()) (enabled := false) do
+        cap.set (some (← LocalContentColor.current))
+    let some c ← cap.get | throw (IO.userError "disabled-content capture missing")
+    return c
+  let dflt ← capture none
+  let themedAlpha ← capture (some { interactions := { disabledContentAlpha := 0.9 } })
+  check "tokens: default disabled content alpha is the baseline token"
+    (dflt == L.onSurface.withAlpha disabledContentAlpha)
+  check s!"tokens: themed disabled content alpha reaches the widget"
+    (themedAlpha == L.onSurface.withAlpha 0.9)
+  check "tokens: and it actually differs from the default" (themedAlpha != dflt)
+  -- `ElevatedCard` reads `tokens.elevations.card`: a distinctive value lands
+  -- in the recorded shadow spec.
+  let shadowBrief (tokens : Option ThemeTokens) : IO String := do
+    let r ← mboot <| MaterialTheme (tokens := tokens) <|
+      ElevatedCard (modifier := Modifier.size 60 40)
+    let density ← r.ctx.density
+    let (list, _) ← Compose.Draw.DrawScope.record density r.ctx.root.drawTree
+    let briefs := (list.map (·.brief)).toList.filter fun b =>
+      (b.splitOn "rrShadow").length > 1
+    return String.intercalate "|" briefs
+  let dfltShadow ← shadowBrief none
+  let themedShadow ← shadowBrief (some { elevations := { card := 11 } })
+  check s!"tokens: default card elevation records the baseline shadow ({dfltShadow})"
+    ((dfltShadow.splitOn s!"blur={Draw.fmtF 1}").length > 1)
+  check s!"tokens: themed card elevation reaches Modifier.shadow ({themedShadow})"
+    ((themedShadow.splitOn s!"blur={Draw.fmtF 11}").length > 1)
+
 /-- The Material group. -/
 def run : IO Unit := do
   themeLocals
   themeBundle
   surfaceContentColor
   surfaceShapePixels
+  surfaceGlassPlaceholder
+  themedTokensFlow
   buttonBasics
   buttonHoverLayer
   buttonPressRipple

@@ -594,6 +594,45 @@ private def dialogModal : IO Unit := do
   r.settle
   checkEq "dialog: button clickable again after dismissal" (← clicks.get) 2
 
+/-- The modal scrim is themed: `MaterialTheme` provides `LocalScrimColor` as
+`colors.scrim` at `tokens.scrimAlpha`, so raising the alpha visibly darkens
+the backdrop a `Dialog` dims. -/
+private def dialogThemedScrim : IO Unit := do
+  let backdrop (tokens : Option ThemeTokens) : IO Sdl.Color := do
+    let r ← oboot <| MaterialTheme (tokens := tokens) <|
+      Box (modifier := Modifier.fillMaxSize |>.background .white) do
+        Dialog (pure ()) (Box (modifier := Modifier.size 80 40 |>.background .red))
+    r.settle
+    r.pixel 250 250
+  let dflt ← backdrop none
+  let darker ← backdrop (some { scrimAlpha := 0.5 })
+  check s!"scrim: the default theme dims at the 32 % baseline ({showColor dflt})"
+    (near dflt (overWhite dialogScrimColor) 6)
+  check s!"scrim: a themed scrimAlpha renders through ({showColor darker})"
+    (near darker (overWhite (L.scrim.withAlpha 0.5)) 6)
+  check s!"scrim: the themed scrim is visibly darker ({showColor dflt} → {showColor darker})"
+    (darker.r.toNat + 8 ≤ dflt.r.toNat)
+
+/-- `AlertDialog` takes its shadow from `tokens.elevations.dialog`: a
+distinctive value lands in the recorded shadow spec. -/
+private def alertDialogThemedElevation : IO Unit := do
+  let shadowBriefs (tokens : Option ThemeTokens) : IO String := do
+    let r ← oboot <| MaterialTheme (tokens := tokens) <|
+      Box (modifier := Modifier.fillMaxSize |>.background .white) do
+        AlertDialog (onDismissRequest := pure ()) (title := "T") (text := "B")
+          (confirmButton := TextButton (pure ()) (Text "OK"))
+    r.settle
+    let (list, _) ← Compose.Draw.DrawScope.record (← r.ctx.density) r.ctx.root.drawTree
+    let briefs := (list.map (·.brief)).toList.filter fun b =>
+      (b.splitOn "rrShadow").length > 1
+    return String.intercalate "|" briefs
+  let dflt ← shadowBriefs none
+  let themed' ← shadowBriefs (some { elevations := { dialog := 9 } })
+  check s!"alert: the default dialog elevation is the baseline 6 ({dflt})"
+    ((dflt.splitOn s!"blur={Draw.fmtF 6}").length > 1)
+  check s!"alert: a themed elevations.dialog reaches the shadow ({themed'})"
+    ((themed'.splitOn s!"blur={Draw.fmtF 9}").length > 1)
+
 /-- `blurBehind`: an open dialog wraps the window's *base* content in a blur
 layer (radius 8 dp → σ 4 px at density 1), the dialog's own content stays
 outside it, and closing removes the layer and resets the state. (Pixels
@@ -909,8 +948,10 @@ def run : IO Unit := do
   popupFlip
   popupStackedEsc
   dialogModal
+  dialogThemedScrim
   dialogBlurBehind
   alertDialogBasics
+  alertDialogThemedElevation
   menuMouse
   menuKeyboard
   menuExitInert

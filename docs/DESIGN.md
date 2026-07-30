@@ -412,8 +412,11 @@ shape). `LayerProps` also carries a `LayerEffect` (see **Blur** below) —
 `.blur σ` forces a layer even at full alpha. Clip semantics: clips *inside* the layer bake into the texture and
 rotate with it; *enclosing* clips are stripped from the recorded content and
 scissor the composite instead (they are target-coordinate regions — they
-apply where pixels land); enclosing *rounded* clips degrade to that rect
-scissor. On SDL a transformed layer becomes a **real offscreen target**
+apply where pixels land); enclosing *rounded* clips ride the `LayerEnc` and
+mask the composite exactly in the layer fragment (`LayerClip` uniform, the
+quad pipeline's rrect-SDF coverage; gpu-probe ⑱) — blurred and translucent
+composites clip to rounded shapes; on SDL they degrade to the rect scissor
+(a gpu-parity exclusion). On SDL a transformed layer becomes a **real offscreen target**
 (pooled 64 px-quantized `.target` textures; content on a transparent clear
 yields premultiplied texels; `textureAffine` composites with
 `.blendPremultiplied` and color+alpha mod as the group alpha — so
@@ -449,7 +452,12 @@ scope — but see **blur-behind**: `Popup`/`Dialog` (and the Material
 wrappers) take `blurBehind : Dp`, and while such an overlay is open the
 window's *base* content composes under an always-present wrapper node that
 applies `Modifier.blur` (max radius over open overlays, recomputed on
-register/unregister/refresh; static — animated radii are future work).
+register/unregister/refresh) with the radius **animated** toward the
+request (200 ms tween in `backdropHost` — frost eases in on open, back out
+on dismissal). This is the Phase-A frost behind `Theme.liquidGlass`
+(`Compose/Material/Glass.lean`): non-overlay glass panels are tint + sheen
++ rim + shadow without frosting their backdrop, overlay glass frosts for
+real, σ capped at 16 until Phase B's per-panel backdrop pass.
 Verified by `gpu-probe` ⑭ (impulse response, energy conservation,
 near-identity at tiny σ); excluded from `gpu-parity` (GPU-only by design).
 

@@ -53,9 +53,9 @@ SDL_VIDEO_DRIVER=dummy SDL_AUDIO_DRIVER=dummy lake exe test
 Run a demo directly with `lake exe <name>`:
 
 ```
-demo-widgets   demo-overlays  demo-counter  demo-tempconv  demo-flight
-demo-timer     demo-crud      demo-circles  demo-cells     demo-desktop
-demo-files     demo-smoke
+demo-widgets   demo-overlays  demo-glass    demo-counter  demo-tempconv
+demo-flight    demo-timer     demo-crud     demo-circles  demo-cells
+demo-desktop   demo-files     demo-smoke
 ```
 
 ## Your first app

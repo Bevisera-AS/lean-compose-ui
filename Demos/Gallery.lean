@@ -36,6 +36,8 @@ def demos : List DemoEntry :=
       desc := "Buttons, toggles, slider, progress — light + dark." },
     { exe := "demo-overlays", title := "Overlays",
       desc := "Lazy list + scrollbar, dropdown menu, alert dialog." },
+    { exe := "demo-glass",    title := "Liquid Glass",
+      desc := "Adaptive glass toolbar, panel, and frosted dialog." },
     { exe := "demo-counter",  title := "Counter",
       desc := "7GUIs #1 — a field and an increment button." },
     { exe := "demo-tempconv", title := "Temperature Converter",

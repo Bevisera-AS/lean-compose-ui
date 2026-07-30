@@ -96,6 +96,12 @@ lean_exe «demo-smoke» where
 lean_exe «demo-widgets» where
   root := `Demos.Widgets
 
+/-- Wave-2 Liquid Glass showcase: `Theme.liquidGlass` over a vivid backdrop —
+glass toolbar/panel, seam-driven glass card, frosted dialog
+(`Demos/Glass.lean`). -/
+lean_exe «demo-glass» where
+  root := `Demos.Glass
+
 /-- M10 overlay gallery: LazyColumn + scrollbar, dropdown menu, alert dialog
 (`Demos/Overlays.lean`). -/
 lean_exe «demo-overlays» where

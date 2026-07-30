@@ -563,8 +563,9 @@ private def surfaceShapePixels : IO Unit := do
 (`Compose.Material.Glass`): visibly different pixels from `.opaque` — the
 default white tint wash over the white background instead of the container
 role — while the content-color contract still resolves on the untinted
-role. A `GlassSurface` records the full adaptive chain: shadow, gradient
-tint, radial sheen, gradient rim, clip. -/
+role. A `GlassSurface` records the full adaptive chain: shadow, masked
+backdrop frost (a no-op on this SDL backend — the pixels stay Phase-A),
+gradient tint, radial sheen, gradient rim, clip. -/
 private def surfaceGlassMaterial : IO Unit := do
   -- An elevated, rounded, shadowed Surface — every arm of the background
   -- chain `backgroundModifier` builds.
@@ -617,6 +618,9 @@ private def surfaceGlassMaterial : IO Unit := do
   let briefs := (list.map (·.brief)).toList
   check "glass surface: records the elevation shadow"
     (briefs.any fun b => (b.splitOn "rrShadow").length > 1)
+  check "glass surface: records the shape-masked backdrop frost at σ = blurRadius/2"
+    (briefs.any fun b => b.startsWith "backdrop "
+      && (b.splitOn "rounded=").length > 1 && (b.splitOn "sigma=24").length > 1)
   check "glass surface: records the vertical gradient tint"
     (briefs.any fun b => (b.splitOn "rrFill").length > 1 && (b.splitOn "grad[2]").length > 1)
   check "glass surface: records the radial sheen"

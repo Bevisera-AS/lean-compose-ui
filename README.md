@@ -3,8 +3,8 @@
 [![CI](https://github.com/philnguyen/lean-compose-ui/actions/workflows/lean_action_ci.yml/badge.svg)](https://github.com/philnguyen/lean-compose-ui/actions/workflows/lean_action_ci.yml)
 
 A [Jetpack Compose](https://github.com/jetbrains/compose-multiplatform)-style
-declarative UI framework for [Lean 4](https://lean-lang.org), rendered with
-SDL3 via [lean-sdl3](https://github.com/philnguyen/lean-sdl3). It
+declarative UI framework for [Lean 4](https://lean-lang.org), rendered
+via [lean-sdl3](https://github.com/philnguyen/lean-sdl3). It
 ships a full animation system, a Material-lite widget set, a UI-test
 framework, and all [7GUIs tasks](https://eugenkiss.github.io/7guis/tasks)
 as demos.

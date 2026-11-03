@@ -224,8 +224,9 @@ private partial def rewriteElem (declKey : UInt64) (e : Syntax) : RewriteM Synta
           pure alt
       return altList.setArgs as
   else if k == ``Lean.Parser.Term.doFor then
-    -- #["for", decls, "do", seq]
-    modifyArgM e 3 fun body => do
+    -- #["for", decls, invariant?, decreasing?, "do", seq] since Lean 4.35
+    -- (#["for", decls, "do", seq] before): the body is always the last child.
+    modifyArgM e (e.getNumArgs - 1) fun body => do
       if isDataKeyedBody body then pure body else wrapSeq declKey body
   else if k == ``Lean.Parser.Term.doNested then
     -- #["do", seq] — transparent: recurse without wrapping.

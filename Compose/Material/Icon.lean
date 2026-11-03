@@ -32,6 +32,9 @@ structure IconVector where
   name : String
   path : Draw.Path
   viewport : Float32 := 24
+  /-- Outline icons (Tabler, Lucide) are stroked, not filled: the stroke width
+  in viewport units, drawn with round caps and joins. `none` fills. -/
+  strokeWidth : Option Float32 := none
   deriving Inhabited
 
 namespace IconVector
@@ -39,9 +42,9 @@ namespace IconVector
 /-- An icon from SVG path data (see `Draw.PathData.parse?`). Malformed data
 degrades to an empty path — pair each definition with a `#guard
 (icon.path.verbs.size > 0)` so bad pastes fail at compile time. -/
-def ofPathData (name : String) (d : String) (viewport : Float32 := 24) :
-    IconVector :=
-  { name, path := (Draw.PathData.parse? d).getD {}, viewport }
+def ofPathData (name : String) (d : String) (viewport : Float32 := 24)
+    (strokeWidth : Option Float32 := none) : IconVector :=
+  { name, path := (Draw.PathData.parse? d).getD {}, viewport, strokeWidth }
 
 end IconVector
 
@@ -56,8 +59,14 @@ composable def Icon (icon : IconVector) (modifier : Modifier := {})
     |>.semantics (desc := contentDescription)
     |>.drawBehind do
       let sz ← Draw.DrawScope.size
-      Draw.DrawScope.drawPath (.solid color)
-        (icon.path.scale (sz.width / icon.viewport))
+      let k := sz.width / icon.viewport
+      let style := match icon.strokeWidth with
+        | none => .fill
+        -- The tessellator adds a 1-px anti-aliasing ring outside every edge,
+        -- which at icon sizes is wider than the line itself; draw the core
+        -- that much thinner so the visible weight is the requested one.
+        | some w => .stroke { width := max 0.4 (w * k - 0.9), cap := .round, join := .round }
+      Draw.DrawScope.drawPath (.solid color) (icon.path.scale k) style
   Layout m .leaf
 
 end Compose

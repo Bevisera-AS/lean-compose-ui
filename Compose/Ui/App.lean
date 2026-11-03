@@ -248,8 +248,15 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
   -- coordinate size now that the display metrics are known. A no-op on
   -- macOS/dummy (displayScale = pixelDensity, so `getSize` already matches),
   -- a scale-up on Windows (window coordinates are physical pixels).
-  let scale ← window.displayScale
-  let pixelDensity ← window.pixelDensity
+  -- `COMPOSE_DENSITY=<n>` (headless review only): render as on an n× screen,
+  -- e.g. 2 for a Retina Mac, under the dummy driver whose scale is always 1.
+  let forced := (← IO.getEnv "COMPOSE_DENSITY").bind String.toNat? |>.filter (· > 0)
+  let scale ← match forced with
+    | some n => pure n.toFloat.toFloat32
+    | none => window.displayScale
+  let pixelDensity ← match forced with
+    | some _ => pure 1
+    | none => window.pixelDensity
   let (ww, wh) := (windowCoordSize width scale pixelDensity,
                    windowCoordSize height scale pixelDensity)
   let (cw, ch) ← window.getSize
@@ -288,6 +295,7 @@ def bootstrapWindow (scheduler : Scheduler) (wakeEvent : Sdl.EventType)
       overlays := ← MutableState.createPolicy (fun _ _ => false) #[]
       backdropBlurState := ← MutableState.create 0
       keyHandlers := ← IO.mkRef #[]
+      widthState := ← MutableState.create width
       focusManager := ← IO.mkRef none
       modalFocusHook := ← IO.mkRef fun _ _ => pure ()
       bringIntoViewPending := ← IO.mkRef false
@@ -413,6 +421,9 @@ def dispatchEvent (ctx : WindowContext) (config : AppConfig) (event : Sdl.Event)
     -- Resizes that come from a surface swap (Android rotation) can swallow
     -- the first present(s) — arm the grace burst so one lands.
     ctx.refreshSafeArea
+    let (pw, _) ← ctx.window.getSizeInPixels
+    let d ← ctx.densityState.get
+    ctx.widthState.set ⟨pw.toNatClampNeg.toFloat.toFloat32 / (if d.density > 0 then d.density else 1)⟩
     if config.surfaceSwapGrace then
       ctx.presentGrace.set presentGracePasses
     ctx.root.markNeedsRemeasure

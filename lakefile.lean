@@ -76,7 +76,7 @@ package «compose-ui» where
 
 -- For day-to-day cross-repo work against a sibling checkout, override with
 -- an untracked .lake/package-overrides.json instead of editing this.
-require sdl from git "https://github.com/philnguyen/lean-sdl3" @ "v0.1.8-alpha"
+require sdl from "../lean-sdl3"
 
 @[default_target]
 lean_lib Compose

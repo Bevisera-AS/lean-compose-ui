@@ -15,11 +15,12 @@ of every icon pipeline (Material Symbols exports, `ImageVector` path data) —
 into a `Compose.Path`. Any Material icon becomes one pasted string (see
 `Compose.Material.Icons`).
 
-Supported commands: `M m L l H h V v C c S s Q q T t Z z`, comma/whitespace
+Supported commands: `M m L l H h V v C c S s Q q T t A a Z z`, comma/whitespace
 separation, implicit repetition (extra pairs after `M`/`m` continue as
 lineto, per the SVG grammar), smooth control-point reflection for `S`/`T`.
-**Elliptical arcs (`A`/`a`) are rejected** — Material Symbols exports are
-arc-free; convert offline if a source uses them.
+Elliptical arcs (`A`/`a`) become cubic Béziers, at most a quarter turn each
+(SVG 1.1 implementation notes F.6.5–F.6.6), so outline icon sets such as
+Tabler paste unchanged.
 -/
 
 namespace PathData
@@ -32,6 +33,54 @@ private structure St where
   start : Offset := .zero
   prevCubic : Option Offset := none
   prevQuad : Option Offset := none
+
+/-- An SVG elliptical arc from `p0` to `p` as cubic Béziers of at most a quarter
+turn each. Degenerate radii draw a line; equal endpoints draw nothing. -/
+def arcToCubics (p0 : Offset) (rx ry phiDeg : Float) (large sweep : Bool) (p : Offset) :
+    Array PathVerb := Id.run do
+  let (x0, y0, x, y) := (p0.x.toFloat, p0.y.toFloat, p.x.toFloat, p.y.toFloat)
+  if x0 == x && y0 == y then return #[]
+  if rx == 0 || ry == 0 then return #[.lineTo p]
+  let pi : Float := 3.141592653589793
+  let phi := phiDeg * pi / 180
+  let (cs, sn) := (Float.cos phi, Float.sin phi)
+  let (dx2, dy2) := ((x0 - x) / 2, (y0 - y) / 2)
+  let x1 := cs * dx2 + sn * dy2
+  let y1 := -sn * dx2 + cs * dy2
+  let (rx, ry) := (rx.abs, ry.abs)
+  let lam := x1 * x1 / (rx * rx) + y1 * y1 / (ry * ry)
+  let (rx, ry) := if lam > 1 then (rx * lam.sqrt, ry * lam.sqrt) else (rx, ry)
+  let num := rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1
+  let den := rx * rx * y1 * y1 + ry * ry * x1 * x1
+  let coef := (if den == 0 then 0 else (max 0 (num / den)).sqrt) * (if large == sweep then -1 else 1)
+  let (cxp, cyp) := (coef * rx * y1 / ry, -coef * ry * x1 / rx)
+  let cx := cs * cxp - sn * cyp + (x0 + x) / 2
+  let cy := sn * cxp + cs * cyp + (y0 + y) / 2
+  let angle (ux uy vx vy : Float) : Float := Float.atan2 (ux * vy - uy * vx) (ux * vx + uy * vy)
+  let (ux, uy) := ((x1 - cxp) / rx, (y1 - cyp) / ry)
+  let (vx, vy) := ((-x1 - cxp) / rx, (-y1 - cyp) / ry)
+  let t1 := angle 1 0 ux uy
+  let d0 := angle ux uy vx vy
+  let delta := if !sweep && d0 > 0 then d0 - 2 * pi else if sweep && d0 < 0 then d0 + 2 * pi else d0
+  let n := max 1 (delta.abs / (pi / 2)).ceil.toUInt64.toNat
+  let step := delta / n.toFloat
+  let k := 4 / 3 * Float.tan (step / 4)
+  let pointAt (t : Float) : Float × Float :=
+    (cx + rx * cs * Float.cos t - ry * sn * Float.sin t,
+     cy + rx * sn * Float.cos t + ry * cs * Float.sin t)
+  let tangent (t : Float) : Float × Float :=
+    (-rx * cs * Float.sin t - ry * sn * Float.cos t,
+     -rx * sn * Float.sin t + ry * cs * Float.cos t)
+  let off (q : Float × Float) : Offset := ⟨q.1.toFloat32, q.2.toFloat32⟩
+  let mut out := #[]
+  for i in [0:n] do
+    let a := t1 + i.toFloat * step
+    let b := a + step
+    let (pa, da, pb, db) := (pointAt a, tangent a, pointAt b, tangent b)
+    let c1 := (pa.1 + k * da.1, pa.2 + k * da.2)
+    let c2 := (pb.1 - k * db.1, pb.2 - k * db.2)
+    out := out.push (.cubicTo (off c1) (off c2) (if i + 1 == n then p else off pb))
+  return out
 
 private def isCmd (c : Char) : Bool :=
   "MmLlHhVvCcSsQqTtZzAa".toList.contains c
@@ -85,6 +134,7 @@ private def argc : Char → Nat
   | 'H' | 'h' | 'V' | 'v' => 1
   | 'S' | 's' | 'Q' | 'q' => 4
   | 'C' | 'c' => 6
+  | 'A' | 'a' => 7
   | _ => 0
 
 /-- Execute one repetition of `cmd` with `a` (already `argc` long). -/
@@ -125,6 +175,10 @@ private def step (st : St) (cmd : Char) (a : Array Float32) : Option St := do
       | none => st.cur
     let p := abs2 0
     return push (.quadTo c p) p (pq := some c)
+  | 'a' =>
+    let p := abs2 5
+    let arc := arcToCubics st.cur a[0]!.toFloat a[1]!.toFloat a[2]!.toFloat (a[3]! != 0) (a[4]! != 0) p
+    return { st with verbs := st.verbs ++ arc, cur := p, prevCubic := none, prevQuad := none }
   | _ => none
 
 /-- The command implicit repetition continues as (`M`→`L`, `m`→`l`). -/
@@ -142,7 +196,7 @@ private partial def run (cs : List Char) (cmd : Char) (st : St) : Option St := d
       run rest ' ' { st with verbs := st.verbs.push .close, cur := st.start,
                              prevCubic := none, prevQuad := none }
     else if isCmd c then
-      if argc c == 0 then none  -- A/a (and any future zero-arg strays)
+      if argc c == 0 then none  -- any future zero-arg strays
       else run rest c st
     else if cmd == ' ' then none  -- numbers need a current command
     else do
@@ -171,7 +225,15 @@ def parse? (d : String) (fillRule : FillRule := .nonZero) : Option Path := do
 #guard parse? "M0 0Q1 2 3 4T5 6"             -- smooth quad reflects control
   == some { verbs := #[.moveTo ⟨0, 0⟩, .quadTo ⟨1, 2⟩ ⟨3, 4⟩,
                        .quadTo ⟨5, 6⟩ ⟨5, 6⟩] }
-#guard parse? "M0 0A5 5 0 0 1 10 10" == none  -- arcs rejected
+-- a half circle is two quarter-turn cubics ending exactly at the endpoint
+#guard (parse? "M0 0A5 5 0 0 1 10 0").map (·.verbs.size) == some 3
+#guard match (parse? "M0 0A5 5 0 0 1 10 0").bind (·.verbs.back?) with
+  | some (PathVerb.cubicTo _ _ q) => q == ⟨10, 0⟩
+  | _ => false
+-- a full Tabler circle (two arcs) is four cubics after the move
+#guard (parse? "M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0").map (·.verbs.size) == some 5
+#guard parse? "M0 0A0 5 0 0 1 10 0"           -- zero radius draws a line
+  == some { verbs := #[.moveTo ⟨0, 0⟩, .lineTo ⟨10, 0⟩] }
 #guard parse? "M0 0L1" == none                -- truncated args
 #guard parse? "1 2 3" == none                 -- numbers before any command
 #guard parse? "M1.5-2.5e1l.5.5"               -- exponent, terse decimals

@@ -271,6 +271,9 @@ structure WindowContext where
   /-- Overlay key handlers (see `OverlayKeyHandler`); consulted by the input
   router. -/
   keyHandlers : IO.Ref (Array OverlayKeyHandler)
+  /-- The window's width in dp, updated on resize, so a layout can adapt to
+  narrow windows (read through `windowWidthDp`). -/
+  widthState : MutableState Dp
   /-- The window's `FocusManager`, installed by `installInput` (M14b): the
   bridge `FocusRequester`s use to reach focus from composition. -/
   focusManager : IO.Ref (Option FocusManager)
@@ -311,6 +314,13 @@ code. Mirrors `LocalView`-ish internals rather than a public API. -/
 initialize LocalWindowContext : CompositionLocal (Option WindowContext) ←
   return { id := ← freshId, defaultValue := none, isStatic := true,
            eq := fun _ _ => true }
+
+/-- The window's current width in dp (`0` outside a window). Reading it
+recomposes the caller on resize. -/
+def windowWidthDp : Composable Dp := do
+  match ← LocalWindowContext.current with
+  | some ctx => ctx.widthState.get
+  | none => pure 0
 
 namespace WindowContext
 
